@@ -1,0 +1,202 @@
+/**
+ * On-device face detection via MediaPipe Tasks (§5.6).
+ *
+ * Two detectors, merged:
+ *  - BlazeFace (short-range): fast, accurate for frontal faces.
+ *  - PoseLandmarker head fallback: BlazeFace misses side-profile faces,
+ *    so we also detect body poses and derive a head box from the facial
+ *    landmarks (nose/eyes/ears) — this catches people facing sideways.
+ *
+ * Model + wasm are served from this app's own origin (public/models,
+ * public/mediapipe) so detection works offline once cached and no
+ * third-party CDN is involved. Detection is best-effort by design —
+ * the UI must always let the user add/remove regions manually.
+ *
+ * Licence plates: no turnkey on-device model exists (§5.6). Manual blur
+ * covers plates in v1; an open-source plate detector is a planned
+ * follow-up. Copy in the editor reflects this honestly.
+ */
+import type {
+  FaceDetector as FaceDetectorT,
+  PoseLandmarker as PoseLandmarkerT,
+} from "@mediapipe/tasks-vision";
+
+export interface DetectedBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  score: number;
+}
+
+type Source = HTMLImageElement | HTMLCanvasElement | HTMLVideoElement;
+
+let visionPromise: ReturnType<typeof loadVision> | null = null;
+
+async function loadVision() {
+  const { FaceDetector, PoseLandmarker, FilesetResolver } = await import(
+    "@mediapipe/tasks-vision"
+  );
+  const fileset = await FilesetResolver.forVisionTasks("/mediapipe/wasm");
+  return { FaceDetector, PoseLandmarker, fileset };
+}
+
+let faceDetectorPromise: Promise<FaceDetectorT | null> | null = null;
+let poseLandmarkerPromise: Promise<PoseLandmarkerT | null> | null = null;
+
+function getFaceDetector(): Promise<FaceDetectorT | null> {
+  faceDetectorPromise ??= (async () => {
+    try {
+      visionPromise ??= loadVision();
+      const { FaceDetector, fileset } = await visionPromise;
+      return await FaceDetector.createFromOptions(fileset, {
+        baseOptions: {
+          modelAssetPath: "/models/blaze_face_short_range.tflite",
+        },
+        runningMode: "IMAGE",
+        minDetectionConfidence: 0.4,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  return faceDetectorPromise;
+}
+
+function getPoseLandmarker(): Promise<PoseLandmarkerT | null> {
+  poseLandmarkerPromise ??= (async () => {
+    try {
+      visionPromise ??= loadVision();
+      const { PoseLandmarker, fileset } = await visionPromise;
+      return await PoseLandmarker.createFromOptions(fileset, {
+        baseOptions: { modelAssetPath: "/models/pose_landmarker_lite.task" },
+        runningMode: "IMAGE",
+        numPoses: 5,
+        minPoseDetectionConfidence: 0.4,
+      });
+    } catch {
+      return null;
+    }
+  })();
+  return poseLandmarkerPromise;
+}
+
+function sourceSize(src: Source): { w: number; h: number } {
+  if (src instanceof HTMLVideoElement)
+    return { w: src.videoWidth, h: src.videoHeight };
+  if (src instanceof HTMLImageElement)
+    return { w: src.naturalWidth, h: src.naturalHeight };
+  return { w: src.width, h: src.height };
+}
+
+function iou(a: DetectedBox, b: DetectedBox): number {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+/** Head box derived from a pose's facial landmarks (0=nose … 10=mouth). */
+function headBoxFromPose(
+  landmarks: { x: number; y: number; visibility?: number }[],
+  w: number,
+  h: number
+): DetectedBox | null {
+  const head = landmarks.slice(0, 11).filter(
+    (l) => (l.visibility ?? 1) > 0.35
+  );
+  if (head.length < 3) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const l of head) {
+    minX = Math.min(minX, l.x * w);
+    maxX = Math.max(maxX, l.x * w);
+    minY = Math.min(minY, l.y * h);
+    maxY = Math.max(maxY, l.y * h);
+  }
+  // Landmarks cover only the face centre — expand to the whole head
+  // (hair, chin, back of the skull for profiles).
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const span = Math.max(maxX - minX, maxY - minY);
+  const size = Math.max(span * 2.6, w * 0.04);
+  return {
+    x: cx - size / 2,
+    y: cy - size / 2 - size * 0.12, // heads extend upward (hair)
+    width: size,
+    height: size * 1.15,
+    score: 0.5,
+  };
+}
+
+/**
+ * Detect faces AND side-profile heads; boxes in source pixel coordinates,
+ * clamped to the frame. Returns null when no detector could load at all.
+ */
+export async function detectFaces(
+  source: Source
+): Promise<DetectedBox[] | null> {
+  const { w, h } = sourceSize(source);
+  const boxes: DetectedBox[] = [];
+  let anyDetectorRan = false;
+
+  const detector = await getFaceDetector();
+  if (detector) {
+    anyDetectorRan = true;
+    try {
+      const res = detector.detect(source);
+      for (const d of res.detections) {
+        const b = d.boundingBox;
+        if (b)
+          boxes.push({
+            x: b.originX,
+            y: b.originY,
+            width: b.width,
+            height: b.height,
+            score: 1,
+          });
+      }
+    } catch {
+      // frontal pass failed — pose fallback below may still work
+    }
+  }
+
+  const pose = await getPoseLandmarker();
+  if (pose) {
+    anyDetectorRan = true;
+    try {
+      const res = pose.detect(source);
+      for (const lm of res.landmarks) {
+        const head = headBoxFromPose(lm, w, h);
+        if (!head) continue;
+        // skip heads the face detector already covered
+        if (boxes.some((b) => iou(b, head) > 0.2)) continue;
+        boxes.push(head);
+      }
+    } catch {
+      // ignore — face boxes (if any) still stand
+    }
+  }
+
+  if (!anyDetectorRan) return null;
+  return boxes.map((b) => {
+    const x = Math.max(0, b.x);
+    const y = Math.max(0, b.y);
+    return {
+      ...b,
+      x,
+      y,
+      width: Math.min(w - x, b.width),
+      height: Math.min(h - y, b.height),
+    };
+  });
+}
+
+/** Same detectors reused across video frames (IMAGE mode per-frame). */
+export async function detectFacesInFrame(
+  canvas: HTMLCanvasElement
+): Promise<DetectedBox[]> {
+  return (await detectFaces(canvas)) ?? [];
+}

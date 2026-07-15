@@ -1,0 +1,567 @@
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { camera } from "../lib/camera";
+import { capturePhoto, collectWatermarkData, getProfilePhoto } from "../lib/capture";
+import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
+import { renderMiniMap } from "../lib/watermark/minimap";
+import { playShutter } from "../lib/sound";
+import { useLiveStore, useSettingsStore } from "../store";
+import { navigate } from "../nav";
+import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
+import { makeThumbnail } from "../lib/img";
+import { detectFaces, type DetectedBox } from "../lib/detect/faces";
+import type { VideoRecord } from "../types";
+import { Zap, SwitchCamera, Settings, Images } from "lucide-react";
+
+type Mode = "photo" | "video";
+
+export default function CameraView({ active }: { active: boolean }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+
+  // The video must never exceed the viewfinder zone, whatever the screen
+  // or system-bar sizes — measure the real space instead of guessing, so
+  // the watermark card (anchored to the video bottom) is always visible.
+  useEffect(() => {
+    const vp = viewportRef.current;
+    const box = boxRef.current;
+    if (!vp || !box) return;
+    const apply = () => {
+      box.style.setProperty("--vph", `${vp.clientHeight}px`);
+      box.style.setProperty("--vpw", `${vp.clientWidth}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(vp);
+    return () => ro.disconnect();
+  }, []);
+  const [mode, setMode] = useState<Mode>("photo");
+  const [ready, setReady] = useState(false);
+  const [camError, setCamError] = useState<string | null>(null);
+  const [torch, setTorch] = useState(false);
+  const [zoomLabel, setZoomLabel] = useState<string | null>(null);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [flashFx, setFlashFx] = useState(0);
+  const [focusPos, setFocusPos] = useState<{ x: number; y: number; key: number } | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recSeconds, setRecSeconds] = useState(0);
+  const [busy, setBusy] = useState(false);
+
+  const settings = useSettingsStore((s) => s.settings);
+
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
+  const recStartRef = useRef(0);
+  const modeRef = useRef<Mode>("photo");
+  modeRef.current = mode;
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast((t) => (t === msg ? null : t)), 2200);
+  }, []);
+
+  // ---- camera lifecycle (pre-warm on mount, §2) ---------------------
+  const startCam = useCallback(async (m: Mode) => {
+    setReady(false);
+    setCamError(null);
+    try {
+      if (m === "video") await camera.startWithAudio();
+      else await camera.start();
+      if (videoRef.current) camera.attach(videoRef.current);
+      setReady(true);
+      setTorch(false);
+    } catch {
+      setCamError(
+        "Camera unavailable. Check that permission is granted and no other app is using it."
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void startCam(modeRef.current);
+    const onVis = () => {
+      if (document.hidden) {
+        recorderRef.current?.stop();
+        camera.stop();
+      } else {
+        void startCam(modeRef.current);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      camera.stop();
+    };
+  }, [startCam]);
+
+  const switchMode = useCallback(
+    (m: Mode) => {
+      if (m === modeRef.current || recording) return;
+      setMode(m);
+      void startCam(m);
+    },
+    [recording, startCam]
+  );
+
+  // ---- last-capture thumbnail ----------------------------------------
+  useEffect(() => {
+    void (async () => {
+      const items = await listMedia();
+      if (items[0]) {
+        const t = await getBlob(items[0].id, "thumb");
+        if (t) setThumbUrl(URL.createObjectURL(t));
+      }
+    })();
+  }, []);
+
+  const updateThumb = useCallback((_id: string, blob: Blob) => {
+    setThumbUrl((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return URL.createObjectURL(blob);
+    });
+  }, []);
+
+  // ---- live watermark overlay (§4 step 2) -----------------------------
+  const assetsRef = useRef<WatermarkAssets>({});
+  // EXPERIMENTAL live face blur: latest detection results in video-natural
+  // pixels (padded); detection runs throttled and never blocks drawing
+  const liveBoxesRef = useRef<DetectedBox[]>([]);
+  const detectBusyRef = useRef(false);
+  const detectCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const pixelTinyRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    let stop = false;
+
+    void getProfilePhoto().then((p) => {
+      assetsRef.current.profilePhoto = p;
+    });
+
+    const draw = () => {
+      if (stop) return;
+      const canvas = overlayRef.current;
+      const video = videoRef.current;
+      if (!canvas || !video || video.videoWidth === 0) return;
+      const rect = video.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.round(rect.width * dpr);
+      const h = Math.round(rect.height * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const { watermark, profile, settings: s } = useSettingsStore.getState();
+      const data = collectWatermarkData();
+      ctx.clearRect(0, 0, w, h);
+
+      // live face blur preview: pixelate the latest detected head boxes
+      if (s.liveFaceBlur && liveBoxesRef.current.length && video.videoWidth) {
+        const kx = w / video.videoWidth;
+        const ky = h / video.videoHeight;
+        const tiny = (pixelTinyRef.current ??= document.createElement("canvas"));
+        const tctx = tiny.getContext("2d");
+        if (tctx) {
+          for (const b of liveBoxesRef.current) {
+            const cells = 9;
+            tiny.width = cells;
+            tiny.height = cells;
+            tctx.drawImage(video, b.x, b.y, b.width, b.height, 0, 0, cells, cells);
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(
+              tiny, 0, 0, cells, cells,
+              b.x * kx, b.y * ky, b.width * kx, b.height * ky
+            );
+            ctx.imageSmoothingEnabled = true;
+          }
+        }
+      }
+
+      renderWatermark(ctx, w, h, data, watermark, profile, assetsRef.current);
+    };
+
+    // throttled on-device detection for the live blur preview
+    const detectTick = () => {
+      const video = videoRef.current;
+      if (!useSettingsStore.getState().settings.liveFaceBlur) {
+        liveBoxesRef.current = [];
+        return;
+      }
+      if (detectBusyRef.current || !video || video.videoWidth === 0) return;
+      detectBusyRef.current = true;
+      const scale = 256 / Math.max(video.videoWidth, video.videoHeight);
+      const dc = (detectCanvasRef.current ??= document.createElement("canvas"));
+      dc.width = Math.max(1, Math.round(video.videoWidth * scale));
+      dc.height = Math.max(1, Math.round(video.videoHeight * scale));
+      dc.getContext("2d")?.drawImage(video, 0, 0, dc.width, dc.height);
+      void detectFaces(dc)
+        .then((boxes) => {
+          const inv = 1 / scale;
+          liveBoxesRef.current = (boxes ?? []).map((b) => {
+            const padX = b.width * 0.15;
+            const padY = b.height * 0.2;
+            return {
+              x: Math.max(0, b.x - padX) * inv,
+              y: Math.max(0, b.y - padY) * inv,
+              width: (b.width + padX * 2) * inv,
+              height: (b.height + padY * 2) * inv,
+              score: b.score,
+            };
+          });
+        })
+        .finally(() => {
+          detectBusyRef.current = false;
+        });
+    };
+
+    // Refresh the cached mini-map when position/jurisdiction changes.
+    const refreshMap = () => {
+      const { fix, lookupResult } = useLiveStore.getState();
+      const { watermark } = useSettingsStore.getState();
+      if (!fix || !watermark.fields.miniMap) return;
+      void renderMiniMap(fix.lat, fix.lng, lookupResult).then((m) => {
+        if (m) assetsRef.current.miniMap = m;
+      });
+    };
+
+    refreshMap();
+    draw();
+    const interval = window.setInterval(() => {
+      refreshMap();
+      detectTick();
+      draw();
+    }, 600);
+    const unsubLive = useLiveStore.subscribe(draw);
+    const unsubSettings = useSettingsStore.subscribe(() => {
+      void getProfilePhoto().then((p) => {
+        assetsRef.current.profilePhoto = p;
+        draw();
+      });
+    });
+    return () => {
+      stop = true;
+      window.clearInterval(interval);
+      unsubLive();
+      unsubSettings();
+    };
+  }, [active]);
+
+  // ---- capture ----------------------------------------------------------
+  const doCapture = useCallback(async () => {
+    if (busy || !ready) return;
+    setBusy(true);
+    setFlashFx((k) => k + 1);
+    if (useSettingsStore.getState().settings.shutterSound) playShutter();
+    try {
+      const { record, thumb } = await capturePhoto();
+      updateThumb(record.id, thumb);
+    } catch {
+      showToast("Capture failed — try again");
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, ready, showToast, updateThumb]);
+
+  // ---- video record -------------------------------------------------------
+  const stopRecording = useCallback(() => {
+    recorderRef.current?.stop();
+  }, []);
+
+  const startRecording = useCallback(() => {
+    const stream = camera.stream;
+    if (!stream) return;
+    const mimeCandidates = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+      "video/mp4",
+    ];
+    const mimeType =
+      mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
+    const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    recChunksRef.current = [];
+    rec.ondataavailable = (e) => {
+      if (e.data.size) recChunksRef.current.push(e.data);
+    };
+    rec.onstop = () => {
+      setRecording(false);
+      const duration = (Date.now() - recStartRef.current) / 1000;
+      const blob = new Blob(recChunksRef.current, {
+        type: mimeType || "video/webm",
+      });
+      recChunksRef.current = [];
+      void (async () => {
+        const video = videoRef.current;
+        const track = camera.track;
+        const s = track?.getSettings();
+        const liveBlurOn = useSettingsStore.getState().settings.liveFaceBlur;
+        const record: VideoRecord = {
+          id: newId(),
+          kind: "video",
+          createdAt: recStartRef.current,
+          duration,
+          width: s?.width ?? video?.videoWidth ?? 0,
+          height: s?.height ?? video?.videoHeight ?? 0,
+          mimeType: blob.type,
+          data: collectWatermarkData(),
+          config: useSettingsStore.getState().watermark,
+          liveBlur: liveBlurOn || undefined,
+        };
+        await putBlob(record.id, "source", blob);
+        let thumb: Blob | null = null;
+        if (video && video.videoWidth) {
+          try {
+            thumb = await makeThumbnail(video, video.videoWidth, video.videoHeight);
+            await putBlob(record.id, "thumb", thumb);
+          } catch {
+            // no thumb — gallery shows a placeholder
+          }
+        }
+        await putMedia(record);
+        if (thumb) updateThumb(record.id, thumb);
+        // Honesty: live blur cannot burn into the raw recording — it is
+        // applied when the clip is exported.
+        showToast(
+          liveBlurOn
+            ? "Raw clip saved — faces are blurred when you export it"
+            : "Video saved — open it in the gallery to trim & export"
+        );
+      })();
+    };
+    recStartRef.current = Date.now();
+    rec.start(1000);
+    recorderRef.current = rec;
+    setRecording(true);
+    setRecSeconds(0);
+  }, [showToast, updateThumb]);
+
+  useEffect(() => {
+    if (!recording) return;
+    const t = window.setInterval(
+      () => setRecSeconds(Math.floor((Date.now() - recStartRef.current) / 1000)),
+      500
+    );
+    return () => window.clearInterval(t);
+  }, [recording]);
+
+  const onShutter = useCallback(() => {
+    if (mode === "photo") void doCapture();
+    else if (recording) stopRecording();
+    else startRecording();
+  }, [mode, recording, doCapture, startRecording, stopRecording]);
+
+  // Desktop convenience: space/enter as shutter.
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Space" || e.code === "Enter") {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") return;
+        e.preventDefault();
+        onShutter();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, onShutter]);
+
+  // ---- gestures: tap-to-focus + pinch-to-zoom -----------------------------
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinchBase = useRef<{ dist: number; zoom: number } | null>(null);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      pinchBase.current = {
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+        zoom: camera.zoom,
+      };
+    }
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2 && pinchBase.current) {
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const target = pinchBase.current.zoom * (dist / pinchBase.current.dist);
+      void camera.setZoom(target).then((z) => {
+        if (camera.capabilities().zoom) setZoomLabel(`${z.toFixed(1)}×`);
+      });
+    }
+  }, []);
+
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      const start = pointers.current.get(e.pointerId);
+      pointers.current.delete(e.pointerId);
+      if (pointers.current.size < 2) pinchBase.current = null;
+      if (pointers.current.size === 0 && start) {
+        const dx = e.clientX - start.x;
+        const dy = e.clientY - start.y;
+        if (Math.hypot(dx, dy) < 8) {
+          setFocusPos({ x: e.clientX, y: e.clientY, key: Date.now() });
+          void camera.focusAt();
+        }
+      }
+      window.setTimeout(() => setZoomLabel(null), 1200);
+    },
+    []
+  );
+
+  const toggleTorch = useCallback(async () => {
+    const ok = await camera.setTorch(!torch);
+    if (ok) setTorch(!torch);
+    else showToast("Flash not available on this camera");
+  }, [torch, showToast]);
+
+  const flipCamera = useCallback(async () => {
+    camera.facing = camera.facing === "environment" ? "user" : "environment";
+    await startCam(modeRef.current);
+  }, [startCam]);
+
+  const mirrored = camera.facing === "user";
+  const fmtRec = (s: number) =>
+    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  return (
+    <div
+      className="cam-screen"
+      style={{ visibility: active ? "visible" : "hidden" }}
+    >
+      {/* Viewfinder zone — the live watermark card anchors to the bottom
+          of the video box, which ends ABOVE the opaque controls bar, so
+          nothing ever covers it (GPS-Map-Camera-style layout). */}
+      <div
+        ref={viewportRef}
+        className="cam-viewport"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        style={{ touchAction: "none" }}
+      >
+        <div ref={boxRef} className={`cam-video-box${mirrored ? " mirrored" : ""}`}>
+          <video ref={videoRef} playsInline muted autoPlay />
+          {settings.gridLines && (
+            <div
+              className="cam-grid"
+              style={{
+                backgroundImage:
+                  "linear-gradient(to right, rgba(255,255,255,0.3) 1px, transparent 1px)," +
+                  "linear-gradient(to bottom, rgba(255,255,255,0.3) 1px, transparent 1px)",
+                backgroundSize: "33.4% 33.4%",
+                backgroundPosition: "-1px -1px",
+              }}
+            />
+          )}
+          <canvas ref={overlayRef} className="cam-overlay" />
+        </div>
+
+        {camError && (
+          <div className="empty-note" style={{ position: "absolute", inset: "30% 20px auto" }}>
+            {camError}
+            <div style={{ marginTop: 16 }}>
+              <button className="primary-btn" onClick={() => void startCam(mode)}>
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Top-right cluster is exactly [flash][settings]; the grid toggle
+            lives in Settings and the Chennai coverage chip is retired
+            (pan-India expansion planned). */}
+        <div className="cam-top">
+          <span />
+          <div className="cluster">
+            <button
+              className="cam-round"
+              data-active={torch}
+              onClick={() => void toggleTorch()}
+              aria-label="Flash"
+            >
+              <Zap size={19} fill={torch ? "currentColor" : "none"} />
+            </button>
+            <button
+              className="cam-round"
+              onClick={() => navigate("/settings")}
+              aria-label="Settings"
+            >
+              <Settings size={19} />
+            </button>
+          </div>
+        </div>
+
+        {zoomLabel && (
+          <div className="cam-toast" style={{ bottom: "auto", top: "20%" }}>
+            {zoomLabel}
+          </div>
+        )}
+        {toast && <div className="cam-toast">{toast}</div>}
+        {recording && <div className="rec-timer">{fmtRec(recSeconds)}</div>}
+      </div>
+
+      <div key={flashFx} className={`flash-fx${flashFx ? " animate" : ""}`} />
+      {focusPos && (
+        <div
+          key={focusPos.key}
+          className="focus-ring"
+          style={{ left: focusPos.x, top: focusPos.y }}
+        />
+      )}
+
+      {/* Opaque controls bar — below the viewfinder, never over it. */}
+      <div className="cam-controls">
+        <div className="cam-mode">
+          <button
+            data-active={mode === "photo"}
+            disabled={recording}
+            onClick={() => switchMode("photo")}
+          >
+            PHOTO
+          </button>
+          <button
+            data-active={mode === "video"}
+            disabled={recording}
+            onClick={() => switchMode("video")}
+          >
+            VIDEO
+          </button>
+        </div>
+        <div className="cam-actions">
+          <button
+            className="thumb-btn"
+            onClick={() => navigate("/gallery")}
+            aria-label="Gallery"
+          >
+            {thumbUrl ? <img src={thumbUrl} alt="" /> : <Images size={20} />}
+          </button>
+          <button
+            className={`shutter${mode === "video" ? (recording ? " recording" : " video") : ""}`}
+            onClick={onShutter}
+            aria-label={mode === "photo" ? "Take photo" : "Record"}
+          />
+          <button
+            className="thumb-btn"
+            onClick={() => void flipCamera()}
+            aria-label="Switch camera"
+          >
+            <SwitchCamera size={20} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

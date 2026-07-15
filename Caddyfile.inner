@@ -1,0 +1,7 @@
+# Inner static file server for the cam-app sidecar container.
+# TLS, compression, cache-control and security headers are all handled by
+# the shared edge Caddy (caddy-caddy-1) which reverse-proxies to this.
+:8080 {
+	root * /srv/current
+	file_server
+}

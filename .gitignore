@@ -1,0 +1,26 @@
+# assistant/working documents — not part of the source
+FABLE_MASTER_PROMPT.md
+NEXT_FEATURES_PROMPT.md
+*_PROMPT.md
+.claude/
+**/.claude/
+CLAUDE.md
+
+# dependencies & build output
+node_modules/
+app/dist/
+
+# production releases on the hosting server
+deploy/
+
+# Android build output (the Gradle project itself is committed)
+app/android/app/build/
+app/android/build/
+app/android/.gradle/
+app/android/local.properties
+
+# local environment & junk
+.env
+.env.*
+.DS_Store
+*.log

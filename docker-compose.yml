@@ -1,0 +1,25 @@
+# Static-file sidecar for cam.reclaimchennai.city.
+#
+# Why a sidecar instead of a `root`+`file_server` block in the shared
+# Caddy container: that container only bind-mounts specific host paths,
+# and adding a volume for this app would force `docker compose up -d`
+# (a container recreate) — briefly dropping every *.reclaimchennai.city
+# site. Joining caddy_default and reverse-proxying by container name is
+# the same pattern police-api uses, and needs only a Caddyfile reload.
+#
+# The edge Caddy proxies cam.reclaimchennai.city → cam-app:8080.
+# No host port is published; traffic only flows through the edge.
+services:
+  cam-app:
+    image: caddy:latest
+    container_name: cam-app
+    restart: unless-stopped
+    volumes:
+      - ./deploy:/srv:ro
+      - ./Caddyfile.inner:/etc/caddy/Caddyfile:ro
+    networks:
+      - caddy_default
+
+networks:
+  caddy_default:
+    external: true
