@@ -70,12 +70,20 @@ cloud. This one doesn't: everything happens in your browser, on your phone.
 
 ## Self-hosting
 
-With Docker installed:
+Quickest — the prebuilt image from Docker Hub:
+
+```bash
+docker run -d --name gps-camera -p 8080:8080 --restart unless-stopped \
+  reclaimchennai/chennai-gps-camera
+# → http://localhost:8080
+```
+
+Or build from source (verifiable):
 
 ```bash
 git clone git@github.com:reclaimchennai/chennai-gps-camera.git
 cd chennai-gps-camera
-docker compose -f compose.selfhost.yml up -d
+docker compose -f compose.selfhost.yml up -d --build
 # → http://localhost:8080
 ```
 

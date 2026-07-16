@@ -131,13 +131,48 @@ function headBoxFromPose(
   };
 }
 
+function runDetector(
+  detector: FaceDetectorT,
+  source: Source,
+  offsetX = 0,
+  offsetY = 0
+): DetectedBox[] {
+  const out: DetectedBox[] = [];
+  try {
+    const res = detector.detect(source);
+    for (const d of res.detections) {
+      const b = d.boundingBox;
+      if (b)
+        out.push({
+          x: b.originX + offsetX,
+          y: b.originY + offsetY,
+          width: b.width,
+          height: b.height,
+          score: 1,
+        });
+    }
+  } catch {
+    // this pass failed — others may still contribute
+  }
+  return out;
+}
+
+export interface DetectOptions {
+  /** Multi-scale tiled passes catch small/distant faces the single-pass
+   *  short-range model misses. Costs ~5 detector runs — used for capture
+   *  and editor auto-blur; the live viewfinder uses a single pass. */
+  thorough?: boolean;
+}
+
 /**
  * Detect faces AND side-profile heads; boxes in source pixel coordinates,
  * clamped to the frame. Returns null when no detector could load at all.
  */
 export async function detectFaces(
-  source: Source
+  source: Source,
+  opts: DetectOptions = {}
 ): Promise<DetectedBox[] | null> {
+  const thorough = opts.thorough ?? true;
   const { w, h } = sourceSize(source);
   const boxes: DetectedBox[] = [];
   let anyDetectorRan = false;
@@ -145,21 +180,33 @@ export async function detectFaces(
   const detector = await getFaceDetector();
   if (detector) {
     anyDetectorRan = true;
-    try {
-      const res = detector.detect(source);
-      for (const d of res.detections) {
-        const b = d.boundingBox;
-        if (b)
-          boxes.push({
-            x: b.originX,
-            y: b.originY,
-            width: b.width,
-            height: b.height,
-            score: 1,
-          });
+    boxes.push(...runDetector(detector, source));
+
+    // multi-scale: 2×2 overlapping tiles (60% of each dimension) —
+    // effectively a 1.7× zoom per tile, so faces too small for the
+    // full-frame pass become detectable
+    if (thorough && Math.max(w, h) >= 512) {
+      const tw = Math.round(w * 0.6);
+      const th = Math.round(h * 0.6);
+      const tile = document.createElement("canvas");
+      tile.width = tw;
+      tile.height = th;
+      const tctx = tile.getContext("2d");
+      if (tctx) {
+        const origins: [number, number][] = [
+          [0, 0],
+          [w - tw, 0],
+          [0, h - th],
+          [w - tw, h - th],
+        ];
+        for (const [ox, oy] of origins) {
+          tctx.clearRect(0, 0, tw, th);
+          tctx.drawImage(source, ox, oy, tw, th, 0, 0, tw, th);
+          for (const b of runDetector(detector, tile, ox, oy)) {
+            if (!boxes.some((k) => iou(k, b) > 0.35)) boxes.push(b);
+          }
+        }
       }
-    } catch {
-      // frontal pass failed — pose fallback below may still work
     }
   }
 
@@ -194,9 +241,10 @@ export async function detectFaces(
   });
 }
 
-/** Same detectors reused across video frames (IMAGE mode per-frame). */
+/** Same detectors reused across video frames (IMAGE mode per-frame);
+ *  single-pass — tiling is too heavy at export frame rates. */
 export async function detectFacesInFrame(
   canvas: HTMLCanvasElement
 ): Promise<DetectedBox[]> {
-  return (await detectFaces(canvas)) ?? [];
+  return (await detectFaces(canvas, { thorough: false })) ?? [];
 }

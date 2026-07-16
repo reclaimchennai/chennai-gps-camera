@@ -27,6 +27,7 @@
     "@turf/helpers": "^7.3.5",
     "@turf/point-to-line-distance": "^7.3.5",
     "@turf/polygon-to-line": "^7.3.5",
+    "fix-webm-duration": "^1.0.6",
     "idb": "^8.0.3",
     "konva": "^10.3.0",
     "lucide-react": "^1.24.0",

@@ -11,6 +11,9 @@ COPY app/ .
 RUN npm run build
 
 FROM caddy:2-alpine
+LABEL org.opencontainers.image.source="https://github.com/reclaimchennai/chennai-gps-camera" \
+      org.opencontainers.image.description="Privacy-first GPS camera PWA — static self-host image" \
+      org.opencontainers.image.licenses="MIT"
 COPY Caddyfile.selfhost /etc/caddy/Caddyfile
 COPY --from=build /build/dist /srv/app
 EXPOSE 8080

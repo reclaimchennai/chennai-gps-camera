@@ -14,6 +14,8 @@ import { navigate } from "../nav";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
 import { detectFaces, type DetectedBox } from "../lib/detect/faces";
+import { pickRecordingMime, finalizeVideoBlob } from "../lib/video/postprocess";
+import { downloadBlob, suggestedName } from "../lib/share";
 import type { VideoRecord } from "../types";
 import { Zap, SwitchCamera, Settings, Images } from "lucide-react";
 
@@ -198,12 +200,12 @@ export default function CameraView({ active }: { active: boolean }) {
       }
       if (detectBusyRef.current || !video || video.videoWidth === 0) return;
       detectBusyRef.current = true;
-      const scale = 256 / Math.max(video.videoWidth, video.videoHeight);
+      const scale = 384 / Math.max(video.videoWidth, video.videoHeight);
       const dc = (detectCanvasRef.current ??= document.createElement("canvas"));
       dc.width = Math.max(1, Math.round(video.videoWidth * scale));
       dc.height = Math.max(1, Math.round(video.videoHeight * scale));
       dc.getContext("2d")?.drawImage(video, 0, 0, dc.width, dc.height);
-      void detectFaces(dc)
+      void detectFaces(dc, { thorough: false })
         .then((boxes) => {
           const inv = 1 / scale;
           liveBoxesRef.current = (boxes ?? []).map((b) => {
@@ -279,15 +281,19 @@ export default function CameraView({ active }: { active: boolean }) {
   const startRecording = useCallback(() => {
     const stream = camera.stream;
     if (!stream) return;
-    const mimeCandidates = [
-      "video/webm;codecs=vp9,opus",
-      "video/webm;codecs=vp8,opus",
-      "video/webm",
-      "video/mp4",
-    ];
-    const mimeType =
-      mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
-    const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    // MP4 preferred where supported: phone galleries read its duration
+    // and GPS metadata, and editors accept it (webm often reads as
+    // "corrupted or unsupported" outside the browser)
+    let mimeType = pickRecordingMime();
+    let rec: MediaRecorder;
+    try {
+      rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    } catch {
+      // some devices accept the mp4 type probe but fail with this track
+      // combination — fall back to webm
+      mimeType = "video/webm";
+      rec = new MediaRecorder(stream, { mimeType });
+    }
     recChunksRef.current = [];
     rec.ondataavailable = (e) => {
       if (e.data.size) recChunksRef.current.push(e.data);
@@ -295,7 +301,7 @@ export default function CameraView({ active }: { active: boolean }) {
     rec.onstop = () => {
       setRecording(false);
       const duration = (Date.now() - recStartRef.current) / 1000;
-      const blob = new Blob(recChunksRef.current, {
+      const rawBlob = new Blob(recChunksRef.current, {
         type: mimeType || "video/webm",
       });
       recChunksRef.current = [];
@@ -303,7 +309,8 @@ export default function CameraView({ active }: { active: boolean }) {
         const video = videoRef.current;
         const track = camera.track;
         const s = track?.getSettings();
-        const liveBlurOn = useSettingsStore.getState().settings.liveFaceBlur;
+        const settingsNow = useSettingsStore.getState().settings;
+        const liveBlurOn = settingsNow.liveFaceBlur;
         const record: VideoRecord = {
           id: newId(),
           kind: "video",
@@ -311,11 +318,18 @@ export default function CameraView({ active }: { active: boolean }) {
           duration,
           width: s?.width ?? video?.videoWidth ?? 0,
           height: s?.height ?? video?.videoHeight ?? 0,
-          mimeType: blob.type,
+          mimeType: rawBlob.type,
           data: collectWatermarkData(),
           config: useSettingsStore.getState().watermark,
           liveBlur: liveBlurOn || undefined,
         };
+        // container fixes: GPS atom for MP4, duration header for webm —
+        // so the file is a proper geotagged video outside this app too
+        const blob = await finalizeVideoBlob(
+          rawBlob,
+          duration * 1000,
+          record.data.fix
+        );
         await putBlob(record.id, "source", blob);
         let thumb: Blob | null = null;
         if (video && video.videoWidth) {
@@ -328,6 +342,17 @@ export default function CameraView({ active }: { active: boolean }) {
         }
         await putMedia(record);
         if (thumb) updateThumb(record.id, thumb);
+        // auto-save to device, same as photos
+        if (settingsNow.autoSaveToDevice) {
+          try {
+            downloadBlob(
+              blob,
+              suggestedName("video", record.createdAt, blob.type)
+            );
+          } catch {
+            // download blocked — in-app copy is already saved
+          }
+        }
         // Honesty: live blur cannot burn into the raw recording — it is
         // applied when the clip is exported.
         showToast(

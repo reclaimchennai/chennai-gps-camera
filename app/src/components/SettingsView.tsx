@@ -2,6 +2,11 @@ import { Screen, Row, Toggle } from "./ui";
 import { useSettingsStore } from "../store";
 import { navigate } from "../nav";
 
+// TEMPORARY (owner request): show the classic blinking NEW gif on the
+// live-face-blur row until 2026-07-21, after which the Experimental chip
+// returns automatically. Delete /new.gif and this block after that date.
+const NEW_GIF_UNTIL = Date.UTC(2026, 6, 21); // months are 0-based → July 21
+
 export default function SettingsView() {
   const settings = useSettingsStore((s) => s.settings);
   const setSettings = useSettingsStore((s) => s.setSettings);
@@ -68,7 +73,16 @@ export default function SettingsView() {
         <Row
           label={
             <>
-              Live face blur <span className="exp-chip">Experimental</span>
+              Live face blur{" "}
+              {Date.now() < NEW_GIF_UNTIL ? (
+                <img
+                  src="/new.gif"
+                  alt="New"
+                  style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
+                />
+              ) : (
+                <span className="exp-chip">Experimental</span>
+              )}
             </>
           }
           hint="Blurs detected faces in the viewfinder and burns them into photos. Videos record raw and blur at export. Best-effort — always review; uses more battery."

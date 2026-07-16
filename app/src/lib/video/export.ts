@@ -22,6 +22,7 @@ import {
 } from "../editor/shapes";
 import { detectFacesInFrame, type DetectedBox } from "../detect/faces";
 import { makeThumbnail } from "../img";
+import { pickRecordingMime, finalizeVideoBlob } from "./postprocess";
 
 export interface CropRect {
   x: number;
@@ -118,18 +119,20 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
     // no audio in source, or WebAudio unavailable — export video-only
   }
 
-  const mimeCandidates = [
-    "video/webm;codecs=vp9,opus",
-    "video/webm;codecs=vp8,opus",
-    "video/webm",
-    "video/mp4",
-  ];
-  const mimeType =
-    mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
-  const recorder = new MediaRecorder(new MediaStream(streamTracks), {
-    mimeType: mimeType || undefined,
-    videoBitsPerSecond: 8_000_000,
-  });
+  let mimeType = pickRecordingMime();
+  let recorder: MediaRecorder;
+  try {
+    recorder = new MediaRecorder(new MediaStream(streamTracks), {
+      mimeType: mimeType || undefined,
+      videoBitsPerSecond: 8_000_000,
+    });
+  } catch {
+    mimeType = "video/webm";
+    recorder = new MediaRecorder(new MediaStream(streamTracks), {
+      mimeType,
+      videoBitsPerSecond: 8_000_000,
+    });
+  }
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => {
     if (e.data.size) chunks.push(e.data);
@@ -261,10 +264,14 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   stopped = true;
   video.pause();
   recorder.stop();
-  const blob = await done;
+  const rawOut = await done;
 
   URL.revokeObjectURL(srcUrl);
   if (audioCtx) void audioCtx.close();
+
+  // container fixes: GPS atom (MP4) / duration header (webm)
+  const durationS = trimEnd - trimStart;
+  const blob = await finalizeVideoBlob(rawOut, durationS * 1000, data.fix);
   opts.onProgress(1);
 
   return {
@@ -272,6 +279,6 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
     thumb,
     width: outW,
     height: outH,
-    duration: trimEnd - trimStart,
+    duration: durationS,
   };
 }
