@@ -1124,6 +1124,7 @@ input[type="range"] {
 
 .coach-card {
   background: var(--surface);
+  color: var(--text);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 18px;
@@ -1136,6 +1137,7 @@ input[type="range"] {
 .coach-card h2 {
   margin: 0 0 12px;
   font-size: 17px;
+  color: var(--text);
 }
 
 .coach-card p {
