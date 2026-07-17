@@ -162,6 +162,7 @@ export default function CameraView({ active }: { active: boolean }) {
       assetsRef.current.profilePhoto = p;
     });
 
+    let lastSig: unknown[] = [];
     const draw = () => {
       if (stop) return;
       const canvas = overlayRef.current;
@@ -171,13 +172,35 @@ export default function CameraView({ active }: { active: boolean }) {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = Math.round(rect.width * dpr);
       const h = Math.round(rect.height * dpr);
+      const { watermark, profile, settings: s } = useSettingsStore.getState();
+      const live = useLiveStore.getState();
+
+      // Skip repaints when nothing visible changed — a full-canvas
+      // watermark render several times a second is what WebViews choke
+      // on. Live blur patches sample the moving video, so they always
+      // repaint.
+      const blurLive = s.liveFaceBlur && liveBoxesRef.current.length > 0;
+      const sig: unknown[] = [
+        w, h, Math.floor(Date.now() / 1000), live.db, live.fix,
+        live.bearing == null ? null : Math.round(live.bearing),
+        live.gpsStatus, live.address, live.lookupResult, watermark,
+        profile, assetsRef.current.miniMap, assetsRef.current.profilePhoto,
+      ];
+      if (
+        !blurLive &&
+        sig.length === lastSig.length &&
+        sig.every((v, i) => v === lastSig[i])
+      ) {
+        return;
+      }
+      lastSig = sig;
+
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w;
         canvas.height = h;
       }
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      const { watermark, profile, settings: s } = useSettingsStore.getState();
       const data = collectWatermarkData();
       ctx.clearRect(0, 0, w, h);
 

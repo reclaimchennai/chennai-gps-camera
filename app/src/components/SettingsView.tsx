@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { Screen, Row, Toggle } from "./ui";
-import { useSettingsStore } from "../store";
+import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
 import { isNativeApp } from "../lib/native";
+import { startMeter, stopMeter } from "../lib/audio/meter";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -11,6 +13,14 @@ const NEW_GIF_UNTIL = Date.UTC(2026, 6, 21); // months are 0-based → July 21
 export default function SettingsView() {
   const settings = useSettingsStore((s) => s.settings);
   const setSettings = useSettingsStore((s) => s.setSettings);
+  const liveDb = useLiveStore((s) => s.db);
+
+  // keep the mic meter running here so the calibration row shows a live
+  // reading; CameraView restarts its own metering when it regains focus
+  useEffect(() => {
+    startMeter();
+    return () => stopMeter();
+  }, []);
 
   return (
     <Screen title="Settings">
@@ -91,6 +101,22 @@ export default function SettingsView() {
           <Toggle
             on={settings.liveFaceBlur}
             onChange={(v) => setSettings({ liveFaceBlur: v })}
+          />
+        </Row>
+        <Row
+          label={`Sound meter calibration (${settings.dbCalibration >= 0 ? "+" : ""}${settings.dbCalibration} dB)`}
+          hint={`Live reading: ${liveDb != null ? `≈ ${liveDb} dB` : "listening…"} — adjust until it matches a noise-meter app you trust`}
+        >
+          <input
+            type="range"
+            min={-20}
+            max={20}
+            step={1}
+            style={{ width: 150 }}
+            value={settings.dbCalibration}
+            onChange={(e) =>
+              setSettings({ dbCalibration: Number(e.target.value) })
+            }
           />
         </Row>
       </div>

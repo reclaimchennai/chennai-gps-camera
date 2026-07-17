@@ -27,6 +27,7 @@ import {
   AlignRight,
   Plus,
   ChevronUp,
+  ZoomIn,
 } from "lucide-react";
 import {
   EditorTopBar,
@@ -86,7 +87,11 @@ export default function PhotoEditorView({ id }: { id: string }) {
   const [rec, setRec] = useState<PhotoRecord | null>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [fit, setFit] = useState(1);
-  const [tool, setTool] = useState<Tool>("pen");
+  // No default tool: with nothing selected one finger pans the (zoomed)
+  // photo — users pick a tool deliberately before drawing.
+  const [tool, setTool] = useState<Tool | null>(null);
+  // pinch/wheel zoom viewport: stage scale = fit * zoom, position = x/y
+  const [view, setView] = useState({ zoom: 1, x: 0, y: 0 });
   const [color, setColor] = useState(MARK_COLORS[0]);
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -122,6 +127,9 @@ export default function PhotoEditorView({ id }: { id: string }) {
   const histIdxRef = useRef(0);
   const shapesRef = useRef<Shape[]>([]);
   const mosaicsRef = useRef(new Map<number, HTMLCanvasElement>());
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const pinchRef = useRef<{ dist: number; mid: { x: number; y: number } } | null>(null);
 
   const showNote = useCallback((msg: string, ms = 3200) => {
     setNote(msg);
@@ -254,7 +262,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
         return selectedShape.intensity ?? DEFAULT_BLUR_INTENSITY;
       return strokeVal(img.naturalWidth, selectedShape.strokeWidth);
     }
-    return sliderVals[tool] ?? null;
+    return tool ? (sliderVals[tool] ?? null) : null;
   })();
 
   const onSlider = useCallback(
@@ -271,7 +279,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
             return { ...s, strokeWidth: strokeFor(img.naturalWidth, v) };
           })
         );
-      } else {
+      } else if (tool) {
         setSliderVals((sv) => ({ ...sv, [tool]: v }));
       }
     },
@@ -284,7 +292,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
 
   const colorableContext =
     (selectedShape && COLORABLE.has(selectedShape.type)) ||
-    (!selectedShape && COLORABLE.has(tool));
+    (!selectedShape && tool != null && COLORABLE.has(tool));
 
   const onColor = useCallback(
     (c: string) => {
@@ -305,21 +313,101 @@ export default function PhotoEditorView({ id }: { id: string }) {
 
   // ---- pointer drawing (empty-canvas only; shapes handle their own taps) --
   const stagePos = useCallback((): { x: number; y: number } | null => {
-    const stage = stageRef.current;
-    const p = stage?.getPointerPosition();
-    if (!p) return null;
-    return { x: p.x / fit, y: p.y / fit };
-  }, [fit]);
+    // relative position honours the pinch-zoom/pan stage transform
+    return stageRef.current?.getRelativePointerPosition() ?? null;
+  }, []);
+
+  // clamp so the photo always covers the viewport (no rubber void)
+  const clampView = useCallback(
+    (zoom: number, x: number, y: number) => {
+      const w = img ? img.naturalWidth * fit : 0;
+      const h = img ? img.naturalHeight * fit : 0;
+      return {
+        zoom,
+        x: Math.min(0, Math.max(w - w * zoom, x)),
+        y: Math.min(0, Math.max(h - h * zoom, y)),
+      };
+    },
+    [img, fit]
+  );
+
+  const readPinch = useCallback((te: TouchEvent) => {
+    const rect = stageRef.current?.container().getBoundingClientRect();
+    if (!rect || te.touches.length < 2) return null;
+    const a = te.touches[0];
+    const b = te.touches[1];
+    return {
+      mid: {
+        x: (a.clientX + b.clientX) / 2 - rect.left,
+        y: (a.clientY + b.clientY) / 2 - rect.top,
+      },
+      dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+    };
+  }, []);
+
+  // a second finger landing mid-draw aborts the draft cleanly
+  const cancelActiveDraft = useCallback(() => {
+    const draft = drawingRef.current;
+    if (draft) {
+      drawingRef.current = null;
+      setShapes((prev) => prev.filter((s) => s.id !== draft.id));
+    }
+    const sid = strokeDrawRef.current;
+    if (sid) {
+      strokeDrawRef.current = null;
+      setShapes((prev) =>
+        prev
+          .map((s) =>
+            s.id === sid && (s.type === "pen" || s.type === "highlight")
+              ? { ...s, strokes: s.strokes.slice(0, -1) }
+              : s
+          )
+          .filter(
+            (s) =>
+              !(
+                s.id === sid &&
+                (s.type === "pen" || s.type === "highlight") &&
+                s.strokes.length === 0
+              )
+          )
+      );
+    }
+  }, []);
+
+  const onStageWheel = useCallback(
+    (e: Konva.KonvaEventObject<WheelEvent>) => {
+      e.evt.preventDefault();
+      const p = stageRef.current?.getPointerPosition();
+      if (!p) return;
+      setView((v) => {
+        const nz = Math.min(
+          8,
+          Math.max(1, v.zoom * (e.evt.deltaY < 0 ? 1.12 : 1 / 1.12))
+        );
+        const qx = (p.x - v.x) / v.zoom;
+        const qy = (p.y - v.y) / v.zoom;
+        return clampView(nz, p.x - qx * nz, p.y - qy * nz);
+      });
+    },
+    [clampView]
+  );
 
   const onStagePointerDown = useCallback(
     (e: Konva.KonvaEventObject<Event>) => {
       if (editingTextId) return;
+      const te = e.evt as TouchEvent;
+      if (te.touches && te.touches.length >= 2) {
+        cancelActiveDraft();
+        pinchRef.current = readPinch(te);
+        return;
+      }
       const pos = stagePos();
       if (!pos || !img) return;
       const onEmpty =
         e.target === e.target.getStage() || e.target.name() === "bg";
       if (!onEmpty) return; // tap/drag on a shape → selection & drag
       setSelectedId(null);
+      if (tool == null) return; // no tool armed — gesture pans instead
       if (tool === "text") return; // text is placed via the toolbar button
       const w = img.naturalWidth;
       const strokeWidth = Math.max(2, strokeFor(w, sliderVals[tool] ?? 0.25));
@@ -373,10 +461,24 @@ export default function PhotoEditorView({ id }: { id: string }) {
         setShapes((s) => [...s, draft]);
       }
     },
-    [tool, color, stagePos, img, editingTextId, sliderVals, closeOpenStroke]
+    [tool, color, stagePos, img, editingTextId, sliderVals, closeOpenStroke, cancelActiveDraft, readPinch]
   );
 
-  const onStagePointerMove = useCallback(() => {
+  const onStagePointerMove = useCallback((e?: Konva.KonvaEventObject<Event>) => {
+    const te = e?.evt as TouchEvent | undefined;
+    if (pinchRef.current && te?.touches && te.touches.length >= 2) {
+      const next = readPinch(te);
+      const prev = pinchRef.current;
+      if (!next) return;
+      setView((v) => {
+        const nz = Math.min(8, Math.max(1, v.zoom * (next.dist / prev.dist)));
+        const qx = (prev.mid.x - v.x) / v.zoom;
+        const qy = (prev.mid.y - v.y) / v.zoom;
+        return clampView(nz, next.mid.x - qx * nz, next.mid.y - qy * nz);
+      });
+      pinchRef.current = next;
+      return;
+    }
     const pos = stagePos();
     if (!pos) return;
     const strokeId = strokeDrawRef.current;
@@ -418,9 +520,13 @@ export default function PhotoEditorView({ id }: { id: string }) {
         return s;
       })
     );
-  }, [stagePos]);
+  }, [stagePos, clampView, readPinch]);
 
-  const onStagePointerUp = useCallback(() => {
+  const onStagePointerUp = useCallback((e?: Konva.KonvaEventObject<Event>) => {
+    const te = e?.evt as TouchEvent | undefined;
+    if (pinchRef.current && (!te?.touches || te.touches.length < 2)) {
+      pinchRef.current = null;
+    }
     const strokeId = strokeDrawRef.current;
     if (strokeId) {
       strokeDrawRef.current = null;
@@ -679,6 +785,11 @@ export default function PhotoEditorView({ id }: { id: string }) {
     setEditingTextId(null);
     await new Promise((r) => setTimeout(r, 60)); // let transformer detach
     try {
+      // flatten at the un-zoomed transform — the export must always be
+      // the full photo, whatever the viewport was pinched to
+      stage.scale({ x: fit, y: fit });
+      stage.position({ x: 0, y: 0 });
+      setView({ zoom: 1, x: 0, y: 0 });
       const canvas = stage.toCanvas({ pixelRatio: 1 / fit });
       const jpeg = await canvasToBlob(canvas, "image/jpeg", 0.92);
       const withExif = await writeExif(jpeg, rec.data);
@@ -752,8 +863,25 @@ export default function PhotoEditorView({ id }: { id: string }) {
             ref={stageRef}
             width={stageW}
             height={stageH}
-            scaleX={fit}
-            scaleY={fit}
+            scaleX={fit * view.zoom}
+            scaleY={fit * view.zoom}
+            x={view.x}
+            y={view.y}
+            draggable={tool == null && !editingTextId}
+            dragBoundFunc={(pos) => {
+              const z = viewRef.current.zoom;
+              return {
+                x: Math.min(0, Math.max(stageW - stageW * z, pos.x)),
+                y: Math.min(0, Math.max(stageH - stageH * z, pos.y)),
+              };
+            }}
+            onDragEnd={(e) => {
+              if (e.target === e.target.getStage()) {
+                const st = e.target;
+                setView((v) => ({ ...v, x: st.x(), y: st.y() }));
+              }
+            }}
+            onWheel={onStageWheel}
             onMouseDown={onStagePointerDown}
             onTouchStart={onStagePointerDown}
             onMouseMove={onStagePointerMove}
@@ -941,6 +1069,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
         {showCoach && (
           <CoachOverlay
             items={[
+              { icon: <ZoomIn size={17} />, label: "Pinch to zoom — drag to pan while no tool is active" },
               { icon: <Pen size={17} />, label: "Pen — draw freehand" },
               { icon: <Highlighter size={17} />, label: "Highlighter" },
               { icon: <ArrowUpRight size={17} />, label: "Arrow" },
@@ -1158,6 +1287,11 @@ export default function PhotoEditorView({ id }: { id: string }) {
             if (key === "text") {
               setTool("text");
               startNewText();
+              return;
+            }
+            // tapping the active tool disarms it — back to pan/zoom mode
+            if (key === tool) {
+              setTool(null);
               return;
             }
             setTool(key as Tool);

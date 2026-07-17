@@ -156,7 +156,8 @@ export function ToolRow({
   onTool,
 }: {
   tools: ToolDef[];
-  activeTool: string;
+  /** null = no tool armed (pan/zoom mode) */
+  activeTool: string | null;
   onTool: (key: string) => void;
 }) {
   return (

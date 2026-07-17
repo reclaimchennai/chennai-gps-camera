@@ -7,9 +7,10 @@ export default function AboutView() {
       <div className="card" style={{ padding: 16 }}>
         <h2 style={{ margin: "0 0 8px", fontSize: 18 }}>{APP_NAME}</h2>
         <p className="hint" style={{ fontSize: 14, lineHeight: 1.6 }}>
-          A location-stamped camera for Chennai. Every photo carries GPS
-          coordinates, ward, zone, and police-jurisdiction details resolved
-          on your device — no internet needed to shoot.
+          A location-stamped camera born in Chennai, covering all of Tamil
+          Nadu and major Indian cities. Every photo carries GPS coordinates,
+          ward, zone, and police-jurisdiction details resolved on your
+          device — no internet needed to shoot.
         </p>
       </div>
 
@@ -56,8 +57,7 @@ export default function AboutView() {
           Automatic face / licence-plate blurring is best-effort and can miss
           things — always review blur regions yourself before sharing. It is
           not a guarantee of anonymisation. The experimental live face blur
-          burns into photos at capture; video clips record raw and are
-          blurred only when exported.
+          burns into photos at capture and into video files as they record.
         </p>
       </div>
 

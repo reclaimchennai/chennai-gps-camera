@@ -105,7 +105,8 @@ export default function VideoEditorView({ id }: { id: string }) {
   const [trim, setTrim] = useState<[number, number]>([0, 0]);
   const [playing, setPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
-  const [tool, setTool] = useState<VTool>("pen");
+  // No default tool — users pick one deliberately before drawing.
+  const [tool, setTool] = useState<VTool | null>(null);
   const [color, setColor] = useState(MARK_COLORS[0]);
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [history, setHistory] = useState<Shape[][]>([[]]);
@@ -313,7 +314,7 @@ export default function VideoEditorView({ id }: { id: string }) {
         return selectedShape.intensity ?? DEFAULT_BLUR_INTENSITY;
       return strokeVal(dims.w, selectedShape.strokeWidth);
     }
-    return sliderVals[tool] ?? null;
+    return tool ? (sliderVals[tool] ?? null) : null;
   })();
 
   const onSlider = useCallback(
@@ -329,7 +330,7 @@ export default function VideoEditorView({ id }: { id: string }) {
             return { ...s, strokeWidth: strokeFor(dims.w, v) };
           })
         );
-      } else {
+      } else if (tool) {
         setSliderVals((sv) => ({ ...sv, [tool]: v }));
       }
     },
@@ -342,7 +343,7 @@ export default function VideoEditorView({ id }: { id: string }) {
 
   const colorableContext =
     (selectedShape && COLORABLE.has(selectedShape.type)) ||
-    (!selectedShape && COLORABLE.has(tool));
+    (!selectedShape && tool != null && COLORABLE.has(tool));
 
   const onColor = useCallback(
     (c: string) => {
@@ -375,7 +376,7 @@ export default function VideoEditorView({ id }: { id: string }) {
       const onEmpty = e.target === e.target.getStage();
       if (!onEmpty) return; // shapes handle their own selection/drag
       setSelectedId(null);
-      if (tool === "crop" || tool === "text") return;
+      if (tool == null || tool === "crop" || tool === "text") return;
       const strokeWidth = Math.max(2, strokeFor(dims.w, sliderVals[tool] ?? 0.25));
 
       if (tool === "pen" || tool === "highlight") {
@@ -1229,6 +1230,11 @@ export default function VideoEditorView({ id }: { id: string }) {
             if (key === "text") {
               setTool("text");
               startNewText();
+              return;
+            }
+            // tapping the active tool disarms it
+            if (key === tool) {
+              setTool(null);
               return;
             }
             setTool(key as VTool);

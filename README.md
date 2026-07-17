@@ -8,7 +8,18 @@ exact Law & Order and Traffic police-station jurisdictions, all resolved
 **on your device, offline**. True GPS EXIF metadata is written alongside,
 whatever the visible card shows.
 
-Live instance: **https://cam.reclaimchennai.city**
+## Get it
+
+| | |
+|---|---|
+| **Web app (PWA)** | https://cam.reclaimchennai.city — open and "Add to Home screen"; updates automatically |
+| **Android APK** | [Latest GitHub release](https://github.com/reclaimchennai/chennai-gps-camera/releases/latest) or direct: [cam.reclaimchennai.city/download/chennai-gps-camera.apk](https://cam.reclaimchennai.city/download/chennai-gps-camera.apk) |
+| **Auto-updating APK** | Add this repo (`reclaimchennai/chennai-gps-camera`) in [Obtainium](https://github.com/ImranR98/Obtainium) — it pulls each new GitHub release |
+| **Docker image** | [`reclaimchennai/chennai-gps-camera`](https://hub.docker.com/r/reclaimchennai/chennai-gps-camera) on Docker Hub — self-host the whole app |
+
+The Android build adds two native upgrades over the PWA: street addresses
+from the phone's own geocoder (offline-capable, always English) and captures
+saved straight to the gallery (`DCIM/GPS Camera`).
 
 ## Why this exists
 

@@ -63,6 +63,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appTheme: "system",
   dateFormat: "DD/MM/YYYY",
   liveFaceBlur: false,
+  dbCalibration: 0,
   googleApiKey: "",
   geocoder: "auto",
 };

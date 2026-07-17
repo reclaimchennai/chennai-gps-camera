@@ -11,12 +11,14 @@
  * is reused; otherwise a mic-only stream is opened. Everything stops and
  * releases the mic in stop().
  */
-import { useLiveStore } from "../../store";
+import { useLiveStore, useSettingsStore } from "../../store";
 
-// dBFS→"dB" shift chosen so normal conversation (~ -30 dBFS on a typical
-// phone mic) reads ~60 dB. Uncalibrated by nature.
+// dBFS→"dB" shift chosen so readings land close to common phone
+// noise-meter apps (quiet room ~35–40, conversation ~60, traffic ~75).
+// Phone mics + AGC vary per device, so Settings exposes a user
+// calibration offset added on top of this.
 const DB_OFFSET = 90;
-const FLOOR = 30;
+const FLOOR = 20;
 const CEIL = 120;
 
 let audioCtx: AudioContext | null = null;
@@ -50,13 +52,25 @@ function teardownGraph() {
 
 function tick() {
   if (!analyser) return;
+  // Autoplay policy (strictest inside the Android WebView): an
+  // AudioContext created without a user gesture sits "suspended" and the
+  // analyser reads pure zeros forever — retry resuming every tick until
+  // a gesture lands and it sticks.
+  if (audioCtx && audioCtx.state === "suspended") {
+    void audioCtx.resume();
+    return;
+  }
   const buf = new Float32Array(analyser.fftSize);
   analyser.getFloatTimeDomainData(buf);
   let sum = 0;
   for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
   const rms = Math.sqrt(sum / buf.length);
   if (rms <= 1e-7) return; // silent buffer before the mic warms up
-  const db = Math.min(CEIL, Math.max(FLOOR, 20 * Math.log10(rms) + DB_OFFSET));
+  const cal = useSettingsStore.getState().settings.dbCalibration || 0;
+  const db = Math.min(
+    CEIL,
+    Math.max(FLOOR, 20 * Math.log10(rms) + DB_OFFSET + cal)
+  );
   // fast attack, slower decay — how physical SPL meters behave
   smoothed =
     smoothed == null
@@ -64,7 +78,12 @@ function tick() {
       : db > smoothed
         ? smoothed * 0.4 + db * 0.6
         : smoothed * 0.75 + db * 0.25;
-  useLiveStore.getState().setDb(Math.round(smoothed));
+  const rounded = Math.round(smoothed);
+  // only touch the store when the displayed value changes — every set
+  // triggers a full watermark-overlay repaint in the viewfinder
+  if (useLiveStore.getState().db !== rounded) {
+    useLiveStore.getState().setDb(rounded);
+  }
 }
 
 /**
@@ -99,7 +118,21 @@ export function startMeter(cameraStream?: MediaStream | null): void {
         return;
       }
       audioCtx ??= new AudioContext();
-      if (audioCtx.state === "suspended") void audioCtx.resume();
+      if (audioCtx.state === "suspended") {
+        void audioCtx.resume();
+        // policies that reject resume() outside a gesture accept it
+        // inside one — hook the next few taps until it sticks
+        const onGesture = () => {
+          if (audioCtx && audioCtx.state === "suspended") {
+            void audioCtx.resume();
+          } else {
+            window.removeEventListener("pointerdown", onGesture);
+            window.removeEventListener("touchend", onGesture);
+          }
+        };
+        window.addEventListener("pointerdown", onGesture);
+        window.addEventListener("touchend", onGesture);
+      }
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 2048;
       srcNode = audioCtx.createMediaStreamSource(stream);
@@ -125,7 +158,8 @@ export function dbFromAnalyser(node: AnalyserNode): number | null {
   for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
   const rms = Math.sqrt(sum / buf.length);
   if (rms <= 1e-7) return null;
+  const cal = useSettingsStore.getState().settings.dbCalibration || 0;
   return Math.round(
-    Math.min(CEIL, Math.max(FLOOR, 20 * Math.log10(rms) + DB_OFFSET))
+    Math.min(CEIL, Math.max(FLOOR, 20 * Math.log10(rms) + DB_OFFSET + cal))
   );
 }

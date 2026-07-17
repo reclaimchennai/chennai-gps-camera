@@ -163,6 +163,9 @@ export interface AppSettings {
   /** EXPERIMENTAL: on-device face blur in the live viewfinder; burns into
    *  photos at capture, pre-arms auto-blur for video exports. */
   liveFaceBlur: boolean;
+  /** User calibration offset (dB) added to the sound meter so it can be
+   *  matched against a reference noise-meter app. */
+  dbCalibration: number;
   /** Optional Google Cloud key for the PWA geocode/static-map upgrade (§7). */
   googleApiKey: string;
   geocoder: "auto" | "google" | "nominatim" | "off";

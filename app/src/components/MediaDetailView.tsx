@@ -13,6 +13,7 @@ import { getMedia, getBlob, deleteMedia, putMedia } from "../lib/db";
 import type { MediaRecord } from "../types";
 import { navigate, goBack } from "../nav";
 import { shareBlob, downloadBlob, suggestedName } from "../lib/share";
+import { isNativeApp } from "../lib/native";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../lib/geo/format";
 
 export default function MediaDetailView({ id }: { id: string }) {
@@ -186,10 +187,14 @@ export default function MediaDetailView({ id }: { id: string }) {
           <PencilLine size={20} />
           <span>{rec.kind === "photo" ? "Annotate" : "Edit"}</span>
         </button>
-        <button className="media-action" onClick={() => void onDownload()}>
-          <Download size={20} />
-          <span>Save</span>
-        </button>
+        {/* Native builds auto-save captures straight to the gallery — a
+            manual Save would only create duplicates */}
+        {!isNativeApp() && (
+          <button className="media-action" onClick={() => void onDownload()}>
+            <Download size={20} />
+            <span>Save</span>
+          </button>
+        )}
         <button
           className="media-action danger"
           onClick={() => setConfirmDelete(true)}

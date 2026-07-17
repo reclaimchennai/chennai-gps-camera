@@ -7,6 +7,8 @@
  * full sensor resolution, falling back to grabbing the video frame.
  */
 
+import { isNativeApp } from "./native";
+
 export type FacingMode = "environment" | "user";
 
 export interface CameraCapabilitiesLite {
@@ -35,12 +37,16 @@ export class CameraController {
   async start(facing: FacingMode = this.facing): Promise<MediaStream> {
     this.stop();
     this.facing = facing;
+    // Native WebView: compositing a 4K live preview is what made the APK
+    // feel sluggish — cap the *stream* at 1080p there. Stills are
+    // unaffected: ImageCapture.takePhoto() reads the full sensor.
+    const native = isNativeApp();
     const constraints: MediaStreamConstraints = {
       audio: false,
       video: {
         facingMode: facing,
-        width: { ideal: 4096 },
-        height: { ideal: 2160 },
+        width: { ideal: native ? 1920 : 4096 },
+        height: { ideal: native ? 1080 : 2160 },
       },
     };
     try {
