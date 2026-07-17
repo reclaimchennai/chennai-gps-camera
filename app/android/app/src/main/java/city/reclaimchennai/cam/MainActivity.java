@@ -4,6 +4,7 @@ import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.webkit.WebView;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -19,7 +20,26 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(NativeBridgePlugin.class);
         super.onCreate(savedInstanceState);
+        // Without this the WebView refuses to start the viewfinder
+        // <video> (and gallery playback) until a tap lands — users saw a
+        // stuck play-button poster instead of the live camera.
+        bridge.getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false);
         requestCorePermissions();
+    }
+
+    /**
+     * The app is a hash-routed SPA: every in-app screen is a real WebView
+     * history entry. Walk that history on back gestures; only leave the
+     * app from the camera (root) screen.
+     */
+    @Override
+    public void onBackPressed() {
+        WebView wv = bridge.getWebView();
+        if (wv != null && wv.canGoBack()) {
+            wv.goBack();
+        } else {
+            super.onBackPressed();
+        }
     }
 
     /**

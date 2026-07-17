@@ -6,6 +6,7 @@ import {
 } from "react";
 import { camera } from "../lib/camera";
 import { startMeter, stopMeter } from "../lib/audio/meter";
+import { scheduleBackfill } from "../lib/backfill";
 import { capturePhoto, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
@@ -112,9 +113,9 @@ export default function CameraView({ active }: { active: boolean }) {
       stopMeter();
       return;
     }
-    // video mode: reuse the camera stream's mic track; photo mode: the
-    // meter opens its own mic-only stream
-    startMeter(camera.stream);
+    // own mic-only stream with voice processing off — recording keeps
+    // its separate (processed) track untouched
+    startMeter();
     return () => stopMeter();
   }, [active, ready, soundOn, mode]);
 
@@ -419,6 +420,16 @@ export default function CameraView({ active }: { active: boolean }) {
         const video = videoRef.current;
         const track = camera.track;
         const s = track?.getSettings();
+        const data = collectWatermarkData();
+        const { watermark: wmConfig, settings: appSettings } =
+          useSettingsStore.getState();
+        // address not resolved yet (offline or geocoder still working) —
+        // queue it so a later export carries the full watermark
+        const needsBackfill =
+          Boolean(data.fix) &&
+          appSettings.geocoder !== "off" &&
+          wmConfig.fields.address &&
+          !data.address;
         const record: VideoRecord = {
           id: newId(),
           kind: "video",
@@ -427,10 +438,11 @@ export default function CameraView({ active }: { active: boolean }) {
           width: burned ? burnW : (s?.width ?? video?.videoWidth ?? 0),
           height: burned ? burnH : (s?.height ?? video?.videoHeight ?? 0),
           mimeType: rawBlob.type,
-          data: collectWatermarkData(),
-          config: useSettingsStore.getState().watermark,
+          data,
+          config: wmConfig,
           liveBlur: liveBlurOn || undefined,
           blurBurned: burned || undefined,
+          backfill: needsBackfill ? "pending" : "not-needed",
         };
         // container fixes: GPS atom for MP4, duration header for webm —
         // so the file is a proper geotagged video outside this app too
@@ -450,6 +462,7 @@ export default function CameraView({ active }: { active: boolean }) {
           }
         }
         await putMedia(record);
+        if (needsBackfill) scheduleBackfill();
         if (thumb) updateThumb(record.id, thumb);
         // auto-save to device, same as photos
         if (useSettingsStore.getState().settings.autoSaveToDevice) {

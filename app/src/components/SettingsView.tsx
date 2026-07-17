@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Screen, Row, Toggle } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
@@ -14,6 +14,8 @@ export default function SettingsView() {
   const settings = useSettingsStore((s) => s.settings);
   const setSettings = useSettingsStore((s) => s.setSettings);
   const liveDb = useLiveStore((s) => s.db);
+  // reference level the user is exposing the mic to (dB), for Match
+  const [calRef, setCalRef] = useState("60");
 
   // keep the mic meter running here so the calibration row shows a live
   // reading; CameraView restarts its own metering when it regains focus
@@ -105,19 +107,41 @@ export default function SettingsView() {
         </Row>
         <Row
           label={`Sound meter calibration (${settings.dbCalibration >= 0 ? "+" : ""}${settings.dbCalibration} dB)`}
-          hint={`Live reading: ${liveDb != null ? `≈ ${liveDb} dB` : "listening…"} — adjust until it matches a noise-meter app you trust`}
+          hint={`Live reading: ${liveDb != null ? `≈ ${liveDb} dB` : "listening…"}. Play a known level near the phone (e.g. a calibrated 60 dB tone or a reference noise-meter app), type that number, then tap Match.`}
         >
-          <input
-            type="range"
-            min={-20}
-            max={20}
-            step={1}
-            style={{ width: 150 }}
-            value={settings.dbCalibration}
-            onChange={(e) =>
-              setSettings({ dbCalibration: Number(e.target.value) })
-            }
-          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              type="number"
+              min={30}
+              max={110}
+              step={1}
+              style={{ width: 64 }}
+              value={calRef}
+              onChange={(e) => setCalRef(e.target.value)}
+            />
+            <button
+              className="ghost-btn"
+              disabled={liveDb == null || calRef.trim() === ""}
+              onClick={() => {
+                const target = Number(calRef);
+                if (liveDb == null || !Number.isFinite(target)) return;
+                // current uncalibrated reading + new offset = target
+                const raw = liveDb - settings.dbCalibration;
+                setSettings({
+                  dbCalibration: Math.max(-40, Math.min(40, Math.round(target - raw))),
+                });
+              }}
+            >
+              Match
+            </button>
+            <button
+              className="ghost-btn"
+              disabled={settings.dbCalibration === 0}
+              onClick={() => setSettings({ dbCalibration: 0 })}
+            >
+              Reset
+            </button>
+          </div>
         </Row>
       </div>
 

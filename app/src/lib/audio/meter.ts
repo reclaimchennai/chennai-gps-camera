@@ -87,27 +87,31 @@ function tick() {
 }
 
 /**
- * Start (or restart) metering. Pass the camera stream so its audio track
- * is reused when present; falls back to a mic-only getUserMedia. Safe to
- * call repeatedly — the previous graph is torn down first.
+ * Start (or restart) metering. Always opens its own mic stream with the
+ * browser's voice processing OFF — echo cancellation, noise suppression
+ * and especially auto gain control rewrite the very levels an SPL meter
+ * exists to measure (AGC made quiet rooms and traffic read almost the
+ * same). Safe to call repeatedly — the previous graph is torn down first.
  */
-export function startMeter(cameraStream?: MediaStream | null): void {
+export function startMeter(): void {
   const gen = ++generation;
   if (starting) return; // a start is in flight; it checks generation
   starting = true;
   void (async () => {
     try {
       teardownGraph();
-      let stream = cameraStream ?? null;
-      if (!stream?.getAudioTracks().length) {
-        try {
-          ownStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-          });
-          stream = ownStream;
-        } catch {
-          return; // mic denied/unavailable — dB simply not shown
-        }
+      let stream: MediaStream | null = null;
+      try {
+        ownStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+        stream = ownStream;
+      } catch {
+        return; // mic denied/unavailable — dB simply not shown
       }
       if (gen !== generation) {
         // superseded while we awaited the mic

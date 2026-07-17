@@ -139,6 +139,9 @@ export interface VideoRecord {
   /** face blur was composited into the recording itself — the file on
    *  disk is already blurred, no export needed for privacy */
   blurBurned?: boolean;
+  /** street address was missing at record time — the queue fills
+   *  record.data in later so exports/shares carry the full watermark */
+  backfill?: BackfillStatus;
 }
 
 export type MediaRecord = PhotoRecord | VideoRecord;

@@ -20,11 +20,16 @@ interface NativeBridgePlugin {
     locality?: string;
     adminArea?: string;
   }>;
-  saveToGallery(opts: {
+  saveToGalleryBegin(opts: {
     filename: string;
     mime: string;
+  }): Promise<{ ok: boolean; id?: string }>;
+  saveToGalleryChunk(opts: {
+    id: string;
     base64: string;
   }): Promise<{ ok: boolean }>;
+  saveToGalleryEnd(opts: { id: string }): Promise<{ ok: boolean }>;
+  saveToGalleryAbort(opts: { id: string }): Promise<{ ok: boolean }>;
 }
 
 interface CapacitorGlobal {
@@ -72,28 +77,52 @@ export async function nativeReverseGeocode(
   }
 }
 
-/** Save a captured file into the device gallery (MediaStore). Returns
- *  false in the browser — callers fall back to <a download>. */
+// 3 MB binary per bridge message: large enough to amortise call
+// overhead, small enough that base64 strings never spike memory
+const SAVE_CHUNK_BYTES = 3 * 1024 * 1024;
+
+function blobChunkToBase64(chunk: Blob): Promise<string> {
+  return new Promise<string>((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(",")[1] ?? "");
+    fr.onerror = () => rej(new Error("read failed"));
+    fr.readAsDataURL(chunk);
+  });
+}
+
+/** Save a captured file into the device gallery (MediaStore), streamed
+ *  in chunks. Returns false in the browser — callers fall back to
+ *  <a download>. */
 export async function nativeSaveToGallery(
   blob: Blob,
   filename: string
 ): Promise<boolean> {
   const b = bridge();
   if (!b) return false;
+  let id: string | undefined;
   try {
-    const base64 = await new Promise<string>((res, rej) => {
-      const fr = new FileReader();
-      fr.onload = () => res(String(fr.result).split(",")[1] ?? "");
-      fr.onerror = () => rej(new Error("read failed"));
-      fr.readAsDataURL(blob);
-    });
-    const r = await b.saveToGallery({
+    const begin = await b.saveToGalleryBegin({
       filename,
       mime: blob.type || "application/octet-stream",
-      base64,
     });
-    return r.ok;
+    if (!begin.ok || !begin.id) return false;
+    id = begin.id;
+    for (let off = 0; off < blob.size; off += SAVE_CHUNK_BYTES) {
+      const base64 = await blobChunkToBase64(
+        blob.slice(off, off + SAVE_CHUNK_BYTES)
+      );
+      const r = await b.saveToGalleryChunk({ id, base64 });
+      if (!r.ok) throw new Error("chunk write failed");
+    }
+    return (await b.saveToGalleryEnd({ id })).ok;
   } catch {
+    if (id) {
+      try {
+        await b.saveToGalleryAbort({ id });
+      } catch {
+        // nothing left to clean up
+      }
+    }
     return false;
   }
 }
