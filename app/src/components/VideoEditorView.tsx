@@ -201,8 +201,10 @@ export default function VideoEditorView({ id }: { id: string }) {
         return;
       }
       setRec(r);
-      // recorded with experimental live blur → pre-arm auto face blur
-      if (r.liveBlur) setAutoBlur(true);
+      // recorded with live blur but the blur is NOT in the file (older
+      // recordings) → pre-arm auto face blur; blurBurned files are
+      // already blurred on disk, nothing to arm
+      if (r.liveBlur && !r.blurBurned) setAutoBlur(true);
       const blob = await getBlob(id, "source");
       if (!blob) return;
       setSrcBlob(blob);

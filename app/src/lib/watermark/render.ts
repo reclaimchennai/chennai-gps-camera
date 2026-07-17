@@ -209,6 +209,14 @@ function buildLines(
     });
   }
 
+  if (f.soundLevel && data.db != null) {
+    lines.push({
+      text: `Sound ≈ ${Math.round(data.db)} dB`,
+      font: small,
+      color: theme.dim,
+    });
+  }
+
   // ---- jurisdiction rows (honesty rules baked in) -------------------
   if (j && j.scope !== "out") {
     const wardPending = j.wardPending || j.scope === "avadi";
@@ -399,6 +407,9 @@ function renderMinimal(
   }
   if (config.fields.datetime) {
     rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes));
+  }
+  if (config.fields.soundLevel && data.db != null) {
+    rows.push(`Sound ≈ ${Math.round(data.db)} dB`);
   }
   const j = data.jurisdiction;
   if (

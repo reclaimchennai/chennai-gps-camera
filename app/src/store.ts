@@ -21,6 +21,8 @@ interface LiveState {
   address: string | undefined; // live-preview reverse geocode (best effort)
   locality: string | undefined;
   addressFor: { lat: number; lng: number } | null;
+  /** live ambient sound level, approximate dB (null = mic unavailable) */
+  db: number | null;
   setFix(fix: Fix): void;
   setLookupResult(r: LookupResult): void;
   setBearing(b: number): void;
@@ -30,6 +32,7 @@ interface LiveState {
     locality: string | undefined,
     at: { lat: number; lng: number } | null
   ): void;
+  setDb(db: number | null): void;
 }
 
 export const useLiveStore = create<LiveState>((set) => ({
@@ -40,12 +43,14 @@ export const useLiveStore = create<LiveState>((set) => ({
   address: undefined,
   locality: undefined,
   addressFor: null,
+  db: null,
   setFix: (fix) => set({ fix }),
   setLookupResult: (lookupResult) => set({ lookupResult }),
   setBearing: (bearing) => set({ bearing }),
   setGpsStatus: (gpsStatus) => set({ gpsStatus }),
   setAddress: (address, locality, addressFor) =>
     set({ address, locality, addressFor }),
+  setDb: (db) => set({ db }),
 }));
 
 // ---- Persistent settings ----------------------------------------------

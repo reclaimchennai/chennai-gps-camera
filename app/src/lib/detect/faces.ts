@@ -121,7 +121,12 @@ function headBoxFromPose(
   const cx = (minX + maxX) / 2;
   const cy = (minY + maxY) / 2;
   const span = Math.max(maxX - minX, maxY - minY);
-  const size = Math.max(span * 2.6, w * 0.04);
+  // Degenerate poses (limbs misread as faces, landmarks scattered across
+  // the frame) produce absurd spans — a real head's facial landmarks
+  // never cover half the frame. Reject rather than blur the whole scene.
+  const maxDim = Math.min(w, h);
+  if (span > maxDim * 0.5) return null;
+  const size = Math.min(Math.max(span * 2.6, w * 0.04), maxDim * 0.55);
   return {
     x: cx - size / 2,
     y: cy - size / 2 - size * 0.12, // heads extend upward (hair)

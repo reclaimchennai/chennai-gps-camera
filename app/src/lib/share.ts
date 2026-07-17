@@ -1,4 +1,5 @@
 /** Share / download helpers for gallery items. */
+import { nativeSaveToGallery } from "./native";
 
 function extFor(type: string): string {
   if (type.includes("jpeg")) return "jpg";
@@ -39,10 +40,16 @@ export async function shareBlob(
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  // APK build: <a download> with a blob: URL is a silent no-op inside an
+  // Android WebView — route through MediaStore so files land in the
+  // device gallery. Falls through to the anchor path in the browser.
+  void nativeSaveToGallery(blob, filename).then((saved) => {
+    if (saved) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  });
 }

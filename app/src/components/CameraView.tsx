@@ -5,6 +5,7 @@ import {
   useState,
 } from "react";
 import { camera } from "../lib/camera";
+import { startMeter, stopMeter } from "../lib/audio/meter";
 import { capturePhoto, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
@@ -92,6 +93,7 @@ export default function CameraView({ active }: { active: boolean }) {
       if (document.hidden) {
         recorderRef.current?.stop();
         camera.stop();
+        stopMeter();
       } else {
         void startCam(modeRef.current);
       }
@@ -102,6 +104,19 @@ export default function CameraView({ active }: { active: boolean }) {
       camera.stop();
     };
   }, [startCam]);
+
+  // ---- live sound meter (watermark "Sound level" field) ---------------
+  const soundOn = useSettingsStore((s) => s.watermark.fields.soundLevel);
+  useEffect(() => {
+    if (!active || !ready || !soundOn) {
+      stopMeter();
+      return;
+    }
+    // video mode: reuse the camera stream's mic track; photo mode: the
+    // meter opens its own mic-only stream
+    startMeter(camera.stream);
+    return () => stopMeter();
+  }, [active, ready, soundOn, mode]);
 
   const switchMode = useCallback(
     (m: Mode) => {
@@ -237,11 +252,15 @@ export default function CameraView({ active }: { active: boolean }) {
 
     refreshMap();
     draw();
+    // 300 ms keeps the watermark's seconds display ticking smoothly;
+    // the mini-map refresh stays at its old 600 ms cadence
+    let evenTick = false;
     const interval = window.setInterval(() => {
-      refreshMap();
+      evenTick = !evenTick;
+      if (evenTick) refreshMap();
       detectTick();
       draw();
-    }, 600);
+    }, 300);
     const unsubLive = useLiveStore.subscribe(draw);
     const unsubSettings = useSettingsStore.subscribe(() => {
       void getProfilePhoto().then((p) => {
@@ -281,18 +300,85 @@ export default function CameraView({ active }: { active: boolean }) {
   const startRecording = useCallback(() => {
     const stream = camera.stream;
     if (!stream) return;
+    const liveVideo = videoRef.current;
+    const liveBlurOn = useSettingsStore.getState().settings.liveFaceBlur;
+
+    // Live blur must end up IN the saved file, not just the preview —
+    // so with the setting on, we record a composited canvas (camera
+    // frame + mosaic patches) instead of the raw camera stream.
+    let recStream: MediaStream = stream;
+    let stopComposite: (() => void) | null = null;
+    let burned = false;
+    let burnW = 0;
+    let burnH = 0;
+    if (liveBlurOn && liveVideo && liveVideo.videoWidth) {
+      try {
+        burnW = Math.floor(liveVideo.videoWidth / 2) * 2;
+        burnH = Math.floor(liveVideo.videoHeight / 2) * 2;
+        const cc = document.createElement("canvas");
+        cc.width = burnW;
+        cc.height = burnH;
+        const cctx = cc.getContext("2d")!;
+        const tiny = document.createElement("canvas");
+        const tctx = tiny.getContext("2d")!;
+        let rafId = 0;
+        let compositeDone = false;
+        const paint = () => {
+          if (compositeDone) return;
+          cctx.drawImage(liveVideo, 0, 0, burnW, burnH);
+          for (const b of liveBoxesRef.current) {
+            const cells = 9;
+            tiny.width = cells;
+            tiny.height = cells;
+            tctx.drawImage(liveVideo, b.x, b.y, b.width, b.height, 0, 0, cells, cells);
+            cctx.imageSmoothingEnabled = false;
+            cctx.drawImage(tiny, 0, 0, cells, cells, b.x, b.y, b.width, b.height);
+            cctx.imageSmoothingEnabled = true;
+          }
+          schedule();
+        };
+        const rvfc = (liveVideo as HTMLVideoElement & {
+          requestVideoFrameCallback?: (cb: () => void) => number;
+        }).requestVideoFrameCallback?.bind(liveVideo);
+        const schedule = () => {
+          rafId = rvfc ? rvfc(paint) : requestAnimationFrame(paint);
+        };
+        paint();
+        const tracks = [
+          ...cc.captureStream(30).getVideoTracks(),
+          ...stream.getAudioTracks(),
+        ];
+        recStream = new MediaStream(tracks);
+        stopComposite = () => {
+          compositeDone = true;
+          if (!rvfc) cancelAnimationFrame(rafId);
+        };
+        burned = true;
+      } catch {
+        // compositing unavailable — record the raw stream as before
+        recStream = stream;
+        burned = false;
+      }
+    }
+
     // MP4 preferred where supported: phone galleries read its duration
     // and GPS metadata, and editors accept it (webm often reads as
     // "corrupted or unsupported" outside the browser)
     let mimeType = pickRecordingMime();
     let rec: MediaRecorder;
+    // canvas captureStream defaults to a low bitrate — keep burned
+    // recordings at camera-like quality
+    const recOpts = burned ? { videoBitsPerSecond: 8_000_000 } : {};
     try {
-      rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      rec = new MediaRecorder(
+        recStream,
+        mimeType ? { mimeType, ...recOpts } : recOpts
+      );
     } catch {
       // some devices accept the mp4 type probe but fail with this track
       // combination — fall back to webm
       mimeType = "video/webm";
-      rec = new MediaRecorder(stream, { mimeType });
+      rec = new MediaRecorder(recStream, { mimeType, ...recOpts });
     }
     recChunksRef.current = [];
     rec.ondataavailable = (e) => {
@@ -300,6 +386,7 @@ export default function CameraView({ active }: { active: boolean }) {
     };
     rec.onstop = () => {
       setRecording(false);
+      stopComposite?.();
       const duration = (Date.now() - recStartRef.current) / 1000;
       const rawBlob = new Blob(recChunksRef.current, {
         type: mimeType || "video/webm",
@@ -309,19 +396,18 @@ export default function CameraView({ active }: { active: boolean }) {
         const video = videoRef.current;
         const track = camera.track;
         const s = track?.getSettings();
-        const settingsNow = useSettingsStore.getState().settings;
-        const liveBlurOn = settingsNow.liveFaceBlur;
         const record: VideoRecord = {
           id: newId(),
           kind: "video",
           createdAt: recStartRef.current,
           duration,
-          width: s?.width ?? video?.videoWidth ?? 0,
-          height: s?.height ?? video?.videoHeight ?? 0,
+          width: burned ? burnW : (s?.width ?? video?.videoWidth ?? 0),
+          height: burned ? burnH : (s?.height ?? video?.videoHeight ?? 0),
           mimeType: rawBlob.type,
           data: collectWatermarkData(),
           config: useSettingsStore.getState().watermark,
           liveBlur: liveBlurOn || undefined,
+          blurBurned: burned || undefined,
         };
         // container fixes: GPS atom for MP4, duration header for webm —
         // so the file is a proper geotagged video outside this app too
@@ -343,7 +429,7 @@ export default function CameraView({ active }: { active: boolean }) {
         await putMedia(record);
         if (thumb) updateThumb(record.id, thumb);
         // auto-save to device, same as photos
-        if (settingsNow.autoSaveToDevice) {
+        if (useSettingsStore.getState().settings.autoSaveToDevice) {
           try {
             downloadBlob(
               blob,
@@ -353,12 +439,12 @@ export default function CameraView({ active }: { active: boolean }) {
             // download blocked — in-app copy is already saved
           }
         }
-        // Honesty: live blur cannot burn into the raw recording — it is
-        // applied when the clip is exported.
         showToast(
-          liveBlurOn
-            ? "Raw clip saved — faces are blurred when you export it"
-            : "Video saved — open it in the gallery to trim & export"
+          burned
+            ? "Video saved with faces blurred in the file"
+            : liveBlurOn
+              ? "Raw clip saved — faces are blurred when you export it"
+              : "Video saved — open it in the gallery to trim & export"
         );
       })();
     };

@@ -1,6 +1,7 @@
 import { Screen, Row, Toggle } from "./ui";
 import { useSettingsStore } from "../store";
 import { navigate } from "../nav";
+import { isNativeApp } from "../lib/native";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -85,7 +86,7 @@ export default function SettingsView() {
               )}
             </>
           }
-          hint="Blurs detected faces in the viewfinder and burns them into photos. Videos record raw and blur at export. Best-effort — always review; uses more battery."
+          hint="Blurs detected faces in the viewfinder and burns them into photos and recorded videos. Best-effort — always review; uses more battery."
         >
           <Toggle
             on={settings.liveFaceBlur}
@@ -130,6 +131,15 @@ export default function SettingsView() {
       </div>
 
       <div className="card">
+        {!isNativeApp() && (
+          <Row
+            label="Android app (APK)"
+            hint="Native Android build — English addresses from the phone's own geocoder, saves straight to the gallery"
+            onClick={() => {
+              window.location.href = "/download/chennai-gps-camera.apk";
+            }}
+          />
+        )}
         <Row
           label="About, data & accuracy"
           hint="Boundary data caveats, licences"

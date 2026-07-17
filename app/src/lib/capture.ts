@@ -51,6 +51,7 @@ export function collectWatermarkData(): WatermarkData {
       watermark.fields.digipin && live.fix
         ? (latLngToDigipin(live.fix.lat, live.fix.lng) ?? undefined)
         : undefined,
+    db: watermark.fields.soundLevel ? (live.db ?? undefined) : undefined,
     timestamp: now,
     tzOffsetMinutes: new Date(now).getTimezoneOffset(),
   };

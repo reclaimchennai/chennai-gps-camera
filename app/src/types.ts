@@ -54,6 +54,8 @@ export interface WatermarkFields {
   trafficStation: boolean;
   miniMap: boolean;
   compass: boolean;
+  /** Live ambient sound level (approximate dB) from the microphone. */
+  soundLevel: boolean;
   profilePhoto: boolean;
   socialHandles: boolean;
   customLabel: boolean;
@@ -80,6 +82,8 @@ export interface WatermarkData {
   locality?: string; // for the bold title line
   bearing?: number; // compass, degrees
   digipin?: string; // India Post DIGIPIN, computed offline when enabled
+  /** Ambient sound level at capture, approximate dB (uncalibrated mic). */
+  db?: number;
   timestamp: number;
   tzOffsetMinutes: number;
 }
@@ -132,6 +136,9 @@ export interface VideoRecord {
   /** recorded with the experimental live-blur setting on — the editor
    *  pre-enables auto face blur for the export */
   liveBlur?: boolean;
+  /** face blur was composited into the recording itself — the file on
+   *  disk is already blurred, no export needed for privacy */
+  blurBurned?: boolean;
 }
 
 export type MediaRecord = PhotoRecord | VideoRecord;

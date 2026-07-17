@@ -8,8 +8,11 @@
  *  - nominatim: free OSM fallback, same service the sibling
  *    police-locator app uses. Light usage fits the fair-use policy;
  *    attribution lives on the About screen.
+ *  - native (APK build only): android.location.Geocoder in English —
+ *    tried first because it needs no key, no quota, and no third party.
  */
 import { useSettingsStore } from "../store";
+import { nativeReverseGeocode } from "./native";
 
 export interface GeocodeResult {
   address: string;
@@ -123,6 +126,15 @@ export async function reverseGeocode(
   const { settings } = useSettingsStore.getState();
   if (settings.geocoder === "off") return null;
   try {
+    // APK build: the OS geocoder answers offline-fast in English and
+    // costs nothing — always worth the first try
+    const n = await nativeReverseGeocode(lat, lng);
+    if (n) {
+      return {
+        address: cleanAddress(n.addressLine, n.adminArea ?? "Tamil Nadu"),
+        locality: joinLocality(n.subLocality, n.locality),
+      };
+    }
     if (
       settings.googleApiKey &&
       (settings.geocoder === "google" || settings.geocoder === "auto")

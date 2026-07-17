@@ -42,8 +42,9 @@ export function fmtDateOnly(
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 
-/** "Wednesday, 08/07/2026 06:47 PM GMT +05:30" (§5.3 reference layout).
- *  The date portion follows the user's date-format setting. */
+/** "Wednesday, 08/07/2026 06:47:32 PM GMT +05:30" (§5.3 reference layout).
+ *  The date portion follows the user's date-format setting. Seconds are
+ *  included so video watermarks can tick in real time. */
 export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -57,7 +58,7 @@ export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
   const format = useSettingsStore.getState().settings.dateFormat;
   return (
     `${WEEKDAYS[d.getDay()]}, ${fmtDateOnly(ts, format)} ` +
-    `${pad(h)}:${pad(d.getMinutes())} ${ampm} ` +
+    `${pad(h)}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${ampm} ` +
     `GMT ${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
   );
 }

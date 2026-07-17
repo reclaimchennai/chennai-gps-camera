@@ -41,7 +41,8 @@ export default defineConfig({
           "**/*.{js,css,html,png,svg,woff2}",
           "data/packs/chennai.json",
         ],
-        globIgnores: ["mediapipe/**", "models/**"],
+        // download/ holds the Android APK — served, never precached
+        globIgnores: ["mediapipe/**", "models/**", "download/**"],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",
         runtimeCaching: [

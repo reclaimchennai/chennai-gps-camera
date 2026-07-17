@@ -20,8 +20,13 @@ import {
   blocksFor,
   type Shape,
 } from "../editor/shapes";
-import { detectFacesInFrame, type DetectedBox } from "../detect/faces";
+import {
+  detectFaces,
+  detectFacesInFrame,
+  type DetectedBox,
+} from "../detect/faces";
 import { makeThumbnail } from "../img";
+import { dbFromAnalyser } from "../audio/meter";
 import { pickRecordingMime, finalizeVideoBlob } from "./postprocess";
 
 export interface CropRect {
@@ -79,7 +84,7 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   canvas.height = outH;
   const ctx = canvas.getContext("2d")!;
 
-  // ---- static overlays, rendered once -------------------------------
+  // ---- watermark overlay, re-rendered as the clock ticks -------------
   const { watermark: cfgDefault, profile } = useSettingsStore.getState();
   const config = record.config ?? cfgDefault;
   const data: WatermarkData = record.data;
@@ -97,7 +102,26 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   if (config.fields.profilePhoto) {
     assets.profilePhoto = await getProfilePhoto();
   }
-  renderWatermark(wmCtx, outW, outH, data, config, profile, assets);
+  // Source time 0 is the moment recording started, so the burned clock
+  // ticks in step with the original wall-clock time (§ item: live
+  // seconds in video watermarks).
+  const renderWatermarkAt = (srcTimeS: number, db: number | null) => {
+    wmCtx.clearRect(0, 0, outW, outH);
+    renderWatermark(
+      wmCtx,
+      outW,
+      outH,
+      {
+        ...data,
+        timestamp: data.timestamp + srcTimeS * 1000,
+        db: db ?? data.db,
+      },
+      config,
+      profile,
+      assets
+    );
+  };
+  renderWatermarkAt(trimStart, null);
 
   const blurShapes = shapes.filter((s) => s.type.startsWith("blur"));
 
@@ -107,11 +131,18 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   const canvasStream = canvas.captureStream(fps);
   streamTracks.push(...canvasStream.getVideoTracks());
   let audioCtx: AudioContext | null = null;
+  let exportAnalyser: AnalyserNode | null = null;
   try {
     audioCtx = new AudioContext();
     const src = audioCtx.createMediaElementSource(video);
     const dest = audioCtx.createMediaStreamDestination();
     src.connect(dest); // NOT connected to speakers — silent export
+    if (config.fields.soundLevel) {
+      // tap the clip's own audio so the burned dB figure stays live
+      exportAnalyser = audioCtx.createAnalyser();
+      exportAnalyser.fftSize = 2048;
+      src.connect(exportAnalyser);
+    }
     if (dest.stream.getAudioTracks().length) {
       streamTracks.push(...dest.stream.getAudioTracks());
     }
@@ -143,6 +174,16 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   let frameCount = 0;
   let detecting = false;
   let stopped = false;
+  let lastWmTick = -1;
+
+  // Detection must see the CLEAN video frame. Detecting on the composited
+  // canvas is self-defeating: once a face is mosaicked the detector loses
+  // it on the next pass, the box drops, the face reappears un-blurred —
+  // the flicker users reported as "auto blur doesn't export".
+  const detectCanvas = document.createElement("canvas");
+  detectCanvas.width = outW;
+  detectCanvas.height = outH;
+  const detectCtx = detectCanvas.getContext("2d")!;
 
   const renderFrame = () => {
     ctx.drawImage(
@@ -150,6 +191,21 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
       out.x, out.y, out.width, out.height,
       0, 0, outW, outH
     );
+
+    // Auto blur: kick off re-detection on a clean copy of this frame
+    // every Nth frame, hold boxes in between (§5.7 — re-detect over
+    // tracking). Runs before compositing so the copy is pixel-fresh.
+    if (opts.autoBlurFaces && !detecting && frameCount % DETECT_EVERY_N_FRAMES === 0) {
+      detecting = true;
+      detectCtx.drawImage(canvas, 0, 0);
+      void detectFacesInFrame(detectCanvas)
+        .then((boxes) => {
+          faceBoxes = boxes;
+        })
+        .finally(() => {
+          detecting = false;
+        });
+    }
 
     if (blurShapes.length || (opts.autoBlurFaces && faceBoxes.length)) {
       // fresh mosaics each frame, one per distinct intensity in use
@@ -184,20 +240,17 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
         0, 0, outW, outH
       );
     }
+    // tick the burned watermark (seconds + live dB) twice per second
+    const wmTick = Math.floor(video.currentTime * 2);
+    if (wmTick !== lastWmTick) {
+      lastWmTick = wmTick;
+      renderWatermarkAt(
+        video.currentTime,
+        exportAnalyser ? dbFromAnalyser(exportAnalyser) : null
+      );
+    }
     ctx.drawImage(wmCanvas, 0, 0);
 
-    // Auto blur: kick off re-detection every Nth frame, hold in between
-    // (§5.7 — re-detect rather than track).
-    if (opts.autoBlurFaces && !detecting && frameCount % DETECT_EVERY_N_FRAMES === 0) {
-      detecting = true;
-      void detectFacesInFrame(canvas)
-        .then((boxes) => {
-          faceBoxes = boxes;
-        })
-        .finally(() => {
-          detecting = false;
-        });
-    }
     frameCount++;
     opts.onProgress(
       Math.min(
@@ -235,6 +288,21 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   await new Promise<void>((res) => {
     video.onseeked = () => res();
   });
+
+  // Warm up detection BEFORE playback starts: the first detector call
+  // loads wasm + models (seconds on a phone). Without this the whole
+  // clip can play through with zero face boxes — exports came out
+  // un-blurred despite auto blur being on. A thorough first pass also
+  // seeds boxes so frame 0 is already covered.
+  if (opts.autoBlurFaces) {
+    detectCtx.drawImage(
+      video,
+      out.x, out.y, out.width, out.height,
+      0, 0, outW, outH
+    );
+    faceBoxes = (await detectFaces(detectCanvas, { thorough: true })) ?? [];
+  }
+
   renderFrame(); // first frame before recording starts
   let thumb: Blob | null = null;
   try {

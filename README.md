@@ -116,8 +116,26 @@ npm run smoke      # end-to-end suite: headless Chromium, fake camera + GPS,
                    # capture → EXIF → jurisdiction → gallery → PWA checks
 ```
 
-The Android build (Capacitor) lives in `app/android/` — see the workflow in
-the Capacitor docs; the manifest and permissions are already set up.
+### Android app (APK)
+
+A native Android build wraps the same PWA with two OS-level upgrades: the
+phone's own geocoder (`android.location.Geocoder`, forced to English) for
+human-readable addresses, and MediaStore saves so captures land in the
+device gallery (`DCIM/GPS Camera`). Download it from a running instance at
+`/download/chennai-gps-camera.apk`, or build it yourself:
+
+```bash
+cd app
+npm run build && npx cap sync android
+cd android && ./gradlew assembleRelease
+# → app/build/outputs/apk/release/app-release.apk
+```
+
+Signing: put a `keystore.properties` (storeFile / storePassword / keyAlias /
+keyPassword) next to `app/android/build.gradle`; without it the build
+produces an unsigned APK. The custom native bridge (English reverse
+geocoding + gallery save) is
+`app/android/app/src/main/java/city/reclaimchennai/cam/NativeBridgePlugin.java`.
 
 ### Repository layout
 

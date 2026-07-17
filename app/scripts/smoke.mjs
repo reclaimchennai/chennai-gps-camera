@@ -330,6 +330,67 @@ try {
     JSON.stringify(blr)
   );
   await blrCtx.close();
+
+  // 11. live-blur video recording: with the setting on, the saved file
+  // itself must be the composited (blur-burned) stream and decodable
+  const vidCtx = await browser.newContext({
+    viewport: { width: 412, height: 915 },
+    geolocation: { latitude: 13.0405, longitude: 80.2337, accuracy: 8 },
+    permissions: ["geolocation", "camera", "microphone"],
+  });
+  const vidPage = await vidCtx.newPage();
+  await vidPage.goto(base, { waitUntil: "load" });
+  await vidPage.waitForTimeout(2000);
+  await vidPage.locator('[aria-label="Settings"]').click();
+  await vidPage.waitForTimeout(500);
+  await vidPage
+    .locator(".row", { hasText: "Live face blur" })
+    .locator("button.switch")
+    .click();
+  await vidPage.goBack();
+  await vidPage.waitForTimeout(800);
+  await vidPage.getByText("VIDEO", { exact: true }).click();
+  await vidPage.waitForTimeout(1500);
+  await vidPage.locator(".shutter").click();
+  await vidPage.waitForTimeout(2500);
+  await vidPage.locator(".shutter").click();
+  await vidPage.waitForTimeout(3000);
+  const vid = await vidPage.evaluate(async () => {
+    const open = indexedDB.open("chennai-gps-cam");
+    const db = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result);
+      open.onerror = rej;
+    });
+    const media = await new Promise((res) => {
+      const r = db.transaction("media").objectStore("media").getAll();
+      r.onsuccess = () => res(r.result);
+    });
+    const rec = media
+      .filter((m) => m.kind === "video")
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!rec) return null;
+    const blob = await new Promise((res) => {
+      const r = db.transaction("blobs").objectStore("blobs").get(rec.id + "/source");
+      r.onsuccess = () => res(r.result);
+    });
+    db.close();
+    if (!blob || !blob.size) return { blurBurned: rec.blurBurned, decodable: false };
+    const v = document.createElement("video");
+    v.muted = true;
+    v.src = URL.createObjectURL(blob);
+    const decodable = await new Promise((res) => {
+      v.onloadedmetadata = () => res(true);
+      v.onerror = () => res(false);
+      setTimeout(() => res(false), 8000);
+    });
+    return { blurBurned: rec.blurBurned ?? false, decodable, size: blob.size, type: blob.type };
+  });
+  check(
+    "live-blur video burns into file",
+    Boolean(vid && vid.blurBurned && vid.decodable),
+    JSON.stringify(vid)
+  );
+  await vidCtx.close();
 } catch (err) {
   failures++;
   console.error("FATAL", err);
