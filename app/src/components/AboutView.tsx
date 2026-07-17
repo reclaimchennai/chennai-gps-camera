@@ -1,7 +1,13 @@
+import { useEffect, useState } from "react";
 import { Screen } from "./ui";
 import { APP_NAME } from "../lib/watermark/presets";
+import { nativeAppVersion } from "../lib/native";
 
 export default function AboutView() {
+  const [apkVersion, setApkVersion] = useState<string | null>(null);
+  useEffect(() => {
+    void nativeAppVersion().then(setApkVersion);
+  }, []);
   return (
     <Screen title="About">
       <div className="card" style={{ padding: 16 }}>
@@ -103,6 +109,12 @@ export default function AboutView() {
         <span style={{ fontSize: 11 }}>
           Build {__BUILD_TS__.slice(0, 16).replace("T", " ")} UTC — updates
           install automatically
+          {apkVersion && (
+            <>
+              <br />
+              Android app v{apkVersion}
+            </>
+          )}
         </span>
       </p>
     </Screen>

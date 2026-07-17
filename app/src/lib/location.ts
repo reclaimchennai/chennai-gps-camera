@@ -12,8 +12,12 @@ import { useLiveStore } from "../store";
 import type { Fix } from "../types";
 
 const RELOOKUP_MIN_METERS = 8;
+/** Once a real GPS fix lands, coarse fixes stay ignored this long. */
+const FINE_FRESH_MS = 10_000;
 
 let watchId: number | null = null;
+let coarseWatchId: number | null = null;
+let lastFineAt = 0;
 let lastLookupAt: { lat: number; lng: number } | null = null;
 
 function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -64,6 +68,7 @@ export function startLocation(): void {
   useLiveStore.getState().setGpsStatus("waiting");
   watchId = navigator.geolocation.watchPosition(
     (pos) => {
+      lastFineAt = Date.now();
       useLiveStore.getState().setGpsStatus("ok");
       void onFix(pos);
     },
@@ -74,12 +79,31 @@ export function startLocation(): void {
     },
     { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
   );
+  // Fast first fix: a parallel low-accuracy watch rides the OS
+  // network/fused provider (WiFi + cell), which answers in a second or
+  // two indoors where GPS can take minutes. Its fixes carry an honest
+  // ±accuracy and step aside whenever real GPS is fresh.
+  coarseWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      if (Date.now() - lastFineAt < FINE_FRESH_MS) return;
+      useLiveStore.getState().setGpsStatus("ok");
+      void onFix(pos);
+    },
+    () => {
+      // coarse provider unavailable — the GPS watch still stands
+    },
+    { enableHighAccuracy: false, maximumAge: 30_000, timeout: 15_000 }
+  );
 }
 
 export function stopLocation(): void {
   if (watchId != null) {
     navigator.geolocation.clearWatch(watchId);
     watchId = null;
+  }
+  if (coarseWatchId != null) {
+    navigator.geolocation.clearWatch(coarseWatchId);
+    coarseWatchId = null;
   }
 }
 

@@ -30,6 +30,11 @@ interface NativeBridgePlugin {
   }): Promise<{ ok: boolean }>;
   saveToGalleryEnd(opts: { id: string }): Promise<{ ok: boolean }>;
   saveToGalleryAbort(opts: { id: string }): Promise<{ ok: boolean }>;
+  getAppInfo(): Promise<{
+    ok: boolean;
+    versionName?: string;
+    versionCode?: number;
+  }>;
 }
 
 interface CapacitorGlobal {
@@ -47,6 +52,20 @@ export function isNativeApp(): boolean {
 
 function bridge(): NativeBridgePlugin | undefined {
   return cap()?.Plugins?.NativeBridge;
+}
+
+/** Installed APK version, or null in the browser. */
+export async function nativeAppVersion(): Promise<string | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    const r = await b.getAppInfo();
+    return r.ok && r.versionName
+      ? `${r.versionName} (build ${r.versionCode ?? "?"})`
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface NativeAddress {
@@ -107,10 +126,16 @@ export async function nativeSaveToGallery(
     });
     if (!begin.ok || !begin.id) return false;
     id = begin.id;
+    // pipeline: encode chunk N+1 while chunk N crosses the bridge
+    let nextRead: Promise<string> | null =
+      blob.size > 0 ? blobChunkToBase64(blob.slice(0, SAVE_CHUNK_BYTES)) : null;
     for (let off = 0; off < blob.size; off += SAVE_CHUNK_BYTES) {
-      const base64 = await blobChunkToBase64(
-        blob.slice(off, off + SAVE_CHUNK_BYTES)
-      );
+      const base64 = await nextRead!;
+      const following = off + SAVE_CHUNK_BYTES;
+      nextRead =
+        following < blob.size
+          ? blobChunkToBase64(blob.slice(following, following + SAVE_CHUNK_BYTES))
+          : null;
       const r = await b.saveToGalleryChunk({ id, base64 });
       if (!r.ok) throw new Error("chunk write failed");
     }

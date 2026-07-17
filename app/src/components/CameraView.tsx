@@ -282,6 +282,10 @@ export default function CameraView({ active }: { active: boolean }) {
     const interval = window.setInterval(() => {
       evenTick = !evenTick;
       if (evenTick) refreshMap();
+      // watchdog: a viewfinder that ended up paused (WebView play()
+      // races) restarts itself — no tap on the overlay button needed
+      const v = videoRef.current;
+      if (v && v.srcObject && v.paused) void v.play().catch(() => {});
       detectTick();
       draw();
     }, 300);

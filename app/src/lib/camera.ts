@@ -88,7 +88,19 @@ export class CameraController {
     this.video = video;
     if (this.stream) {
       video.srcObject = this.stream;
-      void video.play().catch(() => {});
+      // play() can reject once during WebView startup (load-interrupt /
+      // visibility races). A single swallowed rejection used to leave the
+      // viewfinder paused behind Chromium's overlay play button until the
+      // user tapped it — retry instead.
+      const tryPlay = () => {
+        video.play().catch(() => {
+          window.setTimeout(() => {
+            if (video.srcObject && video.paused) tryPlay();
+          }, 400);
+        });
+      };
+      video.onloadedmetadata = tryPlay;
+      tryPlay();
     }
   }
 

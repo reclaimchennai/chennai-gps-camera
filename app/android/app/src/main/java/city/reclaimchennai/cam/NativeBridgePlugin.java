@@ -80,6 +80,27 @@ public class NativeBridgePlugin extends Plugin {
         }).start();
     }
 
+    /** Installed APK version — shown in About so update state is
+     *  verifiable at a glance. */
+    @PluginMethod
+    public void getAppInfo(PluginCall call) {
+        JSObject out = new JSObject();
+        try {
+            android.content.pm.PackageInfo pi = getContext()
+                .getPackageManager()
+                .getPackageInfo(getContext().getPackageName(), 0);
+            out.put("ok", true);
+            out.put("versionName", pi.versionName);
+            out.put("versionCode",
+                Build.VERSION.SDK_INT >= 28
+                    ? pi.getLongVersionCode()
+                    : pi.versionCode);
+        } catch (Exception e) {
+            out.put("ok", false);
+        }
+        call.resolve(out);
+    }
+
     // ---- streamed gallery save -------------------------------------------
 
     private static class PendingSave {
