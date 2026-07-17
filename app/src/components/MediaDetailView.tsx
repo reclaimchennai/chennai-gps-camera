@@ -19,12 +19,14 @@ import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../lib/geo/format"
 export default function MediaDetailView({ id }: { id: string }) {
   const [rec, setRec] = useState<MediaRecord | null>(null);
   const [url, setUrl] = useState<string | null>(null);
+  const [poster, setPoster] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [info, setInfo] = useState(false);
   const [tagDraft, setTagDraft] = useState<string | null>(null);
 
   useEffect(() => {
     let objectUrl: string | null = null;
+    let posterUrl: string | null = null;
     void (async () => {
       const r = await getMedia(id);
       if (!r) {
@@ -32,6 +34,15 @@ export default function MediaDetailView({ id }: { id: string }) {
         return;
       }
       setRec(r);
+      // Videos get their stored thumbnail as a poster so the detail view
+      // shows a real frame, not the browser's gray play-button splash.
+      if (r.kind === "video") {
+        const t = await getBlob(id, "thumb");
+        if (t) {
+          posterUrl = URL.createObjectURL(t);
+          setPoster(posterUrl);
+        }
+      }
       const variant = r.kind === "photo" ? "final" : "source";
       // exported videos store their burned copy as `final`
       const blob =
@@ -44,6 +55,7 @@ export default function MediaDetailView({ id }: { id: string }) {
     })();
     return () => {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (posterUrl) URL.revokeObjectURL(posterUrl);
     };
   }, [id]);
 
@@ -136,7 +148,13 @@ export default function MediaDetailView({ id }: { id: string }) {
       <div className="media-stage">
         {url && rec.kind === "photo" && <img src={url} alt="" />}
         {url && rec.kind === "video" && (
-          <video src={url} controls playsInline />
+          <video
+            src={url}
+            controls
+            playsInline
+            preload="metadata"
+            poster={poster ?? undefined}
+          />
         )}
       </div>
 

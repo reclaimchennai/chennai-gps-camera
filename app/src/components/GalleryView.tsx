@@ -59,11 +59,13 @@ export default function GalleryView() {
   const [cells, setCells] = useState<Cell[] | null>(null);
   const [query, setQuery] = useState("");
   const [chip, setChip] = useState<Chip>("all");
+  // ids the backfill queue just upgraded — briefly highlighted
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
     const urls: string[] = [];
-    void (async () => {
+    const load = async () => {
       const items = await listMedia();
       const loaded = await Promise.all(
         items.map(async (rec) => {
@@ -74,9 +76,28 @@ export default function GalleryView() {
         })
       );
       if (!cancelled) setCells(loaded);
-    })();
+    };
+    void load();
+
+    // when a queued photo/video gains its address, refresh the grid and
+    // pulse the updated cell so the change is visible
+    const onUpdated = (e: Event) => {
+      const id = (e as CustomEvent<{ id: string }>).detail?.id;
+      void load();
+      if (!id) return;
+      setFlashIds((s) => new Set(s).add(id));
+      window.setTimeout(() => {
+        setFlashIds((s) => {
+          const n = new Set(s);
+          n.delete(id);
+          return n;
+        });
+      }, 1600);
+    };
+    window.addEventListener("gpscam:media-updated", onUpdated);
     return () => {
       cancelled = true;
+      window.removeEventListener("gpscam:media-updated", onUpdated);
       urls.forEach((u) => URL.revokeObjectURL(u));
     };
   }, []);
@@ -148,6 +169,15 @@ export default function GalleryView() {
         ))}
       </div>
 
+      {/* first-load skeleton — shimmer placeholders until thumbs decode */}
+      {cells === null && (
+        <div className="gallery-grid">
+          {Array.from({ length: 9 }).map((_, i) => (
+            <div key={i} className="gallery-cell skeleton" />
+          ))}
+        </div>
+      )}
+
       {visible && visible.length === 0 && (
         <div className="empty-note">
           {cells && cells.length === 0 ? (
@@ -168,7 +198,7 @@ export default function GalleryView() {
           return (
             <button
               key={rec.id}
-              className="gallery-cell"
+              className={`gallery-cell${flashIds.has(rec.id) ? " updated" : ""}`}
               onClick={() => navigate(`/media/${rec.id}`)}
             >
               {url ? (

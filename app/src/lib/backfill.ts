@@ -21,6 +21,12 @@ const RETRY_MS = 30_000;
 let running = false;
 let scheduled = false;
 
+/** Tell the gallery a queued item just gained its full watermark/address,
+ *  so it can refresh that cell with a highlight animation. */
+function announceUpdated(id: string): void {
+  window.dispatchEvent(new CustomEvent("gpscam:media-updated", { detail: { id } }));
+}
+
 export function scheduleBackfill(delayMs = 1500): void {
   if (scheduled) return;
   scheduled = true;
@@ -75,6 +81,7 @@ async function backfillVideo(id: string): Promise<void> {
     data: { ...rec.data, address: geo.address, locality: geo.locality },
     backfill: "done",
   });
+  announceUpdated(id);
 }
 
 async function backfillOne(id: string): Promise<void> {
@@ -110,6 +117,7 @@ async function backfillOne(id: string): Promise<void> {
   if (updated) {
     await putMedia({ ...updated, backfill: "done", hasRaw: false });
     await deleteBlob(id, "raw");
+    announceUpdated(id);
   } else {
     // Raw missing (e.g. annotated copy) — nothing to re-composite.
     await putMedia({ ...rec, backfill: "failed" });

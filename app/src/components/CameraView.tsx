@@ -23,6 +23,11 @@ import { Zap, SwitchCamera, Settings, Images } from "lucide-react";
 
 type Mode = "photo" | "video";
 
+// 1×1 black PNG — used as the viewfinder <video> poster so the
+// pre-stream gap renders dark instead of the UA play-button overlay.
+const BLACK_POSTER =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
 export default function CameraView({ active }: { active: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -57,6 +62,10 @@ export default function CameraView({ active }: { active: boolean }) {
   const [recording, setRecording] = useState(false);
   const [recSeconds, setRecSeconds] = useState(0);
   const [busy, setBusy] = useState(false);
+  // capture-in-flight UX: a preview that flies into the gallery button
+  // and a pulse on the button while the real file finishes saving
+  const [flyImg, setFlyImg] = useState<{ src: string; key: number } | null>(null);
+  const [saving, setSaving] = useState(0);
 
   const settings = useSettingsStore((s) => s.settings);
 
@@ -310,13 +319,24 @@ export default function CameraView({ active }: { active: boolean }) {
     setBusy(true);
     setFlashFx((k) => k + 1);
     if (useSettingsStore.getState().settings.shutterSound) playShutter();
+    setSaving((n) => n + 1);
+    let framed = false;
     try {
-      const { record, thumb } = await capturePhoto();
+      const { record, thumb } = await capturePhoto({
+        onFramed: (preview) => {
+          // Shutter is free again the moment the frame is composited —
+          // the encode + save continue in the background.
+          framed = true;
+          setBusy(false);
+          if (preview) setFlyImg({ src: preview, key: Date.now() });
+        },
+      });
       updateThumb(record.id, thumb);
     } catch {
       showToast("Capture failed — try again");
     } finally {
-      setBusy(false);
+      if (!framed) setBusy(false);
+      setSaving((n) => Math.max(0, n - 1));
     }
   }, [busy, ready, showToast, updateThumb]);
 
@@ -640,15 +660,15 @@ export default function CameraView({ active }: { active: boolean }) {
         style={{ touchAction: "none" }}
       >
         <div ref={boxRef} className={`cam-video-box${mirrored ? " mirrored" : ""}`}>
-          {/* Hidden until it is actually playing: a paused WebView <video>
-              briefly shows the browser's play-button overlay, which
-              flashed on open and on photo/video switches. */}
+          {/* Black poster: a paused WebView <video> shows the play-button
+              overlay only when it has NO poster. With one, the pre-stream
+              gap and every mode switch render as a black frame instead. */}
           <video
             ref={videoRef}
             playsInline
             muted
             autoPlay
-            onPlaying={(e) => e.currentTarget.classList.add("playing")}
+            poster={BLACK_POSTER}
           />
           {settings.gridLines && (
             <div
@@ -710,6 +730,15 @@ export default function CameraView({ active }: { active: boolean }) {
       </div>
 
       <div key={flashFx} className={`flash-fx${flashFx ? " animate" : ""}`} />
+      {flyImg && (
+        <img
+          key={flyImg.key}
+          className="capture-fly"
+          src={flyImg.src}
+          alt=""
+          onAnimationEnd={() => setFlyImg(null)}
+        />
+      )}
       {focusPos && (
         <div
           key={focusPos.key}
@@ -738,7 +767,7 @@ export default function CameraView({ active }: { active: boolean }) {
         </div>
         <div className="cam-actions">
           <button
-            className="thumb-btn"
+            className={`thumb-btn${saving > 0 ? " saving" : ""}`}
             onClick={() => navigate("/gallery")}
             aria-label="Gallery"
           >

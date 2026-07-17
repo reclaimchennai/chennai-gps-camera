@@ -74,7 +74,17 @@ export interface CaptureResult {
   thumb: Blob;
 }
 
-export async function capturePhoto(): Promise<CaptureResult> {
+export interface CaptureOptions {
+  /** Fires the instant the watermarked frame is composited — before the
+   *  (slower) encode + IndexedDB write. The camera UI uses it to unlock
+   *  the shutter and start the save animation, so capture feels instant
+   *  even while persistence finishes in the background. */
+  onFramed?: (previewDataUrl: string) => void;
+}
+
+export async function capturePhoto(
+  opts: CaptureOptions = {}
+): Promise<CaptureResult> {
   const { watermark: config, profile, settings } = useSettingsStore.getState();
   const live = useLiveStore.getState();
   const data = collectWatermarkData();
@@ -152,6 +162,22 @@ export async function capturePhoto(): Promise<CaptureResult> {
   }
 
   renderWatermark(ctx, w, h, data, config, profile, assets);
+
+  // Frame is fully composited: hand the UI a small preview so it can
+  // unlock the shutter and fly the thumbnail to the gallery now, while
+  // the encode + writes below run in the background.
+  if (opts.onFramed) {
+    try {
+      const pv = document.createElement("canvas");
+      const scale = Math.min(1, 220 / Math.max(w, h));
+      pv.width = Math.max(1, Math.round(w * scale));
+      pv.height = Math.max(1, Math.round(h * scale));
+      pv.getContext("2d")?.drawImage(canvas, 0, 0, pv.width, pv.height);
+      opts.onFramed(pv.toDataURL("image/jpeg", 0.6));
+    } catch {
+      opts.onFramed("");
+    }
+  }
 
   const jpeg = await canvasToBlob(canvas, "image/jpeg", 0.92);
   const withExif = await writeExif(jpeg, data);

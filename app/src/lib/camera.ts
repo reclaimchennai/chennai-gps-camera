@@ -95,9 +95,6 @@ export class CameraController {
   attach(video: HTMLVideoElement): void {
     this.video = video;
     if (this.stream) {
-      // hidden again until 'playing' fires, so no paused-media overlay
-      // flashes during the re-attach (mode switch / camera flip)
-      video.classList.remove("playing");
       video.srcObject = this.stream;
       // play() can reject once during WebView startup (load-interrupt /
       // visibility races). A single swallowed rejection used to leave the

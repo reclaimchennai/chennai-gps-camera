@@ -234,9 +234,11 @@ export default function VideoEditorView({ id }: { id: string }) {
     const compute = () => {
       const wrap = wrapRef.current;
       if (!wrap) return;
-      setFit(
-        Math.min(wrap.clientWidth / dims.w, wrap.clientHeight / dims.h) || 1
-      );
+      // leave a small margin so a full-height portrait clip (whose burned
+      // watermark sits at the very bottom) never abuts the toolbar
+      const availW = wrap.clientWidth - 8;
+      const availH = wrap.clientHeight - 16;
+      setFit(Math.min(availW / dims.w, availH / dims.h) || 1);
     };
     compute();
     const ro = new ResizeObserver(compute);

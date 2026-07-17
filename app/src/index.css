@@ -187,13 +187,10 @@ textarea {
   max-height: var(--vph, 70vh);
   width: auto;
   height: auto;
-  /* hidden until 'playing' fires so a paused WebView <video> never
-     flashes its play-button overlay; revealed by the .playing class */
-  opacity: 0;
-}
-
-.cam-video-box video.playing {
-  opacity: 1;
+  /* a black poster + black backdrop means the pre-stream gap and every
+     mode switch render fully dark — never the WebView's play-button
+     overlay (which a paused <video> shows only when it has no poster) */
+  background: #000;
 }
 
 .cam-video-box.mirrored video {
@@ -335,10 +332,11 @@ textarea {
 }
 
 .thumb-btn {
+  position: relative;
   width: 52px;
   height: 52px;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: visible;
   border: 2px solid rgba(255, 255, 255, 0.6);
   background: rgba(0, 0, 0, 0.4);
   display: grid;
@@ -350,7 +348,53 @@ textarea {
 .thumb-btn img {
   width: 100%;
   height: 100%;
+  border-radius: 10px;
   object-fit: cover;
+}
+
+/* pulse ring while a capture is still encoding/saving in the background */
+.thumb-btn.saving::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 14px;
+  border: 2px solid var(--accent);
+  animation: thumb-pulse 0.9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes thumb-pulse {
+  0%, 100% { opacity: 0.25; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+/* the just-shot frame flies from the shutter into the gallery button */
+.capture-fly {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  width: 92px;
+  height: 92px;
+  margin-left: -46px;
+  border-radius: 12px;
+  object-fit: cover;
+  z-index: 60;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  animation: capture-fly 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes capture-fly {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  100% {
+    transform: translate(calc(-50vw + 92px), 64px) scale(0.3);
+    opacity: 0.15;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capture-fly { animation-duration: 0.01s; }
+  .thumb-btn.saving::after { animation: none; opacity: 0.6; }
 }
 
 .flash-fx {
@@ -589,6 +633,39 @@ textarea {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+/* first-load placeholder shimmer */
+.gallery-cell.skeleton {
+  background: linear-gradient(
+    100deg,
+    var(--surface-2) 30%,
+    rgba(255, 255, 255, 0.08) 50%,
+    var(--surface-2) 70%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* a cell the backfill queue just upgraded with its full address */
+.gallery-cell.updated {
+  animation: cell-updated 1.6s ease-out;
+}
+
+@keyframes cell-updated {
+  0% { box-shadow: 0 0 0 0 var(--accent); }
+  20% { box-shadow: 0 0 0 3px var(--accent); }
+  100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-cell.skeleton { animation: none; }
+  .gallery-cell.updated { animation: none; }
 }
 
 .gallery-cell {
