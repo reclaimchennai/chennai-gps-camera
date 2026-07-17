@@ -383,11 +383,22 @@ try {
       v.onerror = () => res(false);
       setTimeout(() => res(false), 8000);
     });
-    return { blurBurned: rec.blurBurned ?? false, decodable, size: blob.size, type: blob.type };
+    return {
+      blurBurned: rec.blurBurned ?? false,
+      watermarkBurned: rec.watermarkBurned ?? false,
+      decodable,
+      size: blob.size,
+      type: blob.type,
+    };
   });
   check(
     "live-blur video burns into file",
     Boolean(vid && vid.blurBurned && vid.decodable),
+    JSON.stringify(vid)
+  );
+  check(
+    "video watermark burned into recording",
+    Boolean(vid && vid.watermarkBurned && vid.decodable),
     JSON.stringify(vid)
   );
   await vidCtx.close();

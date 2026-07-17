@@ -113,9 +113,9 @@ export default function CameraView({ active }: { active: boolean }) {
       stopMeter();
       return;
     }
-    // own mic-only stream with voice processing off — recording keeps
-    // its separate (processed) track untouched
-    startMeter();
+    // video mode: tap the camera's audio track (single mic consumer);
+    // photo mode: the meter opens its own unprocessed mic stream
+    startMeter(mode === "video" ? camera.stream : null);
     return () => stopMeter();
   }, [active, ready, soundOn, mode]);
 
@@ -331,15 +331,18 @@ export default function CameraView({ active }: { active: boolean }) {
     const liveVideo = videoRef.current;
     const liveBlurOn = useSettingsStore.getState().settings.liveFaceBlur;
 
-    // Live blur must end up IN the saved file, not just the preview —
-    // so with the setting on, we record a composited canvas (camera
-    // frame + mosaic patches) instead of the raw camera stream.
+    // The saved video must match what the viewfinder shows: the watermark
+    // card (ticking clock, dB, jurisdiction) and — when enabled — face
+    // blur are composited into the recorded frames, so the file on disk
+    // carries them without any export step. We record that composite
+    // canvas rather than the raw camera stream.
     let recStream: MediaStream = stream;
     let stopComposite: (() => void) | null = null;
-    let burned = false;
+    let burned = false; // blur burned in
+    let watermarked = false;
     let burnW = 0;
     let burnH = 0;
-    if (liveBlurOn && liveVideo && liveVideo.videoWidth) {
+    if (liveVideo && liveVideo.videoWidth) {
       try {
         burnW = Math.floor(liveVideo.videoWidth / 2) * 2;
         burnH = Math.floor(liveVideo.videoHeight / 2) * 2;
@@ -349,20 +352,52 @@ export default function CameraView({ active }: { active: boolean }) {
         const cctx = cc.getContext("2d")!;
         const tiny = document.createElement("canvas");
         const tctx = tiny.getContext("2d")!;
+
+        // watermark burned at full recording resolution, re-rendered
+        // ~2×/s so the seconds and dB tick without re-rendering every
+        // frame (that is what makes WebViews stutter)
+        const wmCanvas = document.createElement("canvas");
+        wmCanvas.width = burnW;
+        wmCanvas.height = burnH;
+        const wmCtx = wmCanvas.getContext("2d")!;
+        const { watermark, profile } = useSettingsStore.getState();
+        let lastWmTick = -1;
+        const renderWm = () => {
+          wmCtx.clearRect(0, 0, burnW, burnH);
+          renderWatermark(
+            wmCtx,
+            burnW,
+            burnH,
+            collectWatermarkData(),
+            watermark,
+            profile,
+            assetsRef.current
+          );
+        };
+        renderWm();
+
         let rafId = 0;
         let compositeDone = false;
         const paint = () => {
           if (compositeDone) return;
           cctx.drawImage(liveVideo, 0, 0, burnW, burnH);
-          for (const b of liveBoxesRef.current) {
-            const cells = 9;
-            tiny.width = cells;
-            tiny.height = cells;
-            tctx.drawImage(liveVideo, b.x, b.y, b.width, b.height, 0, 0, cells, cells);
-            cctx.imageSmoothingEnabled = false;
-            cctx.drawImage(tiny, 0, 0, cells, cells, b.x, b.y, b.width, b.height);
-            cctx.imageSmoothingEnabled = true;
+          if (liveBlurOn) {
+            for (const b of liveBoxesRef.current) {
+              const cells = 9;
+              tiny.width = cells;
+              tiny.height = cells;
+              tctx.drawImage(liveVideo, b.x, b.y, b.width, b.height, 0, 0, cells, cells);
+              cctx.imageSmoothingEnabled = false;
+              cctx.drawImage(tiny, 0, 0, cells, cells, b.x, b.y, b.width, b.height);
+              cctx.imageSmoothingEnabled = true;
+            }
           }
+          const wmTick = Math.floor(Date.now() / 500);
+          if (wmTick !== lastWmTick) {
+            lastWmTick = wmTick;
+            renderWm();
+          }
+          cctx.drawImage(wmCanvas, 0, 0);
           schedule();
         };
         const rvfc = (liveVideo as HTMLVideoElement & {
@@ -381,11 +416,13 @@ export default function CameraView({ active }: { active: boolean }) {
           compositeDone = true;
           if (!rvfc) cancelAnimationFrame(rafId);
         };
-        burned = true;
+        burned = liveBlurOn;
+        watermarked = true;
       } catch {
         // compositing unavailable — record the raw stream as before
         recStream = stream;
         burned = false;
+        watermarked = false;
       }
     }
 
@@ -394,9 +431,9 @@ export default function CameraView({ active }: { active: boolean }) {
     // "corrupted or unsupported" outside the browser)
     let mimeType = pickRecordingMime();
     let rec: MediaRecorder;
-    // canvas captureStream defaults to a low bitrate — keep burned
-    // recordings at camera-like quality
-    const recOpts = burned ? { videoBitsPerSecond: 8_000_000 } : {};
+    // canvas captureStream defaults to a low bitrate — keep the
+    // composited recording at camera-like quality
+    const recOpts = watermarked ? { videoBitsPerSecond: 8_000_000 } : {};
     try {
       rec = new MediaRecorder(
         recStream,
@@ -439,13 +476,14 @@ export default function CameraView({ active }: { active: boolean }) {
           kind: "video",
           createdAt: recStartRef.current,
           duration,
-          width: burned ? burnW : (s?.width ?? video?.videoWidth ?? 0),
-          height: burned ? burnH : (s?.height ?? video?.videoHeight ?? 0),
+          width: watermarked ? burnW : (s?.width ?? video?.videoWidth ?? 0),
+          height: watermarked ? burnH : (s?.height ?? video?.videoHeight ?? 0),
           mimeType: rawBlob.type,
           data,
           config: wmConfig,
           liveBlur: liveBlurOn || undefined,
           blurBurned: burned || undefined,
+          watermarkBurned: watermarked || undefined,
           backfill: needsBackfill ? "pending" : "not-needed",
         };
         // container fixes: GPS atom for MP4, duration header for webm —
@@ -481,10 +519,8 @@ export default function CameraView({ active }: { active: boolean }) {
         }
         showToast(
           burned
-            ? "Video saved with faces blurred in the file"
-            : liveBlurOn
-              ? "Raw clip saved — faces are blurred when you export it"
-              : "Video saved — open it in the gallery to trim & export"
+            ? "Video saved — watermark and blurred faces baked in"
+            : "Video saved with the watermark baked in"
         );
       })();
     };
@@ -604,7 +640,16 @@ export default function CameraView({ active }: { active: boolean }) {
         style={{ touchAction: "none" }}
       >
         <div ref={boxRef} className={`cam-video-box${mirrored ? " mirrored" : ""}`}>
-          <video ref={videoRef} playsInline muted autoPlay />
+          {/* Hidden until it is actually playing: a paused WebView <video>
+              briefly shows the browser's play-button overlay, which
+              flashed on open and on photo/video switches. */}
+          <video
+            ref={videoRef}
+            playsInline
+            muted
+            autoPlay
+            onPlaying={(e) => e.currentTarget.classList.add("playing")}
+          />
           {settings.gridLines && (
             <div
               className="cam-grid"

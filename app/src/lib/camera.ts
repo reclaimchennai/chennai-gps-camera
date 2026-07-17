@@ -63,12 +63,20 @@ export class CameraController {
     return this.stream;
   }
 
-  /** Re-acquire the stream with audio for video recording. */
+  /** Re-acquire the stream with audio for video recording. Voice
+   *  processing is disabled so the sound meter can tap this same track
+   *  for an honest dB reading — opening a *second* mic stream just for
+   *  the meter conflicts on Android and silences this recording track. */
   async startWithAudio(): Promise<MediaStream> {
     this.stop();
+    const audio: MediaTrackConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
+        audio,
         video: {
           facingMode: this.facing,
           width: { ideal: 1920 },
@@ -87,6 +95,9 @@ export class CameraController {
   attach(video: HTMLVideoElement): void {
     this.video = video;
     if (this.stream) {
+      // hidden again until 'playing' fires, so no paused-media overlay
+      // flashes during the re-attach (mode switch / camera flip)
+      video.classList.remove("playing");
       video.srcObject = this.stream;
       // play() can reject once during WebView startup (load-interrupt /
       // visibility races). A single swallowed rejection used to leave the

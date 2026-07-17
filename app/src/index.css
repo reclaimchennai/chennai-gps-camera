@@ -187,6 +187,13 @@ textarea {
   max-height: var(--vph, 70vh);
   width: auto;
   height: auto;
+  /* hidden until 'playing' fires so a paused WebView <video> never
+     flashes its play-button overlay; revealed by the .playing class */
+  opacity: 0;
+}
+
+.cam-video-box video.playing {
+  opacity: 1;
 }
 
 .cam-video-box.mirrored video {

@@ -87,13 +87,16 @@ function tick() {
 }
 
 /**
- * Start (or restart) metering. Always opens its own mic stream with the
- * browser's voice processing OFF — echo cancellation, noise suppression
+ * Start (or restart) metering. Prefers an existing camera audio track
+ * (video mode) so only ONE microphone capture is ever open — a second
+ * concurrent getUserMedia({audio}) conflicts on Android and silences the
+ * recording. Falls back to its own mic stream (photo mode / Settings),
+ * always with voice processing OFF: echo cancellation, noise suppression
  * and especially auto gain control rewrite the very levels an SPL meter
- * exists to measure (AGC made quiet rooms and traffic read almost the
- * same). Safe to call repeatedly — the previous graph is torn down first.
+ * exists to measure. Safe to call repeatedly — the graph is torn down
+ * first.
  */
-export function startMeter(): void {
+export function startMeter(cameraStream?: MediaStream | null): void {
   const gen = ++generation;
   if (starting) return; // a start is in flight; it checks generation
   starting = true;
@@ -101,17 +104,22 @@ export function startMeter(): void {
     try {
       teardownGraph();
       let stream: MediaStream | null = null;
-      try {
-        ownStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        });
-        stream = ownStream;
-      } catch {
-        return; // mic denied/unavailable — dB simply not shown
+      if (cameraStream?.getAudioTracks().length) {
+        // reuse the recording's (already unprocessed) mic track
+        stream = cameraStream;
+      } else {
+        try {
+          ownStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+          stream = ownStream;
+        } catch {
+          return; // mic denied/unavailable — dB simply not shown
+        }
       }
       if (gen !== generation) {
         // superseded while we awaited the mic

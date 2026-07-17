@@ -85,6 +85,10 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   const ctx = canvas.getContext("2d")!;
 
   // ---- watermark overlay, re-rendered as the clock ticks -------------
+  // Recordings made by the live camera already have the card burned into
+  // every frame; stamping it again here would double it. Only editor
+  // work (trim/crop/markup/blur) is applied to those.
+  const alreadyWatermarked = Boolean(record.watermarkBurned);
   const { watermark: cfgDefault, profile } = useSettingsStore.getState();
   const config = record.config ?? cfgDefault;
   const data: WatermarkData = record.data;
@@ -96,16 +100,17 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
     miniMap?: CanvasImageSource | null;
     profilePhoto?: CanvasImageSource | null;
   } = {};
-  if (config.fields.miniMap && data.fix) {
+  if (!alreadyWatermarked && config.fields.miniMap && data.fix) {
     assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, null);
   }
-  if (config.fields.profilePhoto) {
+  if (!alreadyWatermarked && config.fields.profilePhoto) {
     assets.profilePhoto = await getProfilePhoto();
   }
   // Source time 0 is the moment recording started, so the burned clock
   // ticks in step with the original wall-clock time (§ item: live
   // seconds in video watermarks).
   const renderWatermarkAt = (srcTimeS: number, db: number | null) => {
+    if (alreadyWatermarked) return;
     wmCtx.clearRect(0, 0, outW, outH);
     renderWatermark(
       wmCtx,
@@ -137,7 +142,7 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
     const src = audioCtx.createMediaElementSource(video);
     const dest = audioCtx.createMediaStreamDestination();
     src.connect(dest); // NOT connected to speakers — silent export
-    if (config.fields.soundLevel) {
+    if (config.fields.soundLevel && !alreadyWatermarked) {
       // tap the clip's own audio so the burned dB figure stays live
       exportAnalyser = audioCtx.createAnalyser();
       exportAnalyser.fftSize = 2048;
@@ -249,7 +254,7 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
         exportAnalyser ? dbFromAnalyser(exportAnalyser) : null
       );
     }
-    ctx.drawImage(wmCanvas, 0, 0);
+    if (!alreadyWatermarked) ctx.drawImage(wmCanvas, 0, 0);
 
     frameCount++;
     opts.onProgress(
