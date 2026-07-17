@@ -1,0 +1,131 @@
+{
+ "version": "3a7bf826e86e",
+ "packs": [
+  {
+   "id": "chennai",
+   "name": "Chennai metro (GCC · Tambaram · Avadi)",
+   "file": "chennai.json",
+   "bbox": [
+    79.85956,
+    12.72133,
+    80.34882,
+    13.39692
+   ],
+   "version": "798a2d53a0a1",
+   "bytes": 479276,
+   "attribution": "Boundary data from public Tamil Nadu government datasets, processed by the Reclaim Chennai project"
+  },
+  {
+   "id": "bengaluru",
+   "name": "Bengaluru (GBA)",
+   "file": "bengaluru.json",
+   "bbox": [
+    77.06976,
+    12.43977,
+    77.97287,
+    13.495
+   ],
+   "version": "d98b1d92ac2d",
+   "bytes": 1393922,
+   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+  },
+  {
+   "id": "hyderabad",
+   "name": "Hyderabad (GHMC)",
+   "file": "hyderabad.json",
+   "bbox": [
+    77.92191,
+    16.77523,
+    78.76219,
+    17.70855
+   ],
+   "version": "3e01f3814f00",
+   "bytes": 1249619,
+   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+  },
+  {
+   "id": "delhi",
+   "name": "Delhi (MCD)",
+   "file": "delhi.json",
+   "bbox": [
+    76.83897,
+    28.4047,
+    77.34756,
+    28.88353
+   ],
+   "version": "ae5943bd145a",
+   "bytes": 412076,
+   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+  },
+  {
+   "id": "kolkata",
+   "name": "Kolkata (KMC)",
+   "file": "kolkata.json",
+   "bbox": [
+    88.24214,
+    22.43253,
+    88.54038,
+    22.6329
+   ],
+   "version": "a402a82a7c02",
+   "bytes": 223247,
+   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+  },
+  {
+   "id": "mumbai",
+   "name": "Mumbai (BMC)",
+   "file": "mumbai.json",
+   "bbox": [
+    72.77633,
+    18.89396,
+    72.98064,
+    19.27018
+   ],
+   "version": "5b1bc279c15f",
+   "bytes": 153471,
+   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+  },
+  {
+   "id": "pune",
+   "name": "Pune (PMC)",
+   "file": "pune.json",
+   "bbox": [
+    73.75156,
+    18.42884,
+    73.96296,
+    18.62162
+   ],
+   "version": "6fb7b696c4f6",
+   "bytes": 106242,
+   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+  },
+  {
+   "id": "visakhapatnam",
+   "name": "Visakhapatnam (GVMC)",
+   "file": "visakhapatnam.json",
+   "bbox": [
+    82.99441,
+    17.54647,
+    83.4637,
+    17.94044
+   ],
+   "version": "99fe922e57b2",
+   "bytes": 132624,
+   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+  },
+  {
+   "id": "tamilnadu",
+   "name": "Tamil Nadu (statewide)",
+   "file": "tamilnadu.json",
+   "bbox": [
+    76.23298,
+    8.07761,
+    80.34882,
+    13.56284
+   ],
+   "version": "fa0a3d2982ca",
+   "bytes": 8945884,
+   "attribution": "Boundary data from public Tamil Nadu government datasets, processed by the Reclaim Chennai project"
+  }
+ ]
+}

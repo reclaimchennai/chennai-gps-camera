@@ -6,7 +6,7 @@
  * jurisdiction lookup re-runs only when the device has moved far enough
  * to possibly change the answer — it is pure local compute either way.
  */
-import { loadGeodata, refreshGeodata } from "./geo/geodata";
+import { loadGeodataFor } from "./geo/geodata";
 import { lookup, type LookupResult } from "./geo/lookup";
 import { useLiveStore } from "../store";
 import type { Fix } from "../types";
@@ -42,8 +42,15 @@ async function onFix(pos: GeolocationPosition): Promise<void> {
   ) {
     lastLookupAt = { lat: fix.lat, lng: fix.lng };
     try {
-      const bundle = await loadGeodata();
-      const result: LookupResult = lookup(bundle, fix.lat, fix.lng);
+      const pack = await loadGeodataFor(fix.lat, fix.lng);
+      const result: LookupResult = pack
+        ? lookup(pack, fix.lat, fix.lng)
+        : {
+            jurisdiction: { scope: "out" },
+            wardFeature: null,
+            loFeature: null,
+            nearestStation: null,
+          };
       useLiveStore.getState().setLookupResult(result);
     } catch {
       // geodata unavailable — GPS-only mode; retried on next fix
@@ -67,9 +74,6 @@ export function startLocation(): void {
     },
     { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
   );
-
-  // Silent background freshness check for the geodata bundle (§6).
-  window.setTimeout(() => void refreshGeodata(), 8000);
 }
 
 export function stopLocation(): void {

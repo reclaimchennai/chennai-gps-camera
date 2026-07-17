@@ -12,22 +12,24 @@ export interface Fix {
 }
 
 /**
- * Scope honesty (§3 of the brief):
- *  - gcc / tambaram: ward+zone digitized, show everything
- *  - avadi: inside Avadi Police Commissionerate locality — corporation
- *    shown, ward/zone "not yet available"
- *  - out: outside the three corporations — GPS only, suppress
- *    ward/zone/police fields entirely
+ * Scope honesty: "in" = at least one jurisdiction layer matched in the
+ * active region pack; "out" = nothing matched (GPS-only). The legacy
+ * values ("gcc" | "tambaram" | "avadi") survive in photos captured by
+ * older versions and must keep rendering.
  */
-export type Scope = "gcc" | "tambaram" | "avadi" | "out";
+export type Scope = "in" | "out" | "gcc" | "tambaram" | "avadi";
 
 export interface Jurisdiction {
   scope: Scope;
-  corporation?: string; // "Greater Chennai Corporation" | ...
+  corporation?: string; // display name, e.g. "Bengaluru Central City Corporation"
+  city?: string; // for the title line ("Bengaluru", "Coimbatore", …)
   ward?: string;
+  wardName?: string; // e.g. "Sampangirama Nagar" where the data names wards
   zone?: string;
+  /** corporation known but ward boundaries not yet published (Avadi) */
+  wardPending?: boolean;
   loStation?: string;
-  loMeta?: string; // "AC · DC · Zone" enrichment line
+  loMeta?: string; // "AC · DC · Zone" enrichment line (Chennai data)
   loPhone?: string;
   trafficStation?: string;
   trafficMeta?: string; // "Sub-Division · District"

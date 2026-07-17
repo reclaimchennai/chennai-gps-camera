@@ -109,9 +109,13 @@ const GCC_ZONE_NUMBERS: Record<string, number> = {
 };
 
 /** "Teynampet" → "Zone Teynampet (9)"; "Zone 2" → "Zone 2";
- *  "Zone 5 Royapuram" → "Zone Royapuram (5)". */
+ *  "Zone 5 Royapuram" → "Zone Royapuram (5)"; boroughs pass through. */
 export function fmtZone(zone?: string): string {
   if (!zone) return "";
+  // Kolkata-style boroughs are their own term — no "Zone" prefix
+  if (/^borough/i.test(zone)) return zone;
+  // "North Zone" → "North" (the prefix we add would double the word)
+  zone = zone.replace(/\s+zone$/i, "").trim();
   const m = zone.match(/^zone\s*(\d+)\s*(.*)$/i);
   if (m) {
     const name = m[2].trim();

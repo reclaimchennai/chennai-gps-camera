@@ -22,10 +22,15 @@ cloud. This one doesn't: everything happens in your browser, on your phone.
 - **Instant capture** — the camera pre-warms on launch; a shutter tap
   persists a full-resolution watermarked JPEG with GPS EXIF in well under a
   second, with zero network on the capture path.
-- **Offline jurisdiction lookup** (Chennai pilot): ward, zone
-  ("Zone Teynampet (9)"), Law & Order and Traffic police stations from
-  bundled boundary polygons — point-in-polygon on-device, honest about data
-  gaps (fields are omitted rather than guessed; Avadi shows "ward not yet
+- **Offline jurisdiction lookup across 9 region packs**: ward, zone
+  ("Zone Teynampet (9)"), and — where published — Law & Order and Traffic
+  police stations, from boundary polygons evaluated on-device. Coverage:
+  **all of Tamil Nadu** (every corporation/municipality/town panchayat +
+  statewide police), **Bengaluru** (GBA wards + city & traffic police),
+  **Hyderabad**, **Delhi**, **Kolkata**, **Mumbai**, **Pune**, and
+  **Visakhapatnam**. The pack for wherever you are downloads automatically,
+  caches for offline use, and updates over the air. Honest about data gaps:
+  fields are omitted rather than guessed (Avadi shows "ward not yet
   available" until its boundaries are published).
 - **DIGIPIN** — India Post's open 10-character digital address code,
   computed offline from the official algorithm (optional field, works
@@ -136,9 +141,19 @@ deploy.sh, Caddyfile.inner, docker-compose.yml
 
 ## Data sources & licences
 
-- **Boundary data**: derived from public Tamil Nadu government datasets,
-  processed by the Reclaim Chennai project. Boundaries are indicative — for
-  official information always confirm with local authorities.
+- **Tamil Nadu boundary data**: derived from public Tamil Nadu government
+  datasets, processed by the Reclaim Chennai project.
+- **Bengaluru, Delhi, Hyderabad, Kolkata, Mumbai, Pune, Visakhapatnam
+  boundary data**: from
+  [Vonter/city-officials](https://github.com/Vonter/city-officials)
+  (GPL-3.0; interactive version at
+  [cityofficials.bengawalk.com](https://cityofficials.bengawalk.com)),
+  which builds on datasets published at
+  [data.opencity.in](https://data.opencity.in) and the respective
+  government sources. The derived pack files in `app/public/data/packs/`
+  for those cities inherit that data's licence.
+- All boundaries are indicative — for official information always confirm
+  with local authorities.
 - **DIGIPIN**: © India Post, Department of Posts — ported from the official
   open-source reference implementation.
 - **Geocoding**: © OpenStreetMap contributors (Nominatim), used under the
@@ -152,11 +167,12 @@ deploy.sh, Caddyfile.inner, docker-compose.yml
 
 ## Scope & roadmap
 
-The jurisdiction layer currently covers Greater Chennai Corporation,
-Tambaram Corporation, and Avadi Corporation (pilot). GPS, DIGIPIN, address
-lookup, annotation, and everything else work anywhere. Wider Indian coverage
-is planned — the boundary bundle is versioned and updates over the air
-without an app release.
+The jurisdiction layer covers all of Tamil Nadu plus seven other major
+Indian cities (see Features). GPS, DIGIPIN, address lookup, annotation, and
+everything else work anywhere. More regions are planned — packs are
+bbox-indexed, versioned, and update over the air without an app release, so
+adding a city is a data change, not a code change
+(`app/scripts/build-packs.mjs`).
 
 ## Contributing
 

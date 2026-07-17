@@ -16,7 +16,7 @@ RELEASE="$DEPLOY/releases/$TS"
 echo "==> Building (geodata filter + icons run only if inputs exist)"
 cd "$APP"
 if [[ -d "$HOME/projects/police/police-locator-20260525-1033/public/data" ]]; then
-  node scripts/filter-geodata.mjs
+  node scripts/build-packs.mjs
 fi
 npm run build
 

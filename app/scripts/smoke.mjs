@@ -191,6 +191,7 @@ try {
       hasExif: head.includes("Exif"),
       record: {
         scope: photo.data.jurisdiction?.scope,
+        corp: photo.data.jurisdiction?.corporation,
         ward: photo.data.jurisdiction?.ward,
         lo: photo.data.jurisdiction?.loStation,
         traffic: photo.data.jurisdiction?.trafficStation,
@@ -206,7 +207,9 @@ try {
   );
   check(
     "jurisdiction stamped",
-    exif?.record?.scope === "gcc" && Boolean(exif?.record?.lo),
+    exif?.record?.scope === "in" &&
+      exif?.record?.corp === "Greater Chennai Corporation" &&
+      Boolean(exif?.record?.lo),
     JSON.stringify(exif?.record ?? exif)
   );
   // DIGIPIN verified against India Post's official implementation for
@@ -279,6 +282,54 @@ try {
   );
 
   check("no page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
+
+  // 10. Bengaluru region pack: fresh context at Cubbon Park — the pack
+  // must fetch on demand and stamp GBA corporation/ward/police
+  const blrCtx = await browser.newContext({
+    viewport: { width: 412, height: 915 },
+    geolocation: { latitude: 12.9763, longitude: 77.5929, accuracy: 8 },
+    permissions: ["geolocation", "camera"],
+    deviceScaleFactor: 2,
+  });
+  const blrPage = await blrCtx.newPage();
+  await blrPage.goto(base, { waitUntil: "load" });
+  await blrPage.waitForFunction(
+    () => {
+      const v = document.querySelector("video");
+      return v && v.readyState >= 2 && v.videoWidth > 0;
+    },
+    { timeout: 15000 }
+  );
+  await blrPage.waitForTimeout(3500); // fix + pack fetch + lookup
+  await blrPage.locator(".shutter").click();
+  await blrPage.waitForTimeout(3000);
+  const blr = await blrPage.evaluate(async () => {
+    const open = indexedDB.open("chennai-gps-cam");
+    const db = await new Promise((res, rej) => {
+      open.onsuccess = () => res(open.result);
+      open.onerror = rej;
+    });
+    const media = await new Promise((res) => {
+      const r = db.transaction("media").objectStore("media").getAll();
+      r.onsuccess = () => res(r.result);
+    });
+    db.close();
+    const j = media.find((m) => m.kind === "photo")?.data.jurisdiction;
+    return j
+      ? { corp: j.corporation, ward: j.ward, wardName: j.wardName, zone: j.zone, lo: j.loStation, traffic: j.trafficStation }
+      : null;
+  });
+  check(
+    "Bengaluru pack lookup",
+    Boolean(
+      blr &&
+        /Bengaluru .*City Corporation/.test(blr.corp ?? "") &&
+        blr.ward === "4" &&
+        blr.lo === "Cubbon Park PS"
+    ),
+    JSON.stringify(blr)
+  );
+  await blrCtx.close();
 } catch (err) {
   failures++;
   console.error("FATAL", err);

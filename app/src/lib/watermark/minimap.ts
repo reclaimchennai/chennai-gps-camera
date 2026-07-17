@@ -10,7 +10,7 @@
  * canvas with a fetched image and only then shows Google attribution.
  */
 import type { Feature, Position } from "geojson";
-import { loadGeodata } from "../geo/geodata";
+import { loadGeodataFor } from "../geo/geodata";
 import type { LookupResult } from "../geo/lookup";
 
 export const MINIMAP_SIZE = 256; // square, drawn at capture scale by renderer
@@ -56,8 +56,8 @@ export async function renderMiniMap(
   const key = `${focus ? JSON.stringify(focus.bbox) : "none"}|${lat.toFixed(4)},${lng.toFixed(4)}`;
   if (key === cacheKey && cacheCanvas) return cacheCanvas;
 
-  const bundle = await loadGeodata().catch(() => null);
-  if (!bundle) return null;
+  const pack = await loadGeodataFor(lat, lng).catch(() => null);
+  if (!pack) return null;
 
   const size = MINIMAP_SIZE;
   const canvas = document.createElement("canvas");
@@ -120,7 +120,7 @@ export async function renderMiniMap(
   };
 
   // Neighbour context: ward boundaries whose bbox overlaps the window.
-  const layer = lookupResult?.wardFeature ? bundle.ulb : bundle.lo;
+  const layer = lookupResult?.wardFeature ? pack.layers.ulb : pack.layers.lo;
   let drawn = 0;
   for (const f of layer.features as Feature[]) {
     if (!f.bbox) continue;

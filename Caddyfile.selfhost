@@ -21,7 +21,7 @@
 
 	# the service worker and version manifest must never be cached, or
 	# installed apps would stop receiving updates
-	@nocache path / /index.html /sw.js /registerSW.js /manifest.webmanifest /data/version.json
+	@nocache path / /index.html /sw.js /registerSW.js /manifest.webmanifest /data/packs/index.json
 	header @nocache Cache-Control "no-cache, no-store, must-revalidate"
 
 	header {

@@ -62,10 +62,14 @@ export default function MediaDetailView({ id }: { id: string }) {
     if (d.address) lines.push(d.address);
     if (d.digipin) lines.push(`DIGIPIN: ${d.digipin}`);
     if (jd && jd.scope !== "out") {
+      const pending = jd.wardPending || jd.scope === "avadi";
       const parts = [jd.corporation];
-      if (jd.scope === "avadi") parts.push("Ward: not yet available");
-      else if (jd.ward) parts.push(`Ward ${fmtWard(jd.ward)}`);
-      if (jd.zone && jd.scope !== "avadi") parts.push(fmtZone(jd.zone));
+      if (pending) parts.push("Ward: not yet available");
+      else if (jd.ward)
+        parts.push(
+          `Ward ${fmtWard(jd.ward)}${jd.wardName ? ` (${jd.wardName})` : ""}`
+        );
+      if (jd.zone && !pending) parts.push(fmtZone(jd.zone));
       lines.push(parts.filter(Boolean).join(" · "));
       if (jd.loStation) lines.push(`Police (L&O): ${jd.loStation}`);
       if (jd.trafficStation) lines.push(`Traffic: ${jd.trafficStation}`);
@@ -236,10 +240,10 @@ export default function MediaDetailView({ id }: { id: string }) {
                 <>
                   <br />
                   {j.corporation}
-                  {j.scope === "avadi"
+                  {j.wardPending || j.scope === "avadi"
                     ? " · Ward: not yet available"
                     : j.ward
-                      ? ` · Ward ${fmtWard(j.ward)}${j.zone ? ` · ${fmtZone(j.zone)}` : ""}`
+                      ? ` · Ward ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}${j.zone ? ` · ${fmtZone(j.zone)}` : ""}`
                       : ""}
                   {j.loStation && (
                     <>

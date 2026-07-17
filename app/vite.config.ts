@@ -33,24 +33,29 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Core app shell + the offline jurisdiction bundle are precached;
-        // the heavyweight face-detection wasm/model cache on first use.
-        globPatterns: ["**/*.{js,css,html,png,svg,woff2,geojson}"],
+        // Core app shell + the Chennai pilot pack are precached (fully
+        // offline from first visit there); other region packs fetch on
+        // demand and live in IndexedDB. Face-detection wasm/models cache
+        // on first use.
+        globPatterns: [
+          "**/*.{js,css,html,png,svg,woff2}",
+          "data/packs/chennai.json",
+        ],
         globIgnores: ["mediapipe/**", "models/**"],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",
         runtimeCaching: [
           {
-            // versioned geodata refetches (?v=hash) — stale-while-revalidate,
-            // same pattern as the police-locator sw.js
-            urlPattern: /\/data\/.*\.geojson/,
-            handler: "StaleWhileRevalidate",
-            options: { cacheName: "geodata" },
-          },
-          {
-            urlPattern: /\/data\/version\.json/,
+            // pack index stays fresh (it drives OTA data updates)
+            urlPattern: /\/data\/packs\/index\.json/,
             handler: "NetworkFirst",
             options: { cacheName: "geodata", networkTimeoutSeconds: 4 },
+          },
+          {
+            // versioned pack fetches (?v=hash)
+            urlPattern: /\/data\/packs\/.*\.json/,
+            handler: "StaleWhileRevalidate",
+            options: { cacheName: "geodata" },
           },
           {
             urlPattern: /\/(mediapipe|models)\//,

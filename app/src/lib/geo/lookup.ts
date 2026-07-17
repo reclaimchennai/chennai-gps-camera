@@ -13,9 +13,10 @@ import polygonToLine from "@turf/polygon-to-line";
 import pointToLineDistance from "@turf/point-to-line-distance";
 import distance from "@turf/distance";
 import { point as turfPoint } from "@turf/helpers";
-import type { Feature, FeatureCollection } from "geojson";
-import type { Jurisdiction, Scope } from "../../types";
-import type { GeoBundle } from "./geodata";
+import type { Feature } from "geojson";
+import type { FeatureCollection } from "geojson";
+import type { Jurisdiction } from "../../types";
+import type { GeoPack } from "./geodata";
 
 type Pt = ReturnType<typeof turfPoint>;
 
@@ -99,68 +100,64 @@ export interface LookupResult {
   nearestStation: NearestStation | null;
 }
 
-const CORP_LABEL: Record<Exclude<Scope, "out">, string> = {
-  gcc: "Greater Chennai Corporation",
-  tambaram: "Tambaram Corporation",
-  avadi: "Avadi Corporation",
-};
-
 export function lookup(
-  bundle: GeoBundle,
+  pack: GeoPack,
   lat: number,
   lng: number
 ): LookupResult {
   const pt = turfPoint([lng, lat]);
 
-  const ulbF = findContainingFeature(bundle.ulb.features as Feature[], pt);
-  const loF = lookupPolygon(bundle.lo.features as Feature[], pt);
-  const trF = lookupPolygon(bundle.traffic.features as Feature[], pt);
+  const ulbF = findContainingFeature(pack.layers.ulb.features as Feature[], pt);
+  const loF = lookupPolygon(pack.layers.lo.features as Feature[], pt);
+  const trF = lookupPolygon(pack.layers.traffic.features as Feature[], pt);
 
-  // ---- Scope decision (§3 honesty rules) --------------------------
+  const jurisdiction: Jurisdiction = { scope: "out" };
   const up = (ulbF?.properties ?? {}) as Record<string, string>;
   const lp = (loF?.properties ?? {}) as Record<string, string | boolean>;
-  let scope: Scope = "out";
-  if (up.ulbType === "Corporation" && up.ulb === "Chennai") scope = "gcc";
-  else if (up.ulbType === "Corporation" && up.ulb === "Tambaram")
-    scope = "tambaram";
-  // Avadi Corporation has no ward polygons in the source data (§3): the
-  // only geometry covering it is the L&O layer's Avadi-locality
-  // commissionerate polygons. Only claim Avadi when no other local body
-  // polygon matched, so neighbouring municipalities don't get mislabelled.
-  else if (!ulbF && lp.avadi === true) scope = "avadi";
 
-  const jurisdiction: Jurisdiction = { scope };
-
-  if (scope !== "out") {
-    jurisdiction.corporation = CORP_LABEL[scope];
-    if (scope === "gcc" || scope === "tambaram") {
-      jurisdiction.ward = up.ward;
-      jurisdiction.zone = up.zone;
-    }
-    if (loF) {
-      const p = lp as Record<string, string>;
-      jurisdiction.loStation = p.station;
-      const zoneShort = (p.zone ?? "").replace(/^chennai\s+/i, "");
-      jurisdiction.loMeta = [p.ac, p.dc, zoneShort]
-        .filter(Boolean)
-        .join(" · ");
-      jurisdiction.loPhone = p.phone;
-    }
-    if (trF) {
-      const p = trF.properties as Record<string, string>;
-      jurisdiction.trafficStation = p.station;
-      jurisdiction.trafficMeta = [p.subDivision, p.district]
-        .filter(Boolean)
-        .join(" · ");
-    }
+  if (ulbF) {
+    jurisdiction.scope = "in";
+    jurisdiction.corporation = up.corp;
+    jurisdiction.city = up.city;
+    jurisdiction.ward = up.ward;
+    jurisdiction.wardName = up.wardName;
+    jurisdiction.zone = up.zone;
+  } else if (lp.avadi === true) {
+    // Avadi Corporation has no published ward polygons — the only
+    // geometry covering it is the L&O commissionerate layer. Claim it
+    // only when no local-body polygon matched, so neighbouring
+    // municipalities aren't mislabelled.
+    jurisdiction.scope = "in";
+    jurisdiction.corporation = "Avadi Corporation";
+    jurisdiction.city = "Avadi";
+    jurisdiction.wardPending = true;
   }
 
-  // Nearest station point — cheap, and useful context inside scope.
+  // Police jurisdictions render whenever their polygons match — the
+  // data is honest about itself (no polygon → no claim).
+  if (loF) {
+    jurisdiction.scope = "in";
+    const p = lp as Record<string, string>;
+    jurisdiction.loStation = p.station;
+    const zoneShort = (p.zone ?? "").replace(/^chennai\s+/i, "");
+    jurisdiction.loMeta = [p.ac, p.dc, zoneShort].filter(Boolean).join(" · ");
+    jurisdiction.loPhone = p.phone;
+  }
+  if (trF) {
+    jurisdiction.scope = "in";
+    const p = trF.properties as Record<string, string>;
+    jurisdiction.trafficStation = p.station;
+    jurisdiction.trafficMeta = [p.subDivision, p.district]
+      .filter(Boolean)
+      .join(" · ");
+  }
+
+  // Nearest station point — where the pack ships station points.
   let nearest: NearestStation | null = null;
-  if (scope !== "out") {
+  if (jurisdiction.scope === "in" && pack.layers.stations.features.length) {
     let bestKm = Infinity;
     let bestName = "";
-    for (const f of bundle.stations.features) {
+    for (const f of pack.layers.stations.features) {
       const d = distance(pt, f as never, { units: "kilometers" });
       if (d < bestKm) {
         bestKm = d;

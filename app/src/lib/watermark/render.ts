@@ -150,8 +150,9 @@ function buildLines(
   if (f.titleLine) {
     // City-level only — no state/country/flag. `locality` arrives
     // display-ready from the geocoder ("Kodambakkam, Chennai"); offline
-    // fall back to the corporation's city name.
-    const cityByScope =
+    // fall back to the matched jurisdiction's city (legacy photos carry
+    // scope names instead of a city field).
+    const legacyCity =
       j?.scope === "gcc"
         ? "Chennai"
         : j?.scope === "tambaram"
@@ -159,7 +160,7 @@ function buildLines(
           : j?.scope === "avadi"
             ? "Avadi"
             : undefined;
-    const title = data.locality ?? cityByScope;
+    const title = data.locality ?? j?.city ?? legacyCity;
     if (title) lines.push({ text: title, font: bold, color: theme.text });
   }
 
@@ -208,17 +209,19 @@ function buildLines(
     });
   }
 
-  // ---- Chennai-specific rows (honesty rules baked in, §3) ----------
+  // ---- jurisdiction rows (honesty rules baked in) -------------------
   if (j && j.scope !== "out") {
+    const wardPending = j.wardPending || j.scope === "avadi";
     const corpParts: string[] = [];
     if ((f.ward || f.zone) && j.corporation) corpParts.push(j.corporation);
     if (f.ward) {
-      if (j.scope === "avadi")
-        corpParts.push("Ward: not yet available");
-      else if (j.ward) corpParts.push(`Ward ${fmtWard(j.ward)}`);
+      if (wardPending) corpParts.push("Ward: not yet available");
+      else if (j.ward)
+        corpParts.push(
+          `Ward ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}`
+        );
     }
-    if (f.zone && j.zone && j.scope !== "avadi")
-      corpParts.push(fmtZone(j.zone));
+    if (f.zone && j.zone && !wardPending) corpParts.push(fmtZone(j.zone));
     if (corpParts.length) {
       wrapText(ctx, corpParts.join(" · "), body, maxWidth, 2).forEach(
         (seg, i) => {
@@ -398,7 +401,14 @@ function renderMinimal(
     rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes));
   }
   const j = data.jurisdiction;
-  if (config.fields.ward && j && (j.scope === "gcc" || j.scope === "tambaram") && j.ward) {
+  if (
+    config.fields.ward &&
+    j &&
+    j.scope !== "out" &&
+    j.ward &&
+    !j.wardPending &&
+    j.corporation
+  ) {
     rows.push(`${j.corporation} · Ward ${fmtWard(j.ward)}`);
   }
   if (!rows.length) return null;

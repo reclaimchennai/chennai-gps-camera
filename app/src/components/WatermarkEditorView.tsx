@@ -22,8 +22,9 @@ const SAMPLE: WatermarkData = {
     timestamp: 0,
   },
   jurisdiction: {
-    scope: "gcc",
+    scope: "in",
     corporation: "Greater Chennai Corporation",
+    city: "Chennai",
     ward: "123",
     zone: "Zone 9 Teynampet",
     loStation: "D3 Ice House PS",

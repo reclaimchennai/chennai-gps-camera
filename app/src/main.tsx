@@ -15,7 +15,7 @@ import { hydrateSettings } from "./store";
 import { startLocation, startCompass } from "./lib/location";
 import { startLiveAddress } from "./lib/liveAddress";
 import { initBackfill } from "./lib/backfill";
-import { loadGeodata } from "./lib/geo/geodata";
+import { warmGeodata } from "./lib/geo/geodata";
 import { initTheme, applyTheme } from "./lib/theme";
 
 // Auto-update for installed PWAs: the service worker is registered in
@@ -48,7 +48,7 @@ void hydrateSettings().then(() => {
   startLiveAddress();
   initBackfill();
 });
-void loadGeodata().catch(() => {});
+warmGeodata();
 
 // Ask the browser to never evict this origin's storage — the in-app
 // gallery lives in IndexedDB and must survive storage pressure.
