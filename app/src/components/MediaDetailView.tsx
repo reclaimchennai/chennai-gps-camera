@@ -41,6 +41,18 @@ export default function MediaDetailView({ id }: { id: string }) {
     prevUrl?: string;
     nextUrl?: string;
   }>({});
+  // blob-URL cache keyed `${id}:${variant}`. It persists across swipes so
+  // the image that slid in keeps the exact URL its pane was already
+  // showing — the browser repaints from its decoded cache instead of
+  // re-fetching the blob (that refetch was the post-swipe stutter).
+  // Entries are evicted once an id leaves the prev/cur/next window and
+  // everything is revoked on unmount.
+  const urlCacheRef = useRef(new Map<string, string>());
+  // set by commit() when it pre-seeds the incoming pane's URL, so the
+  // load effect skips its blank-out for that id
+  const preSeededRef = useRef<string | null>(null);
+  // bumped when a backfill rewrites blobs for an on-screen id
+  const [refresh, setRefresh] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   // finger-following carousel track
   const trackRef = useRef<HTMLDivElement>(null);
@@ -96,30 +108,43 @@ export default function MediaDetailView({ id }: { id: string }) {
   }, []);
 
   useEffect(() => {
-    const urls: string[] = [];
-    const track = (b: Blob) => {
+    const cache = urlCacheRef.current;
+    // blob URL through the cache: a hit returns the very same string the
+    // neighbour pane was already rendering, so assigning it to the current
+    // pane costs nothing
+    const urlFor = async (
+      mediaId: string,
+      variant: "final" | "source" | "thumb",
+    ) => {
+      const key = `${mediaId}:${variant}`;
+      const hit = cache.get(key);
+      if (hit) return hit;
+      const b = await getBlob(mediaId, variant);
+      if (!b) return undefined;
       const u = URL.createObjectURL(b);
-      urls.push(u);
+      cache.set(key, u);
       return u;
     };
-    // reset zoom + the visible blob so the pane never briefly renders a
-    // just-revoked object URL, and reset the carousel track to centre
+    // reset zoom (clearing any leftover inline transform — the img element
+    // survives a swipe now) and recentre the carousel track. Only blank the
+    // visible blob when commit() has NOT pre-seeded the incoming URL; that
+    // unconditional blank-out was the post-swipe stutter.
     zoomRef.current = { scale: 1, x: 0, y: 0 };
-    setUrl(null);
-    setPoster(null);
+    applyZoom();
+    if (preSeededRef.current !== curId) {
+      setUrl(null);
+      setPoster(null);
+    }
+    preSeededRef.current = null;
     if (trackRef.current) {
       trackRef.current.style.transition = "none";
       trackRef.current.style.transform = "translate3d(0,0,0)";
     }
     // a neighbour's display image (photo → final, video → thumbnail)
-    const neighbourUrl = async (m?: MediaRecord) => {
-      if (!m) return undefined;
-      const b =
-        m.kind === "photo"
-          ? await getBlob(m.id, "final")
-          : await getBlob(m.id, "thumb");
-      return b ? track(b) : undefined;
-    };
+    const neighbourUrl = (m?: MediaRecord) =>
+      m
+        ? urlFor(m.id, m.kind === "photo" ? "final" : "thumb")
+        : Promise.resolve(undefined);
     void (async () => {
       const r = await getMedia(curId);
       if (!r) {
@@ -140,17 +165,62 @@ export default function MediaDetailView({ id }: { id: string }) {
       // Videos get their stored thumbnail as a poster so the detail view
       // shows a real frame, not the browser's gray play-button splash.
       if (r.kind === "video") {
-        const t = await getBlob(curId, "thumb");
-        if (t) setPoster(track(t));
+        const t = await urlFor(curId, "thumb");
+        if (t) setPoster(t);
       }
-      const variant = r.kind === "photo" ? "final" : "source";
-      const blob =
-        (r.kind === "video" && (await getBlob(curId, "final"))) ||
-        (await getBlob(curId, variant));
-      if (blob) setUrl(track(blob));
+      const u =
+        (r.kind === "video" && (await urlFor(curId, "final"))) ||
+        (await urlFor(curId, r.kind === "photo" ? "final" : "source"));
+      if (u) setUrl(u);
+      // evict cached URLs whose id left the prev/cur/next window
+      const keep = new Set(
+        [curId, prev?.id, next?.id].filter(Boolean) as string[],
+      );
+      for (const [key, cached] of cache) {
+        if (!keep.has(key.slice(0, key.lastIndexOf(":")))) {
+          URL.revokeObjectURL(cached);
+          cache.delete(key);
+        }
+      }
     })();
-    return () => urls.forEach((u) => URL.revokeObjectURL(u));
-  }, [curId]);
+  }, [curId, refresh, applyZoom]);
+
+  // revoke every cached URL when the viewer unmounts
+  useEffect(() => {
+    const cache = urlCacheRef.current;
+    return () => {
+      for (const u of cache.values()) URL.revokeObjectURL(u);
+      cache.clear();
+    };
+  }, []);
+
+  // a backfill rewrote this media's blobs (better watermark data): drop
+  // the stale cached URLs, and reload the panes if it is on-screen
+  useEffect(() => {
+    const onUpdated = (e: Event) => {
+      const mid = (e as CustomEvent<{ id?: string }>).detail?.id;
+      if (!mid) return;
+      const cache = urlCacheRef.current;
+      let had = false;
+      for (const [key, cached] of cache) {
+        if (key.slice(0, key.lastIndexOf(":")) === mid) {
+          URL.revokeObjectURL(cached);
+          cache.delete(key);
+          had = true;
+        }
+      }
+      if (
+        had &&
+        (mid === curId ||
+          mid === neighbours.prev?.id ||
+          mid === neighbours.next?.id)
+      ) {
+        setRefresh((n) => n + 1);
+      }
+    };
+    window.addEventListener("gpscam:media-updated", onUpdated);
+    return () => window.removeEventListener("gpscam:media-updated", onUpdated);
+  }, [curId, neighbours]);
 
   // Videos start playing on open (native-gallery feel). If the browser
   // refuses unmuted autoplay, fall back to muted so playback still
@@ -232,8 +302,23 @@ export default function MediaDetailView({ id }: { id: string }) {
   };
 
   // commit to a neighbour after the slide finishes: swap the record and
-  // recentre the track without a visible jump (the effect reloads panes)
+  // recentre the track without a visible jump. The incoming pane is
+  // pre-seeded synchronously from the URL cache — same blob URL the
+  // neighbour pane was showing — so the swap is paint-identical (no
+  // blank frame, no re-decode).
   const commit = useCallback((target: MediaRecord) => {
+    const cache = urlCacheRef.current;
+    preSeededRef.current = target.id;
+    setRec(target);
+    if (target.kind === "photo") {
+      setUrl(cache.get(`${target.id}:final`) ?? null);
+      setPoster(null);
+    } else {
+      // the video element loads fresh; its cached thumbnail poster
+      // covers the gap so there is still no black flash
+      setUrl(null);
+      setPoster(cache.get(`${target.id}:thumb`) ?? null);
+    }
     setCurId(target.id);
     history.replaceState(null, "", `#/media/${target.id}`);
   }, []);
