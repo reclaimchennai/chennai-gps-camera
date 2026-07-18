@@ -162,7 +162,6 @@ export type AppTheme = "system" | "light" | "dark";
 export type DateFormat = "DD/MM/YYYY" | "D MMMM YYYY" | "D MMM YYYY";
 
 export interface AppSettings {
-  shutterSound: boolean;
   gridLines: boolean;
   mirrorFrontPhoto: boolean;
   /** Auto-download each captured photo to the device (Downloads folder

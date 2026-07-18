@@ -61,7 +61,6 @@ export const useLiveStore = create<LiveState>((set) => ({
 // ---- Persistent settings ----------------------------------------------
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  shutterSound: true,
   gridLines: false,
   mirrorFrontPhoto: false,
   autoSaveToDevice: true,

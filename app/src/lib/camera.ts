@@ -8,6 +8,7 @@
  */
 
 import { isNativeApp } from "./native";
+import { preferredAudioConstraints } from "./audio/source";
 
 export type FacingMode = "environment" | "user";
 
@@ -57,11 +58,14 @@ export class CameraController {
   async start(facing: FacingMode = this.facing): Promise<MediaStream> {
     this.stop();
     this.facing = facing;
-    const audio: MediaTrackConstraints = {
+    const baseAudio: MediaTrackConstraints = {
       echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false,
     };
+    // Prefer a connected external mic; failing that, pin the built-in one so
+    // mic-less headphones can't silence the recording (see audio/source.ts).
+    const audio = await preferredAudioConstraints(baseAudio);
     const video: MediaTrackConstraints = {
       facingMode: facing,
       width: { ideal: 1920 },
@@ -71,16 +75,25 @@ export class CameraController {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio, video });
     } catch {
       try {
-        // mic denied — camera still works, recordings will be silent
+        // the exact-device pick may have gone stale (accessory unplugged) —
+        // retry letting the OS choose the input before giving up on audio
         this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
+          audio: baseAudio,
           video,
         });
       } catch {
-        this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: facing },
-        });
+        try {
+          // mic denied — camera still works, recordings will be silent
+          this.stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video,
+          });
+        } catch {
+          this.stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { facingMode: facing },
+          });
+        }
       }
     }
     this.zoomValue = 1;

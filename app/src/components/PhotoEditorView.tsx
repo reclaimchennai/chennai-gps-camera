@@ -132,6 +132,14 @@ export default function PhotoEditorView({ id }: { id: string }) {
   const mosaicsRef = useRef(new Map<number, HTMLCanvasElement>());
   const viewRef = useRef(view);
   viewRef.current = view;
+  // fit is read imperatively inside the pinch handlers, which are memoised
+  // without `fit` in their deps. A ref keeps them on the LIVE fit: fit is 1
+  // for the first render (before the image measures) and the pinch-start
+  // callback would otherwise bake s0 at fit=1 while the live move uses the
+  // real fit, collapsing the preview scale (k<1) — the photo shrank into
+  // the top-left corner.
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
   const pinchRef = useRef<{ dist: number; mid: { x: number; y: number } } | null>(null);
   // committed stage transform captured at pinch start — the gesture is
   // shown by a cheap GPU CSS transform on the Konva container relative to
@@ -418,10 +426,21 @@ export default function PhotoEditorView({ id }: { id: string }) {
       const te = e.evt as TouchEvent;
       if (te.touches && te.touches.length >= 2) {
         cancelActiveDraft();
+        const stage = stageRef.current;
+        // A one-finger Konva stage-drag must not run alongside the pinch:
+        // Konva would move stage.position from the first pointer while the
+        // CSS preview also transforms the container, double-applying and
+        // flinging the photo away. Cancel any pending drag and disable it
+        // for the gesture; the release re-render restores `draggable` from
+        // its prop.
+        if (stage) {
+          stage.stopDrag();
+          stage.draggable(false);
+        }
         pinchRef.current = readPinch(te);
         const v = viewRef.current;
-        pinchBakeRef.current = { s0: fit * v.zoom, p0x: v.x, p0y: v.y };
-        const container = stageRef.current?.container();
+        pinchBakeRef.current = { s0: fitRef.current * v.zoom, p0x: v.x, p0y: v.y };
+        const container = stage?.container();
         if (container) container.style.transformOrigin = "0 0";
         return;
       }
@@ -507,7 +526,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
       const bake = pinchBakeRef.current;
       const container = stageRef.current?.container();
       if (bake && container) {
-        const s1 = fit * clamped.zoom;
+        const s1 = fitRef.current * clamped.zoom;
         const k = s1 / bake.s0;
         const tx = clamped.x - k * bake.p0x;
         const ty = clamped.y - k * bake.p0y;
@@ -569,7 +588,8 @@ export default function PhotoEditorView({ id }: { id: string }) {
       const stage = stageRef.current;
       const container = stage?.container();
       if (stage) {
-        stage.scale({ x: fit * target.zoom, y: fit * target.zoom });
+        const s = fitRef.current * target.zoom;
+        stage.scale({ x: s, y: s });
         stage.position({ x: target.x, y: target.y });
         stage.batchDraw();
       }

@@ -6,7 +6,7 @@ export const ALL_FIELDS: WatermarkFields = {
   brand: false, // branding-free cards — kept in the type for stored configs
   datetime: true,
   coords: true,
-  digipin: false, // opt-in (§ DIGIPIN)
+  digipin: true, // on by default (§ DIGIPIN) — India Post offline code
   altitudeAccuracy: false,
   address: true,
   titleLine: true,

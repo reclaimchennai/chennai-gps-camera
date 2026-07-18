@@ -12,6 +12,7 @@
  * releases the mic in stop().
  */
 import { useLiveStore, useSettingsStore } from "../../store";
+import { preferredAudioConstraints } from "./source";
 
 // dBFS→"dB" shift chosen so readings land close to common phone
 // noise-meter apps (quiet room ~35–40, conversation ~60, traffic ~75).
@@ -131,18 +132,27 @@ export function startMeter(cameraStream?: MediaStream | null): void {
         // reuse the recording's (already unprocessed) mic track
         stream = cameraStream;
       } else {
+        const baseAudio: MediaTrackConstraints = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
+        // Same input pick as the recording: prefer an external mic, else
+        // pin the built-in one so mic-less headphones don't flatline the
+        // meter at its floor. Retry OS-default if the exact device fails.
+        const audio = await preferredAudioConstraints(baseAudio);
         try {
-          ownStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: false,
-            },
-          });
-          stream = ownStream;
+          ownStream = await navigator.mediaDevices.getUserMedia({ audio });
         } catch {
-          return; // mic denied/unavailable — dB simply not shown
+          try {
+            ownStream = await navigator.mediaDevices.getUserMedia({
+              audio: baseAudio,
+            });
+          } catch {
+            return; // mic denied/unavailable — dB simply not shown
+          }
         }
+        stream = ownStream;
       }
       if (gen !== generation) {
         // superseded while we awaited the mic

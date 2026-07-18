@@ -11,7 +11,6 @@ import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture
 import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
-import { playShutter } from "../lib/sound";
 import { useLiveStore, useSettingsStore } from "../store";
 import { isNativeApp } from "../lib/native";
 import { navigate } from "../nav";
@@ -366,7 +365,6 @@ export default function CameraView({ active }: { active: boolean }) {
     if (grabbing.current || !ready) return;
     grabbing.current = true;
     setFlashFx((k) => k + 1);
-    if (useSettingsStore.getState().settings.shutterSound) playShutter();
     try {
       const { job, preview } = await grabFrame();
       if (preview) setFlyImg({ src: preview, key: Date.now() });

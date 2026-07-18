@@ -131,12 +131,6 @@ export default function SettingsView() {
             />
           </Row>
         )}
-        <Row label="Shutter sound">
-          <Toggle
-            on={settings.shutterSound}
-            onChange={(v) => setSettings({ shutterSound: v })}
-          />
-        </Row>
         <Row label="Grid lines">
           <Toggle
             on={settings.gridLines}
