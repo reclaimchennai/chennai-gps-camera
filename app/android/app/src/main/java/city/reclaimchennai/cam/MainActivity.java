@@ -49,6 +49,28 @@ public class MainActivity extends BridgeActivity {
     }
 
     /**
+     * Fresh-install race: the web app boots (and starts camera + GPS)
+     * while the permission dialog is still up, so its first attempts
+     * fail. Once the user answers, reload the WebView so everything
+     * starts cleanly with the permissions in hand. Upgrades never hit
+     * this because their grants carry over.
+     */
+    @Override
+    public void onRequestPermissionsResult(
+        int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 9001) {
+            boolean anyGranted = false;
+            for (int r : grantResults) {
+                if (r == PackageManager.PERMISSION_GRANTED) anyGranted = true;
+            }
+            if (anyGranted && bridge != null && bridge.getWebView() != null) {
+                bridge.getWebView().post(() -> bridge.getWebView().reload());
+            }
+        }
+    }
+
+    /**
      * A camera app is useless without these — ask up front instead of
      * relying on the WebView to relay each getUserMedia / geolocation
      * prompt mid-capture.

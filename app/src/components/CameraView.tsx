@@ -84,7 +84,10 @@ export default function CameraView({ active }: { active: boolean }) {
   // ---- camera lifecycle (pre-warm on mount, §2) ---------------------
   // One stream serves both modes — startCam only runs on mount, camera
   // flip, and visibility restore. Photo/video switching never touches it.
+  const camStarting = useRef(false);
   const startCam = useCallback(async (_m?: Mode) => {
+    if (camStarting.current) return;
+    camStarting.current = true;
     setReady(false);
     setCamError(null);
     try {
@@ -96,8 +99,27 @@ export default function CameraView({ active }: { active: boolean }) {
       setCamError(
         "Camera unavailable. Check that permission is granted and no other app is using it."
       );
+    } finally {
+      camStarting.current = false;
     }
   }, []);
+
+  // Fresh-install self-heal: if the first start failed (the OS permission
+  // dialog was still up when the app booted), keep retrying quietly —
+  // the moment the grant lands, the viewfinder comes alive without the
+  // user having to find a Retry button or restart the app.
+  useEffect(() => {
+    if (!active || ready) return;
+    let tries = 0;
+    const t = window.setInterval(() => {
+      if (tries++ >= 10) {
+        window.clearInterval(t);
+        return;
+      }
+      if (!camStarting.current) void startCam(modeRef.current);
+    }, 3000);
+    return () => window.clearInterval(t);
+  }, [active, ready, startCam]);
 
   useEffect(() => {
     void startCam(modeRef.current);

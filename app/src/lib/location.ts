@@ -19,6 +19,9 @@ let watchId: number | null = null;
 let coarseWatchId: number | null = null;
 let lastFineAt = 0;
 let lastLookupAt: { lat: number; lng: number } | null = null;
+let retryTimer = 0;
+let retries = 0;
+const MAX_RETRIES = 20;
 
 function metersBetween(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const dLat = (a.lat - b.lat) * 111_320;
@@ -68,6 +71,7 @@ export function startLocation(): void {
   useLiveStore.getState().setGpsStatus("waiting");
   watchId = navigator.geolocation.watchPosition(
     (pos) => {
+      retries = 0;
       lastFineAt = Date.now();
       useLiveStore.getState().setGpsStatus("ok");
       void onFix(pos);
@@ -76,6 +80,18 @@ export function startLocation(): void {
       useLiveStore
         .getState()
         .setGpsStatus(err.code === err.PERMISSION_DENIED ? "denied" : "waiting");
+      // Fresh-install race: on a first launch the OS permission dialog
+      // may still be open when this first fails — a denied watch never
+      // recovers on its own, so re-arm it a few times until the grant
+      // lands (harmlessly cheap if the user truly denied).
+      if (err.code === err.PERMISSION_DENIED && retries < MAX_RETRIES) {
+        retries++;
+        window.clearTimeout(retryTimer);
+        retryTimer = window.setTimeout(() => {
+          stopLocation();
+          startLocation();
+        }, 6000);
+      }
     },
     { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
   );
@@ -97,6 +113,7 @@ export function startLocation(): void {
 }
 
 export function stopLocation(): void {
+  window.clearTimeout(retryTimer);
   if (watchId != null) {
     navigator.geolocation.clearWatch(watchId);
     watchId = null;
