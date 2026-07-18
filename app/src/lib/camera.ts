@@ -7,6 +7,8 @@
  * full sensor resolution, falling back to grabbing the video frame.
  */
 
+import { isNativeApp } from "./native";
+
 export type FacingMode = "environment" | "user";
 
 export interface CameraCapabilitiesLite {
