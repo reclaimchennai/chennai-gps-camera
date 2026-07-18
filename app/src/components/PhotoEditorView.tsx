@@ -133,6 +133,10 @@ export default function PhotoEditorView({ id }: { id: string }) {
   const viewRef = useRef(view);
   viewRef.current = view;
   const pinchRef = useRef<{ dist: number; mid: { x: number; y: number } } | null>(null);
+  // committed stage transform captured at pinch start — the gesture is
+  // shown by a cheap GPU CSS transform on the Konva container relative to
+  // this, and only baked into the stage (one rasterise) on release
+  const pinchBakeRef = useRef<{ s0: number; p0x: number; p0y: number } | null>(null);
 
   const showNote = useCallback((msg: string, ms = 3200) => {
     setNote(msg);
@@ -415,6 +419,10 @@ export default function PhotoEditorView({ id }: { id: string }) {
       if (te.touches && te.touches.length >= 2) {
         cancelActiveDraft();
         pinchRef.current = readPinch(te);
+        const v = viewRef.current;
+        pinchBakeRef.current = { s0: fit * v.zoom, p0x: v.x, p0y: v.y };
+        const container = stageRef.current?.container();
+        if (container) container.style.transformOrigin = "0 0";
         return;
       }
       const pos = stagePos();
@@ -486,20 +494,24 @@ export default function PhotoEditorView({ id }: { id: string }) {
       const next = readPinch(te);
       const prev = pinchRef.current;
       if (!next) return;
-      // Smoothness: drive the Konva node directly during the gesture —
-      // a React state update per touchmove re-renders the whole stage
-      // and made zooming feel stepped. State syncs on gesture end.
+      // Butter-smooth zoom: show the gesture with a GPU CSS transform on
+      // the Konva container (compositor only, no canvas rasterise) and
+      // bake the real stage scale once on release. batchDraw() per move
+      // is what made it feel stepped.
       const v = viewRef.current;
       const nz = Math.min(8, Math.max(1, v.zoom * (next.dist / prev.dist)));
       const qx = (prev.mid.x - v.x) / v.zoom;
       const qy = (prev.mid.y - v.y) / v.zoom;
       const clamped = clampView(nz, next.mid.x - qx * nz, next.mid.y - qy * nz);
       viewRef.current = clamped;
-      const stage = stageRef.current;
-      if (stage) {
-        stage.scale({ x: fit * clamped.zoom, y: fit * clamped.zoom });
-        stage.position({ x: clamped.x, y: clamped.y });
-        stage.batchDraw();
+      const bake = pinchBakeRef.current;
+      const container = stageRef.current?.container();
+      if (bake && container) {
+        const s1 = fit * clamped.zoom;
+        const k = s1 / bake.s0;
+        const tx = clamped.x - k * bake.p0x;
+        const ty = clamped.y - k * bake.p0y;
+        container.style.transform = `matrix(${k},0,0,${k},${tx},${ty})`;
       }
       pinchRef.current = next;
       return;
@@ -551,8 +563,22 @@ export default function PhotoEditorView({ id }: { id: string }) {
     const te = e?.evt as TouchEvent | undefined;
     if (pinchRef.current && (!te?.touches || te.touches.length < 2)) {
       pinchRef.current = null;
-      // gesture over — commit the node-level transform into React state
-      setView(viewRef.current);
+      // gesture over — bake the CSS-preview transform into the real stage
+      // (one crisp rasterise), clear the container transform, sync state
+      const target = viewRef.current;
+      const stage = stageRef.current;
+      const container = stage?.container();
+      if (stage) {
+        stage.scale({ x: fit * target.zoom, y: fit * target.zoom });
+        stage.position({ x: target.x, y: target.y });
+        stage.batchDraw();
+      }
+      if (container) {
+        container.style.transform = "";
+        container.style.transformOrigin = "";
+      }
+      pinchBakeRef.current = null;
+      setView(target);
     }
     const strokeId = strokeDrawRef.current;
     if (strokeId) {

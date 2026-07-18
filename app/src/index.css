@@ -823,16 +823,29 @@ textarea {
   bottom: 54px;
 }
 
-.media-swipe {
+/* finger-following carousel: a 3-wide track translated on the GPU */
+.viewer-track {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
+  display: flex;
+  width: 300%;
+  transform: translate3d(-100%, 0, 0);
+  will-change: transform;
 }
 
-.viewer-media img {
+.viewer-pane {
+  flex: 0 0 33.3333%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.viewer-pane .pane-img,
+.viewer-media video {
   max-width: 100%;
   max-height: 100%;
+  width: auto;
+  height: auto;
 }
 
 .viewer-media .media-photo {
@@ -841,36 +854,9 @@ textarea {
   -webkit-user-drag: none;
 }
 
-.viewer-media video {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-}
-
-.media-swipe.slide-left {
-  animation: media-slide-left 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-.media-swipe.slide-right {
-  animation: media-slide-right 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-@keyframes media-slide-left {
-  from { transform: translateX(40%); opacity: 0; }
-  to { transform: none; opacity: 1; }
-}
-
-@keyframes media-slide-right {
-  from { transform: translateX(-40%); opacity: 0; }
-  to { transform: none; opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .media-swipe.slide-left,
-  .media-swipe.slide-right {
-    animation: none;
-  }
+.pane-img {
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 /* floating video transport — always visible, in the reserved bottom

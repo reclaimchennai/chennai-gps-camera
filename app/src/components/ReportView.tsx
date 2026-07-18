@@ -60,7 +60,7 @@ export default function ReportView() {
         <textarea
           className="report-text"
           rows={5}
-          placeholder="Describe the issue — what you did, what you expected, what happened…"
+          placeholder="Describe the issue: what you did, what you expected, what happened…"
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
@@ -102,7 +102,7 @@ export default function ReportView() {
           onClick={onSubmit}
         >
           <Send size={16} style={{ verticalAlign: "-3px", marginRight: 6 }} />
-          {sent ? "Thanks — sending…" : "Send report"}
+          {sent ? "Thanks, sending…" : "Send report"}
         </button>
 
         <p className="hint" style={{ marginTop: 10, lineHeight: 1.5 }}>

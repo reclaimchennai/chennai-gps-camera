@@ -76,18 +76,31 @@ export interface CaptureResult {
   thumb: Blob;
 }
 
-export interface CaptureOptions {
-  /** Fires the instant the watermarked frame is composited — before the
-   *  (slower) encode + IndexedDB write. The camera UI uses it to unlock
-   *  the shutter and start the save animation, so capture feels instant
-   *  even while persistence finishes in the background. */
-  onFramed?: (previewDataUrl: string) => void;
+/** A grabbed frame plus the world-state snapshot at the shutter moment —
+ *  everything the background pipeline needs to finish the photo without
+ *  touching the live camera again. */
+export interface CaptureJob {
+  canvas: HTMLCanvasElement; // raw sensor frame, zoom+mirror already applied
+  w: number;
+  h: number;
+  data: WatermarkData;
+  config: import("../types").WatermarkConfig;
+  lookupResult: ReturnType<typeof useLiveStore.getState>["lookupResult"];
+  liveBlur: boolean;
+  wantsDeviceCopy: boolean;
 }
 
-export async function capturePhoto(
-  opts: CaptureOptions = {}
-): Promise<CaptureResult> {
-  const { watermark: config, profile, settings } = useSettingsStore.getState();
+/**
+ * FAST path — sensor only. Grabs the frame, applies zoom/mirror, and
+ * snapshots the moment's world-state. Returns immediately so the shutter
+ * frees for the next shot; everything else runs in the background queue
+ * (processCapture). Also returns a tiny preview for the fly animation.
+ */
+export async function grabFrame(): Promise<{
+  job: CaptureJob;
+  preview: string;
+}> {
+  const { watermark: config, settings } = useSettingsStore.getState();
   const live = useLiveStore.getState();
   const data = collectWatermarkData();
 
@@ -99,7 +112,10 @@ export async function capturePhoto(
   canvas.width = w;
   canvas.height = h;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("2d context unavailable");
+  if (!ctx) {
+    frame.close();
+    throw new Error("2d context unavailable");
+  }
 
   const mirror = camera.facing === "user" && settings.mirrorFrontPhoto;
   if (mirror) {
@@ -107,8 +123,6 @@ export async function capturePhoto(
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
   }
-  // digital zoom: crop the centre of the sensor frame to match the
-  // zoomed preview (1 = no crop; hardware zoom needs none)
   const dz = camera.captureZoom;
   if (dz > 1) {
     const cw = w / dz;
@@ -120,10 +134,50 @@ export async function capturePhoto(
   if (mirror) ctx.restore();
   frame.close();
 
+  // tiny preview for the fly-to-gallery animation (no watermark needed)
+  let preview = "";
+  try {
+    const pv = document.createElement("canvas");
+    const scale = Math.min(1, 220 / Math.max(w, h));
+    pv.width = Math.max(1, Math.round(w * scale));
+    pv.height = Math.max(1, Math.round(h * scale));
+    pv.getContext("2d")?.drawImage(canvas, 0, 0, pv.width, pv.height);
+    preview = pv.toDataURL("image/jpeg", 0.6);
+  } catch {
+    preview = "";
+  }
+
+  return {
+    preview,
+    job: {
+      canvas,
+      w,
+      h,
+      data,
+      config,
+      lookupResult: live.lookupResult,
+      liveBlur: settings.liveFaceBlur,
+      wantsDeviceCopy: settings.autoSaveToDevice || isNativeApp(),
+    },
+  };
+}
+
+/**
+ * SLOW path — runs in the background queue, one job at a time. Face
+ * blur, watermark composite, EXIF, thumbnail, IndexedDB write, download
+ * scheduling. Never touches the live camera, so it can lag behind
+ * rapid-fire shooting without ever stalling the shutter.
+ */
+export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
+  const { profile } = useSettingsStore.getState();
+  const { canvas, w, h, data, config, lookupResult, liveBlur } = job;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2d context unavailable");
+
   // EXPERIMENTAL live face blur: burn mosaic over detected heads BEFORE
   // the raw copy is taken, so no retained frame keeps unblurred faces.
   // Only runs (and only costs time) when the setting is on.
-  if (settings.liveFaceBlur) {
+  if (liveBlur) {
     try {
       const boxes = await detectFaces(canvas);
       if (boxes?.length) {
@@ -144,6 +198,7 @@ export async function capturePhoto(
   }
 
   // Does this capture need a later network upgrade? (§7)
+  const settings = useSettingsStore.getState().settings;
   const wantsAddress = config.fields.address && !data.address;
   const wantsGoogleMap =
     config.fields.miniMap &&
@@ -162,11 +217,7 @@ export async function capturePhoto(
 
   const assets: WatermarkAssets = {};
   if (config.fields.miniMap && data.fix) {
-    assets.miniMap = await renderMiniMap(
-      data.fix.lat,
-      data.fix.lng,
-      live.lookupResult
-    );
+    assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, lookupResult);
   }
   if (config.fields.profilePhoto) {
     assets.profilePhoto = await getProfilePhoto();
@@ -174,27 +225,11 @@ export async function capturePhoto(
 
   renderWatermark(ctx, w, h, data, config, profile, assets);
 
-  // Frame is fully composited: hand the UI a small preview so it can
-  // unlock the shutter and fly the thumbnail to the gallery now, while
-  // the encode + writes below run in the background.
-  if (opts.onFramed) {
-    try {
-      const pv = document.createElement("canvas");
-      const scale = Math.min(1, 220 / Math.max(w, h));
-      pv.width = Math.max(1, Math.round(w * scale));
-      pv.height = Math.max(1, Math.round(h * scale));
-      pv.getContext("2d")?.drawImage(canvas, 0, 0, pv.width, pv.height);
-      opts.onFramed(pv.toDataURL("image/jpeg", 0.6));
-    } catch {
-      opts.onFramed("");
-    }
-  }
-
   const jpeg = await canvasToBlob(canvas, "image/jpeg", 0.92);
   const withExif = await writeExif(jpeg, data);
   const thumb = await makeThumbnail(canvas, w, h);
 
-  const wantsDeviceCopy = settings.autoSaveToDevice || isNativeApp();
+  const wantsDeviceCopy = job.wantsDeviceCopy;
   const record: PhotoRecord = {
     id: newId(),
     kind: "photo",

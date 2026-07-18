@@ -35,9 +35,22 @@ export default function MediaDetailView({ id }: { id: string }) {
   const [info, setInfo] = useState(false);
   const [tagDraft, setTagDraft] = useState<string | null>(null);
   // gallery order for swipe navigation
-  const [neighbours, setNeighbours] = useState<{ prev?: string; next?: string }>({});
-  const [slideDir, setSlideDir] = useState<"left" | "right" | null>(null);
+  const [neighbours, setNeighbours] = useState<{
+    prev?: MediaRecord;
+    next?: MediaRecord;
+    prevUrl?: string;
+    nextUrl?: string;
+  }>({});
   const videoRef = useRef<HTMLVideoElement>(null);
+  // finger-following carousel track
+  const trackRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{
+    x0: number;
+    y0: number;
+    dir: "h" | "v" | null;
+    dx: number;
+  } | null>(null);
+  const animatingRef = useRef(false);
   // immersive chrome (header + action bar) — hidden by default so the
   // watermark is never covered; a tap raises it
   const [chrome, setChrome] = useState(false);
@@ -57,7 +70,6 @@ export default function MediaDetailView({ id }: { id: string }) {
     origin: { x: number; y: number };
   } | null>(null);
   const panBase = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
-  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
   const lastTap = useRef(0);
 
   const applyZoom = useCallback(() => {
@@ -84,13 +96,30 @@ export default function MediaDetailView({ id }: { id: string }) {
   }, []);
 
   useEffect(() => {
-    let objectUrl: string | null = null;
-    let posterUrl: string | null = null;
-    // reset zoom + clear the previous blob so the freshly-keyed swipe
-    // layer never briefly renders a just-revoked object URL
+    const urls: string[] = [];
+    const track = (b: Blob) => {
+      const u = URL.createObjectURL(b);
+      urls.push(u);
+      return u;
+    };
+    // reset zoom + the visible blob so the pane never briefly renders a
+    // just-revoked object URL, and reset the carousel track to centre
     zoomRef.current = { scale: 1, x: 0, y: 0 };
     setUrl(null);
     setPoster(null);
+    if (trackRef.current) {
+      trackRef.current.style.transition = "none";
+      trackRef.current.style.transform = "translate3d(-100%,0,0)";
+    }
+    // a neighbour's display image (photo → final, video → thumbnail)
+    const neighbourUrl = async (m?: MediaRecord) => {
+      if (!m) return undefined;
+      const b =
+        m.kind === "photo"
+          ? await getBlob(m.id, "final")
+          : await getBlob(m.id, "thumb");
+      return b ? track(b) : undefined;
+    };
     void (async () => {
       const r = await getMedia(curId);
       if (!r) {
@@ -98,36 +127,29 @@ export default function MediaDetailView({ id }: { id: string }) {
         return;
       }
       setRec(r);
-      // neighbours in gallery order, for swipe left/right
       const all = await listMedia();
       const idx = all.findIndex((m) => m.id === curId);
+      const prev = idx > 0 ? all[idx - 1] : undefined;
+      const next = idx >= 0 && idx < all.length - 1 ? all[idx + 1] : undefined;
       setNeighbours({
-        prev: idx > 0 ? all[idx - 1].id : undefined,
-        next: idx >= 0 && idx < all.length - 1 ? all[idx + 1].id : undefined,
+        prev,
+        next,
+        prevUrl: await neighbourUrl(prev),
+        nextUrl: await neighbourUrl(next),
       });
       // Videos get their stored thumbnail as a poster so the detail view
       // shows a real frame, not the browser's gray play-button splash.
       if (r.kind === "video") {
         const t = await getBlob(curId, "thumb");
-        if (t) {
-          posterUrl = URL.createObjectURL(t);
-          setPoster(posterUrl);
-        }
+        if (t) setPoster(track(t));
       }
       const variant = r.kind === "photo" ? "final" : "source";
-      // exported videos store their burned copy as `final`
       const blob =
         (r.kind === "video" && (await getBlob(curId, "final"))) ||
         (await getBlob(curId, variant));
-      if (blob) {
-        objectUrl = URL.createObjectURL(blob);
-        setUrl(objectUrl);
-      }
+      if (blob) setUrl(track(blob));
     })();
-    return () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      if (posterUrl) URL.revokeObjectURL(posterUrl);
-    };
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
   }, [curId]);
 
   // Videos start playing on open (native-gallery feel). If the browser
@@ -200,21 +222,29 @@ export default function MediaDetailView({ id }: { id: string }) {
     return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
   };
 
-  const goTo = useCallback((targetId: string, dir: "left" | "right") => {
-    setSlideDir(dir);
-    setCurId(targetId);
-    // keep the URL in sync for reload / deep-link WITHOUT a router
-    // re-render (which would remount and undo the smoothness) — and
-    // without pushing, so Back still returns straight to the gallery
-    history.replaceState(null, "", `#/media/${targetId}`);
+  const setTrack = (px: number, animate: boolean) => {
+    const t = trackRef.current;
+    if (!t) return;
+    t.style.transition = animate
+      ? "transform 0.32s cubic-bezier(0.22, 0.61, 0.36, 1)"
+      : "none";
+    t.style.transform = `translate3d(calc(-100% + ${px}px), 0, 0)`;
+  };
+
+  // commit to a neighbour after the slide finishes: swap the record and
+  // recentre the track without a visible jump (the effect reloads panes)
+  const commit = useCallback((target: MediaRecord) => {
+    setCurId(target.id);
+    history.replaceState(null, "", `#/media/${target.id}`);
   }, []);
 
-  // ---- stage gestures: pinch-zoom photos, swipe between items --------
+  // ---- stage gestures: pinch-zoom photos, carousel swipe -------------
   const onStagePointerDown = useCallback((e: React.PointerEvent) => {
+    if (animatingRef.current) return;
     gesturePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pts = [...gesturePointers.current.values()];
     if (pts.length === 2) {
-      swipeStart.current = null;
+      dragRef.current = null;
       panBase.current = null;
       gestureBase.current = {
         dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
@@ -231,7 +261,7 @@ export default function MediaDetailView({ id }: { id: string }) {
           oy: zoomRef.current.y,
         };
       } else {
-        swipeStart.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+        dragRef.current = { x0: e.clientX, y0: e.clientY, dir: null, dx: 0 };
       }
     }
   }, []);
@@ -247,7 +277,6 @@ export default function MediaDetailView({ id }: { id: string }) {
         const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
         const ns = b.scale * (dist / b.dist);
         const z = zoomRef.current;
-        // zoom around the pinch midpoint, panning with it
         z.scale = ns;
         z.x = b.origin.x + (mid.x - b.mid.x) - (b.mid.x - window.innerWidth / 2) * (ns / b.scale - 1);
         z.y = b.origin.y + (mid.y - b.mid.y) - (b.mid.y - window.innerHeight / 2) * (ns / b.scale - 1);
@@ -259,55 +288,83 @@ export default function MediaDetailView({ id }: { id: string }) {
         z.y = panBase.current.oy + (e.clientY - panBase.current.y);
         clampZoom();
         applyZoom();
+      } else if (pts.length === 1 && dragRef.current) {
+        // carousel drag: follow the finger (GPU transform, no re-render)
+        const d = dragRef.current;
+        let dx = e.clientX - d.x0;
+        const dy = e.clientY - d.y0;
+        if (d.dir === null && Math.hypot(dx, dy) > 8) {
+          d.dir = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+        }
+        if (d.dir !== "h") return;
+        // resist at the ends so it feels bounded, not broken
+        if ((dx > 0 && !neighbours.prev) || (dx < 0 && !neighbours.next)) dx *= 0.3;
+        d.dx = dx;
+        setTrack(dx, false);
       }
     },
-    [rec?.kind, clampZoom, applyZoom]
+    [rec?.kind, clampZoom, applyZoom, neighbours]
   );
 
   const onStagePointerUp = useCallback(
     (e: React.PointerEvent) => {
       gesturePointers.current.delete(e.pointerId);
       if (gesturePointers.current.size < 2) gestureBase.current = null;
-      if (gesturePointers.current.size === 0) {
-        panBase.current = null;
-        const start = swipeStart.current;
-        swipeStart.current = null;
-        if (start && zoomRef.current.scale === 1) {
-          const dx = e.clientX - start.x;
-          const dy = e.clientY - start.y;
-          const dt = Date.now() - start.t;
-          if (Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 600) {
-            if (dx < 0 && neighbours.next) goTo(neighbours.next, "left");
-            else if (dx > 0 && neighbours.prev) goTo(neighbours.prev, "right");
-            return;
+      if (gesturePointers.current.size !== 0) return;
+      panBase.current = null;
+      const drag = dragRef.current;
+      dragRef.current = null;
+
+      if (drag && drag.dir === "h") {
+        const w = stageRef.current?.clientWidth ?? window.innerWidth;
+        const threshold = Math.min(90, w * 0.22);
+        if (drag.dx < -threshold && neighbours.next) {
+          animatingRef.current = true;
+          setTrack(-w, true);
+          const target = neighbours.next;
+          window.setTimeout(() => {
+            commit(target);
+            animatingRef.current = false;
+          }, 320);
+        } else if (drag.dx > threshold && neighbours.prev) {
+          animatingRef.current = true;
+          setTrack(w, true);
+          const target = neighbours.prev;
+          window.setTimeout(() => {
+            commit(target);
+            animatingRef.current = false;
+          }, 320);
+        } else {
+          setTrack(0, true); // snap back
+        }
+        return;
+      }
+
+      // a tap (no directional drag)
+      const dx = e.clientX - (drag?.x0 ?? e.clientX);
+      const dy = e.clientY - (drag?.y0 ?? e.clientY);
+      if (zoomRef.current.scale === 1 && Math.hypot(dx, dy) < 8) {
+        const now = Date.now();
+        if (rec?.kind === "photo" && now - lastTap.current < 300) {
+          const z = zoomRef.current;
+          z.scale = z.scale > 1 ? 1 : 2.5;
+          clampZoom();
+          const img = imgRef.current;
+          if (img) {
+            img.style.transition = "transform 0.25s ease";
+            window.setTimeout(() => {
+              if (img) img.style.transition = "";
+            }, 260);
           }
-          // a tap (no drag)
-          if (Math.hypot(dx, dy) < 8) {
-            const now = Date.now();
-            // photo double-tap toggles zoom
-            if (rec?.kind === "photo" && now - lastTap.current < 300) {
-              const z = zoomRef.current;
-              z.scale = z.scale > 1 ? 1 : 2.5;
-              clampZoom();
-              const img = imgRef.current;
-              if (img) {
-                img.style.transition = "transform 0.25s ease";
-                window.setTimeout(() => {
-                  if (img) img.style.transition = "";
-                }, 260);
-              }
-              applyZoom();
-              lastTap.current = 0;
-            } else {
-              lastTap.current = now;
-              // single tap toggles the immersive chrome (header + actions)
-              setChrome((c) => !c);
-            }
-          }
+          applyZoom();
+          lastTap.current = 0;
+        } else {
+          lastTap.current = now;
+          setChrome((c) => !c);
         }
       }
     },
-    [neighbours, rec?.kind, goTo, clampZoom, applyZoom]
+    [neighbours, rec?.kind, commit, clampZoom, applyZoom]
   );
 
   if (!rec) return null;
@@ -393,27 +450,36 @@ export default function MediaDetailView({ id }: { id: string }) {
         onPointerUp={onStagePointerUp}
         onPointerCancel={onStagePointerUp}
       >
-        {/* only this inner layer remounts + slides on swipe — the gesture
-            container above stays mounted so taps right after a swipe are
-            never dropped */}
-        <div
-          className={`media-swipe${slideDir ? ` slide-${slideDir}` : ""}`}
-          key={curId}
-          onAnimationEnd={() => setSlideDir(null)}
-        >
-          {url && rec.kind === "photo" && (
-            <img ref={imgRef} className="media-photo" src={url} alt="" draggable={false} />
-          )}
-          {url && isVideo && (
-            <video
-              ref={videoRef}
-              src={url}
-              playsInline
-              autoPlay
-              preload="auto"
-              poster={poster ?? undefined}
-            />
-          )}
+        {/* 3-pane carousel: [prev][current][next]. The track follows the
+            finger during a swipe (GPU transform, no React churn) and
+            spring-snaps on release; only the current pane holds the
+            zoomable image or the playing video. */}
+        <div ref={trackRef} className="viewer-track">
+          <div className="viewer-pane">
+            {neighbours.prevUrl && (
+              <img className="pane-img" src={neighbours.prevUrl} alt="" draggable={false} />
+            )}
+          </div>
+          <div className="viewer-pane">
+            {url && rec.kind === "photo" && (
+              <img ref={imgRef} className="media-photo pane-img" src={url} alt="" draggable={false} />
+            )}
+            {url && isVideo && (
+              <video
+                ref={videoRef}
+                src={url}
+                playsInline
+                autoPlay
+                preload="auto"
+                poster={poster ?? undefined}
+              />
+            )}
+          </div>
+          <div className="viewer-pane">
+            {neighbours.nextUrl && (
+              <img className="pane-img" src={neighbours.nextUrl} alt="" draggable={false} />
+            )}
+          </div>
         </div>
       </div>
 

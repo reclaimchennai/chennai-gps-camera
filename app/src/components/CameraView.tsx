@@ -7,7 +7,8 @@ import {
 import { camera } from "../lib/camera";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { scheduleBackfill } from "../lib/backfill";
-import { capturePhoto, collectWatermarkData, getProfilePhoto } from "../lib/capture";
+import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture";
+import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { playShutter } from "../lib/sound";
@@ -62,7 +63,6 @@ export default function CameraView({ active }: { active: boolean }) {
   const [toast, setToast] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recSeconds, setRecSeconds] = useState(0);
-  const [busy, setBusy] = useState(false);
   // capture-in-flight UX: a preview that flies into the gallery button
   // and a pulse on the button while the real file finishes saving
   const [flyImg, setFlyImg] = useState<{ src: string; key: number } | null>(null);
@@ -357,31 +357,33 @@ export default function CameraView({ active }: { active: boolean }) {
   }, [active]);
 
   // ---- capture ----------------------------------------------------------
+  // A tiny lock around the sensor grab ONLY, so back-to-back shots are
+  // limited only by how fast the camera returns a frame. All the heavy
+  // work (watermark, encode, save) runs off-thread in the queue, so the
+  // shutter is ready again almost immediately.
+  const grabbing = useRef(false);
   const doCapture = useCallback(async () => {
-    if (busy || !ready) return;
-    setBusy(true);
+    if (grabbing.current || !ready) return;
+    grabbing.current = true;
     setFlashFx((k) => k + 1);
     if (useSettingsStore.getState().settings.shutterSound) playShutter();
-    setSaving((n) => n + 1);
-    let framed = false;
     try {
-      const { record, thumb } = await capturePhoto({
-        onFramed: (preview) => {
-          // Shutter is free again the moment the frame is composited —
-          // the encode + save continue in the background.
-          framed = true;
-          setBusy(false);
-          if (preview) setFlyImg({ src: preview, key: Date.now() });
-        },
-      });
-      updateThumb(record.id, thumb);
+      const { job, preview } = await grabFrame();
+      if (preview) setFlyImg({ src: preview, key: Date.now() });
+      enqueueCapture(
+        job,
+        ({ record, thumb }) => updateThumb(record.id, thumb),
+        () => showToast("Couldn't save that photo. Try again")
+      );
     } catch {
-      showToast("Capture failed — try again");
+      showToast("Capture failed. Try again");
     } finally {
-      if (!framed) setBusy(false);
-      setSaving((n) => Math.max(0, n - 1));
+      grabbing.current = false;
     }
-  }, [busy, ready, showToast, updateThumb]);
+  }, [ready, showToast, updateThumb]);
+
+  // "saving" pulse reflects the background queue depth
+  useEffect(() => onPendingChange(setSaving), []);
 
   // ---- video record -------------------------------------------------------
   const stopRecording = useCallback(() => {
