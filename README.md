@@ -21,6 +21,18 @@ The Android build adds two native upgrades over the PWA: street addresses
 from the phone's own geocoder (offline-capable, always English) and captures
 saved straight to the gallery (`DCIM/GPS Camera`).
 
+### GPS Cam Native (experimental variant)
+
+`native-android/` holds a from-scratch **Kotlin + Jetpack Compose +
+Material 3** variant (`city.reclaimchennai.gpscam`, installable alongside
+the standard app). v0.1 covers the core loop natively — CameraX capture
+with true lens zoom, fused location, the same offline
+ward/zone/police/DIGIPIN lookup and watermark card, EXIF + MediaStore
+saves, gallery, and settings. Video recording, face blur, annotation and
+issue reporting remain in the standard app while the native variant
+catches up. Download:
+[cam.reclaimchennai.city/download/gps-cam-native.apk](https://cam.reclaimchennai.city/download/gps-cam-native.apk).
+
 ## Why this exists
 
 Civic reporting needs photos that prove *where* and *when* — and often need
