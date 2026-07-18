@@ -76,10 +76,14 @@ try {
   // 2b. enable DIGIPIN + verify top card position renders at the top
   await page.goto(`${base}/#/settings/watermark`);
   await page.waitForTimeout(900);
-  await page
+  const digipinSwitch = page
     .locator(".row", { hasText: "DIGIPIN" })
-    .locator(".switch")
-    .click();
+    .locator(".switch");
+  // DIGIPIN defaults on now — only toggle when it happens to be off, so the
+  // encoding check downstream always runs with the field enabled.
+  if ((await digipinSwitch.getAttribute("aria-checked")) === "false") {
+    await digipinSwitch.click();
+  }
   await page.getByText("Top", { exact: true }).click();
   await page.goto(`${base}/#/`);
   await page.waitForTimeout(1800);
