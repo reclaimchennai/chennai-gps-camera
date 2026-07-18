@@ -20,6 +20,8 @@ const RETRY_MS = 30_000;
 
 let running = false;
 let scheduled = false;
+let scheduleTimer = 0;
+let scheduledAt = Infinity;
 
 /** Tell the gallery a queued item just gained its full watermark/address,
  *  so it can refresh that cell with a highlight animation. */
@@ -28,10 +30,16 @@ function announceUpdated(id: string): void {
 }
 
 export function scheduleBackfill(delayMs = 1500): void {
-  if (scheduled) return;
+  const at = Date.now() + delayMs;
+  // a sooner request preempts a pending long retry — connectivity
+  // returning must not sit behind the 30 s backoff timer
+  if (scheduled && at >= scheduledAt) return;
+  window.clearTimeout(scheduleTimer);
   scheduled = true;
-  window.setTimeout(() => {
+  scheduledAt = at;
+  scheduleTimer = window.setTimeout(() => {
     scheduled = false;
+    scheduledAt = Infinity;
     void runBackfill();
   }, delayMs);
 }

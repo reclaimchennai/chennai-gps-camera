@@ -15,6 +15,7 @@ import { hydrateSettings } from "./store";
 import { startLocation, startCompass } from "./lib/location";
 import { startLiveAddress } from "./lib/liveAddress";
 import { initBackfill } from "./lib/backfill";
+import { initDownloadQueue } from "./lib/downloadQueue";
 import { warmGeodata } from "./lib/geo/geodata";
 import { initTheme, applyTheme } from "./lib/theme";
 
@@ -47,6 +48,7 @@ void hydrateSettings().then(() => {
   startCompass();
   startLiveAddress();
   initBackfill();
+  initDownloadQueue();
 });
 warmGeodata();
 

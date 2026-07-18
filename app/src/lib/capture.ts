@@ -16,7 +16,7 @@ import { useLiveStore, useSettingsStore } from "../store";
 import { isNativeApp } from "./native";
 import type { PhotoRecord, WatermarkData } from "../types";
 import { scheduleBackfill } from "./backfill";
-import { downloadBlob, suggestedName } from "./share";
+import { scheduleDownloads } from "./downloadQueue";
 import { latLngToDigipin } from "./geo/digipin";
 import { detectFaces } from "./detect/faces";
 import { makeMosaic, blocksFor } from "./editor/shapes";
@@ -194,6 +194,7 @@ export async function capturePhoto(
   const withExif = await writeExif(jpeg, data);
   const thumb = await makeThumbnail(canvas, w, h);
 
+  const wantsDeviceCopy = settings.autoSaveToDevice || isNativeApp();
   const record: PhotoRecord = {
     id: newId(),
     kind: "photo",
@@ -204,6 +205,10 @@ export async function capturePhoto(
     config,
     backfill: needsBackfill ? "pending" : "not-needed",
     hasRaw: Boolean(rawBlob),
+    // The device copy is QUEUED, not written now: it goes out only once
+    // the watermark info is complete (backfill resolved), so files on
+    // the device always carry the full card. Shooting never waits.
+    download: wantsDeviceCopy ? "queued" : undefined,
   };
 
   await putBlob(record.id, "final", withExif);
@@ -211,21 +216,9 @@ export async function capturePhoto(
   if (rawBlob) await putBlob(record.id, "raw", rawBlob);
   await putMedia(record);
 
-  // Auto-save to the device (web build: Downloads folder, which gallery
-  // apps index). Saved immediately with GPS/jurisdiction data baked in;
-  // the street-address backfill only upgrades the in-app copy.
-  if (settings.autoSaveToDevice || isNativeApp()) {
-    try {
-      downloadBlob(
-        withExif,
-        suggestedName("photo", record.createdAt, "image/jpeg")
-      );
-    } catch {
-      // download blocked — the in-app copy is already safe
-    }
-  }
-
   if (needsBackfill) scheduleBackfill();
+  // photos with complete info download right away (still one by one)
+  if (wantsDeviceCopy) scheduleDownloads();
   return { record, thumb };
 }
 

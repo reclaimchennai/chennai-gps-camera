@@ -119,6 +119,9 @@ export interface PhotoRecord {
   config: WatermarkConfig; // config used at capture, for re-composite
   backfill: BackfillStatus;
   hasRaw: boolean; // un-watermarked original retained for backfill
+  /** device-download state: "queued" = waiting for the watermark info to
+   *  finish (backfill) before the file is saved to the device */
+  download?: "queued" | "done";
   annotatedFrom?: string; // id of source photo if this is a flattened copy
   tags?: string[]; // user-assigned, searchable in the gallery
 }

@@ -45,17 +45,25 @@ export async function shareBlob(
   return "downloaded";
 }
 
-export function downloadBlob(blob: Blob, filename: string): void {
+/** Save a file to the device and resolve when the hand-off is complete —
+ *  the download queue awaits this so files go out strictly one by one. */
+export async function saveBlobToDevice(
+  blob: Blob,
+  filename: string
+): Promise<void> {
   // APK build: <a download> with a blob: URL is a silent no-op inside an
   // Android WebView — route through MediaStore so files land in the
   // device gallery. Falls through to the anchor path in the browser.
-  void nativeSaveToGallery(blob, filename).then((saved) => {
-    if (saved) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  });
+  const saved = await nativeSaveToGallery(blob, filename);
+  if (saved) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+export function downloadBlob(blob: Blob, filename: string): void {
+  void saveBlobToDevice(blob, filename);
 }

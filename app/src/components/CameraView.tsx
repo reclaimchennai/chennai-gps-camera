@@ -139,6 +139,24 @@ export default function CameraView({ active }: { active: boolean }) {
     };
   }, [startCam]);
 
+  // queued device-downloads finishing (files held until their watermark
+  // info completed) — tell the user their copies just landed
+  useEffect(() => {
+    const onDrained = (e: Event) => {
+      const n = (e as CustomEvent<{ count: number }>).detail?.count ?? 0;
+      if (n > 0) {
+        showToast(
+          n === 1
+            ? "Photo saved to device with full details"
+            : `${n} photos saved to device with full details`
+        );
+      }
+    };
+    window.addEventListener("gpscam:downloads-drained", onDrained);
+    return () =>
+      window.removeEventListener("gpscam:downloads-drained", onDrained);
+  }, [showToast]);
+
   // ---- live sound meter (watermark "Sound level" field) ---------------
   const soundOn = useSettingsStore((s) => s.watermark.fields.soundLevel);
   useEffect(() => {
