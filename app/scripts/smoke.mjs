@@ -239,7 +239,10 @@ try {
   check("photo detail opens", true);
   if (shotsDir) await page.screenshot({ path: `${shotsDir}/2-detail.png` });
 
-  // 7. annotation editor loads (lazy chunk + Konva) with first-run coach
+  // 7. annotation editor loads (lazy chunk + Konva) with first-run coach.
+  // The action chrome is hidden by default now — tap the media to raise it.
+  await page.locator(".viewer-media").click({ position: { x: 180, y: 300 } });
+  await page.waitForSelector(".viewer-bottom.show", { timeout: 5000 });
   await page.getByText("Annotate").click();
   await page.waitForSelector(".coach-scrim", { timeout: 15000 });
   check("first-run coach overlay", true);

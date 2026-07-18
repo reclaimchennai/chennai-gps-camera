@@ -38,8 +38,9 @@ export default function MediaDetailView({ id }: { id: string }) {
   const [neighbours, setNeighbours] = useState<{ prev?: string; next?: string }>({});
   const [slideDir, setSlideDir] = useState<"left" | "right" | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  // immersive chrome (header + action bar) — tap toggles it
-  const [chrome, setChrome] = useState(true);
+  // immersive chrome (header + action bar) — hidden by default so the
+  // watermark is never covered; a tap raises it
+  const [chrome, setChrome] = useState(false);
   // custom video transport state (native controls are replaced by a
   // floating bar so they never sit over the burned-in watermark)
   const [vp, setVp] = useState({ playing: false, cur: 0, dur: 0, muted: false });
@@ -417,9 +418,13 @@ export default function MediaDetailView({ id }: { id: string }) {
       </div>
 
       {/* floating transport bar — always visible for video, so the native
-          control strip never sits on top of the watermark */}
+          control strip never sits on top of the watermark. Rises above
+          the action pill when the chrome is up. */}
       {isVideo && (
-        <div className="viewer-transport" onPointerDown={(e) => e.stopPropagation()}>
+        <div
+          className={`viewer-transport${chrome ? " raised" : ""}`}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
           <button className="vt-btn" onClick={togglePlay} aria-label={vp.playing ? "Pause" : "Play"}>
             {vp.playing ? <Pause size={20} /> : <Play size={20} />}
           </button>
@@ -469,9 +474,9 @@ export default function MediaDetailView({ id }: { id: string }) {
         </button>
       </header>
 
-      <div className={`viewer-bottom${isVideo ? " has-bar" : ""}${chrome ? " show" : ""}`}>
-        <div className="tag-strip">
-          <Tag size={14} />
+      {/* slim floating action pill + a compact tags row, raised on tap */}
+      <div className={`viewer-bottom${chrome ? " show" : ""}`}>
+        <div className="viewer-tags">
           {(rec.tags ?? []).map((t) => (
             <span key={t} className="tag-chip">
               {t}
@@ -497,39 +502,34 @@ export default function MediaDetailView({ id }: { id: string }) {
               }}
             />
           ) : (
-            <button className="tag-add" onClick={() => setTagDraft("")}>
-              + Add tag
+            <button className="tag-add chip-btn" onClick={() => setTagDraft("")}>
+              <Tag size={12} /> Tag
             </button>
           )}
         </div>
 
-        <div className="media-actions">
-          <button className="media-action" onClick={() => void onShare()}>
-            <Share2 size={20} />
+        <div className="action-pill">
+          <button className="pill-action" onClick={() => void onShare()}>
+            <Share2 size={19} />
             <span>Share</span>
           </button>
           <button
-            className="media-action"
+            className="pill-action"
             onClick={() =>
               navigate(rec.kind === "photo" ? `/edit/${curId}` : `/video-edit/${curId}`)
             }
           >
-            <PencilLine size={20} />
+            <PencilLine size={19} />
             <span>{rec.kind === "photo" ? "Annotate" : "Edit"}</span>
           </button>
-          {/* Native builds auto-save captures straight to the gallery — a
-              manual Save would only create duplicates */}
           {!isNativeApp() && (
-            <button className="media-action" onClick={() => void onDownload()}>
-              <Download size={20} />
+            <button className="pill-action" onClick={() => void onDownload()}>
+              <Download size={19} />
               <span>Save</span>
             </button>
           )}
-          <button
-            className="media-action danger"
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 size={20} />
+          <button className="pill-action danger" onClick={() => setConfirmDelete(true)}>
+            <Trash2 size={19} />
             <span>Delete</span>
           </button>
         </div>

@@ -164,41 +164,6 @@ textarea {
   flex-direction: column;
 }
 
-/* zoom pills: transparent chrome over the viewfinder, just above the
-   shutter — small, translucent like the watermark card */
-.cam-zoombar {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 6px;
-  padding: 5px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(6px);
-  z-index: 8;
-}
-
-.zoom-pill {
-  min-width: 34px;
-  height: 34px;
-  padding: 0 8px;
-  border-radius: 999px;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  background: transparent;
-  display: grid;
-  place-items: center;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.zoom-pill[data-active="true"] {
-  background: rgba(255, 255, 255, 0.9);
-  color: #000;
-}
-
 .cam-viewport {
   /* the app owns all gestures here (pinch-zoom, tap-to-focus) — without
      this the Android WebView swallows two-finger gestures itself and
@@ -605,14 +570,6 @@ textarea {
   50% { opacity: 0.2; }
 }
 
-.zoom-pill {
-  background: rgba(0, 0, 0, 0.45);
-  color: #fff;
-  border-radius: 14px;
-  padding: 3px 10px;
-  font-size: 12px;
-}
-
 .cam-toast {
   position: absolute;
   bottom: 48px;
@@ -917,14 +874,14 @@ textarea {
 }
 
 /* floating video transport — always visible, in the reserved bottom
-   strip, never over the watermark */
+   strip, never over the watermark; rises above the action pill on tap */
 .viewer-transport {
   position: absolute;
   left: 8px;
   right: 8px;
   bottom: calc(8px + var(--safe-bottom));
   height: 40px;
-  z-index: 12;
+  z-index: 14;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -933,6 +890,12 @@ textarea {
   background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(8px);
   color: #fff;
+  transition: transform 0.25s ease;
+}
+
+.viewer-transport.raised {
+  /* clear the tags row + action pill stack below it */
+  transform: translateY(-104px);
 }
 
 .vt-btn {
@@ -989,50 +952,137 @@ textarea {
   color: #fff;
 }
 
+/* bottom chrome: a slim floating action pill + a compact tags row,
+   hidden by default (translated off-screen), raised on tap */
 .viewer-bottom {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: calc(8px + var(--safe-bottom));
   z-index: 13;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  transform: translateY(120%);
-  transition: transform 0.25s ease;
-}
-
-/* for video, sit just above the floating transport strip so the two
-   never overlap */
-.viewer-bottom.has-bar {
-  bottom: calc(54px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateY(160%);
+  transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 0.2s ease;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .viewer-bottom.show {
   transform: none;
+  opacity: 1;
+  pointer-events: auto;
 }
 
-.media-actions {
+.viewer-tags {
   display: flex;
-  justify-content: space-around;
-  padding: 12px 8px calc(12px + var(--safe-bottom));
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 24px);
 }
 
-.media-action {
+.chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+/* the action pill — flush-ish with the bottom, rounded, translucent */
+.action-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(20, 22, 28, 0.7);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+}
+
+.pill-action {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--dim);
-  min-width: 64px;
+  gap: 2px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.85);
 }
 
-.media-action svg {
-  color: var(--text);
+.pill-action svg {
+  color: #fff;
 }
 
-.media-action.danger svg {
+.pill-action.danger svg {
   color: var(--danger);
+}
+
+.pill-action:active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* ---------- report an issue ---------- */
+
+.report-text {
+  width: 100%;
+  resize: vertical;
+  min-height: 96px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.report-canvas-wrap {
+  margin-top: 12px;
+  display: grid;
+  place-items: center;
+  background: #000;
+  border-radius: 10px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.report-canvas {
+  max-width: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.report-tools,
+.report-colors {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.report-colors .color-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+
+.report-colors .color-dot[data-active="true"] {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 /* ---------- settings ---------- */

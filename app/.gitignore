@@ -23,3 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 scripts/.pack-sources/
+
+# local secrets (Telegram token for issue reporting)
+.env.local
+.env*.local

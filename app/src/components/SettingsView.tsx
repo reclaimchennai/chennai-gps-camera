@@ -313,6 +313,11 @@ export default function SettingsView() {
           />
         )}
         <Row
+          label="Report an issue"
+          hint="Send feedback or a bug — with an optional annotated screenshot"
+          onClick={() => navigate("/report")}
+        />
+        <Row
           label="About, data & accuracy"
           hint="Boundary data caveats, licences"
           onClick={() => navigate("/about")}

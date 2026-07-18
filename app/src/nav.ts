@@ -13,7 +13,8 @@ export interface Route {
     | "video-edit"
     | "settings"
     | "watermark"
-    | "about";
+    | "about"
+    | "report";
   id?: string;
 }
 
@@ -33,6 +34,8 @@ function parse(hash: string): Route {
       return { name: "settings" };
     case "about":
       return { name: "about" };
+    case "report":
+      return { name: "report" };
     default:
       return { name: "camera" };
   }

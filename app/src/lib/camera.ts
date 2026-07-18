@@ -153,17 +153,6 @@ export class CameraController {
     return { min: 1, max: MAX_DIGITAL_ZOOM, hardware: false };
   }
 
-  /** Suggested zoom stops for the on-screen buttons (e.g. 0.6, 1, 2, 5). */
-  zoomStops(): number[] {
-    const { min, max } = this.zoomInfo();
-    const stops = new Set<number>();
-    if (min < 1) stops.add(Math.round(min * 10) / 10); // ultra-wide, e.g. 0.6
-    stops.add(1);
-    for (const s of [2, 3, 5, 10]) if (s <= max) stops.add(s);
-    if (max > 1 && !stops.has(Math.round(max))) stops.add(Math.round(max));
-    return [...stops].filter((z) => z >= min && z <= max).sort((a, b) => a - b);
-  }
-
   async setZoom(value: number): Promise<number> {
     const info = this.zoomInfo();
     const clamped = Math.min(info.max, Math.max(info.min, value));

@@ -6,6 +6,7 @@ import MediaDetailView from "./components/MediaDetailView";
 import SettingsView from "./components/SettingsView";
 import WatermarkEditorView from "./components/WatermarkEditorView";
 import AboutView from "./components/AboutView";
+import ReportView from "./components/ReportView";
 
 // Konva-based editors are heavy and never needed at cold start — keep
 // them out of the critical bundle (§10: launch-to-camera under ~1 s).
@@ -31,6 +32,7 @@ export default function App() {
       {route.name === "settings" && <SettingsView />}
       {route.name === "watermark" && <WatermarkEditorView />}
       {route.name === "about" && <AboutView />}
+      {route.name === "report" && <ReportView />}
     </>
   );
 }
