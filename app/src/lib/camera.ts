@@ -232,8 +232,18 @@ export class CameraController {
   async captureFrame(): Promise<ImageBitmap> {
     const track = this.track;
     if (!track) throw new Error("camera not running");
+    const video = this.video;
 
-    // Prefer ImageCapture.takePhoto (full sensor res on Android Chrome).
+    // Native app: grab the live preview frame directly. It is already
+    // capped at 1080p, so ImageCapture.takePhoto() only adds a slow full
+    // capture cycle (re-focus/metering, JPEG decode) for no real quality
+    // gain — grabbing the video makes back-to-back shooting instant, the
+    // way native camera apps feel. The web build keeps takePhoto for its
+    // full-sensor resolution.
+    if (isNativeApp() && video && video.readyState >= 2) {
+      return await createImageBitmap(video);
+    }
+
     if (window.ImageCapture) {
       try {
         const ic = new window.ImageCapture(track);
@@ -243,7 +253,6 @@ export class CameraController {
         // fall through to video-frame grab
       }
     }
-    const video = this.video;
     if (!video || video.readyState < 2) throw new Error("no frame available");
     return await createImageBitmap(video);
   }

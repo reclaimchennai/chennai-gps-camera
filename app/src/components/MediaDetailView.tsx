@@ -109,7 +109,7 @@ export default function MediaDetailView({ id }: { id: string }) {
     setPoster(null);
     if (trackRef.current) {
       trackRef.current.style.transition = "none";
-      trackRef.current.style.transform = "translate3d(-100%,0,0)";
+      trackRef.current.style.transform = "translate3d(0,0,0)";
     }
     // a neighbour's display image (photo → final, video → thumbnail)
     const neighbourUrl = async (m?: MediaRecord) => {
@@ -228,7 +228,7 @@ export default function MediaDetailView({ id }: { id: string }) {
     t.style.transition = animate
       ? "transform 0.32s cubic-bezier(0.22, 0.61, 0.36, 1)"
       : "none";
-    t.style.transform = `translate3d(calc(-100% + ${px}px), 0, 0)`;
+    t.style.transform = `translate3d(${px}px, 0, 0)`;
   };
 
   // commit to a neighbour after the slide finishes: swap the record and

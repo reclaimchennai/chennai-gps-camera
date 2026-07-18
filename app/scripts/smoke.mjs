@@ -239,6 +239,23 @@ try {
   check("photo detail opens", true);
   if (shotsDir) await page.screenshot({ path: `${shotsDir}/2-detail.png` });
 
+  // Guard against the carousel black-screen regression: the current pane's
+  // image must actually be on-screen, not translated off into the void.
+  const preview = await page.evaluate(() => {
+    const panes = document.querySelectorAll(".viewer-pane");
+    const img = (panes[1] || panes[0])?.querySelector("img");
+    const r = img?.getBoundingClientRect();
+    if (!img || !r) return { ok: false, why: "no image" };
+    const onScreen =
+      r.left < innerWidth && r.right > 0 && r.width > 80 && r.height > 80;
+    return { ok: onScreen, w: Math.round(r.width), h: Math.round(r.height) };
+  });
+  check(
+    "gallery preview visible (not black-screened)",
+    preview.ok,
+    preview.ok ? `${preview.w}×${preview.h} on-screen` : preview.why || "off-screen",
+  );
+
   // 7. annotation editor loads (lazy chunk + Konva) with first-run coach.
   // The action chrome is hidden by default now — tap the media to raise it.
   await page.locator(".viewer-media").click({ position: { x: 180, y: 300 } });

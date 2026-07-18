@@ -823,22 +823,30 @@ textarea {
   bottom: 54px;
 }
 
-/* finger-following carousel: a 3-wide track translated on the GPU */
+/* finger-following carousel. The track is one viewport wide and moved in
+   px; the three panes sit at -100% / 0 / +100% so the middle pane shows
+   at rest. (An earlier width:300% + %-translate moved the track by its
+   whole width, pushing every pane off-screen — the black preview.) */
 .viewer-track {
   position: absolute;
   inset: 0;
-  display: flex;
-  width: 300%;
-  transform: translate3d(-100%, 0, 0);
+  transform: translate3d(0, 0, 0);
   will-change: transform;
 }
 
 .viewer-pane {
-  flex: 0 0 33.3333%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 100%;
   display: grid;
   place-items: center;
   overflow: hidden;
 }
+
+.viewer-pane:nth-child(1) { left: -100%; }
+.viewer-pane:nth-child(2) { left: 0; }
+.viewer-pane:nth-child(3) { left: 100%; }
 
 .viewer-pane .pane-img,
 .viewer-media video {
