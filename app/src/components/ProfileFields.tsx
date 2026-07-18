@@ -52,6 +52,18 @@ const Linkedin = ({ size = 15 }: { size?: number }) => (
     <circle cx="4" cy="4" r="2" />
   </Brand>
 );
+
+const Reddit = ({ size = 15 }: { size?: number }) => (
+  <Brand size={size}>
+    <circle cx="12" cy="13" r="9" />
+    <circle cx="8.5" cy="13" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="15.5" cy="13" r="1.2" fill="currentColor" stroke="none" />
+    <path d="M9 16.5c.9.6 2 .9 3 .9s2.1-.3 3-.9" />
+    <circle cx="18.5" cy="8" r="1.6" />
+    <path d="M15.5 5.2 17 3l1.5 1.4" />
+    <path d="M12 4V3" />
+  </Brand>
+);
 import { Toggle } from "./ui";
 import { useSettingsStore } from "../store";
 import { circleCrop } from "../lib/img";
@@ -77,16 +89,19 @@ function XIcon({ size = 15 }: { size?: number }) {
 }
 
 const PLATFORMS: { name: string; icon: ReactNode }[] = [
-  { name: "Instagram", icon: <Instagram size={15} /> },
-  { name: "X", icon: <XIcon /> },
-  { name: "Facebook", icon: <Facebook size={15} /> },
-  { name: "YouTube", icon: <Youtube size={15} /> },
-  { name: "LinkedIn", icon: <Linkedin size={15} /> },
-  { name: "Other", icon: <Globe size={15} /> },
+  { name: "Instagram", icon: <Instagram size={16} /> },
+  { name: "X", icon: <XIcon size={16} /> },
+  { name: "Facebook", icon: <Facebook size={16} /> },
+  { name: "YouTube", icon: <Youtube size={16} /> },
+  { name: "LinkedIn", icon: <Linkedin size={16} /> },
+  { name: "Reddit", icon: <Reddit size={16} /> },
+  { name: "Other", icon: <Globe size={16} /> },
 ];
 
-/** In-app dropdown with platform icons — replaces the OS <select>
- *  popup, which rendered as a bare text list. */
+/** Platform picker. The options open as a fixed bottom-sheet rather than
+ *  an absolutely-positioned menu, because the menu used to be clipped by
+ *  the scrollable editor card — users could only ever see the first few
+ *  platforms. A sheet escapes every ancestor's overflow and scrolls. */
 function PlatformSelect({
   value,
   onChange,
@@ -95,7 +110,7 @@ function PlatformSelect({
   onChange: (p: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const current = PLATFORMS.find((p) => p.name === value) ?? PLATFORMS[5];
+  const current = PLATFORMS.find((p) => p.name === value) ?? PLATFORMS[6];
   return (
     <div className="pf-select">
       <button
@@ -106,21 +121,21 @@ function PlatformSelect({
       >
         {current.icon}
         <span className="pf-select-label">{current.name}</span>
-        <ChevronDown
-          size={14}
-          style={{
-            transition: "transform 0.2s ease",
-            transform: open ? "rotate(180deg)" : "none",
-          }}
-        />
+        <ChevronDown size={14} />
       </button>
       {open && (
-        <>
-          <div className="pf-select-scrim" onClick={() => setOpen(false)} />
-          <div className="pf-select-menu" role="listbox">
+        <div className="sheet-scrim" onClick={() => setOpen(false)}>
+          <div
+            className="sheet"
+            role="listbox"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sheet-handle" />
+            <div className="sheet-title">Platform</div>
             {PLATFORMS.map((p) => (
               <button
                 key={p.name}
+                className="sheet-option"
                 role="option"
                 aria-selected={p.name === value}
                 data-active={p.name === value}
@@ -129,12 +144,12 @@ function PlatformSelect({
                   setOpen(false);
                 }}
               >
-                {p.icon}
+                <span className="sheet-option-icon">{p.icon}</span>
                 {p.name}
               </button>
             ))}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

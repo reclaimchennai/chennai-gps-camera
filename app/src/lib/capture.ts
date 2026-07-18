@@ -107,7 +107,16 @@ export async function capturePhoto(
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
   }
-  ctx.drawImage(frame, 0, 0);
+  // digital zoom: crop the centre of the sensor frame to match the
+  // zoomed preview (1 = no crop; hardware zoom needs none)
+  const dz = camera.captureZoom;
+  if (dz > 1) {
+    const cw = w / dz;
+    const ch = h / dz;
+    ctx.drawImage(frame, (w - cw) / 2, (h - ch) / 2, cw, ch, 0, 0, w, h);
+  } else {
+    ctx.drawImage(frame, 0, 0);
+  }
   if (mirror) ctx.restore();
   frame.close();
 

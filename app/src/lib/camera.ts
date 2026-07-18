@@ -25,11 +25,23 @@ declare global {
   }
 }
 
+/** Zoom capability, unified across hardware (camera-native) and digital
+ *  (crop) modes so the UI can present one consistent zoom control. */
+export interface ZoomInfo {
+  min: number;
+  max: number;
+  /** true = the camera track zooms natively; false = digital crop. */
+  hardware: boolean;
+}
+
+const MAX_DIGITAL_ZOOM = 4;
+
 export class CameraController {
   stream: MediaStream | null = null;
   facing: FacingMode = "environment";
   private video: HTMLVideoElement | null = null;
   private zoomValue = 1;
+  private digitalZoom = 1; // used when the track has no native zoom
   private torchOn = false;
 
   /**
@@ -70,7 +82,9 @@ export class CameraController {
       }
     }
     this.zoomValue = 1;
+    this.digitalZoom = 1;
     this.torchOn = false;
+    if (this.video) this.video.style.transform = "";
     return this.stream;
   }
 
@@ -129,19 +143,62 @@ export class CameraController {
     };
   }
 
+  /** Unified zoom range. Prefers the camera's native zoom (best quality,
+   *  can reach ultra-wide < 1× on phones that expose it); otherwise falls
+   *  back to a digital crop zoom, which works on every device — many
+   *  Android WebViews simply don't surface the `zoom` track constraint. */
+  zoomInfo(): ZoomInfo {
+    const hw = this.capabilities().zoom;
+    if (hw) return { min: hw.min, max: hw.max, hardware: true };
+    return { min: 1, max: MAX_DIGITAL_ZOOM, hardware: false };
+  }
+
+  /** Suggested zoom stops for the on-screen buttons (e.g. 0.6, 1, 2, 5). */
+  zoomStops(): number[] {
+    const { min, max } = this.zoomInfo();
+    const stops = new Set<number>();
+    if (min < 1) stops.add(Math.round(min * 10) / 10); // ultra-wide, e.g. 0.6
+    stops.add(1);
+    for (const s of [2, 3, 5, 10]) if (s <= max) stops.add(s);
+    if (max > 1 && !stops.has(Math.round(max))) stops.add(Math.round(max));
+    return [...stops].filter((z) => z >= min && z <= max).sort((a, b) => a - b);
+  }
+
   async setZoom(value: number): Promise<number> {
-    const caps = this.capabilities();
-    if (!caps.zoom || !this.track) return this.zoomValue;
-    const clamped = Math.min(caps.zoom.max, Math.max(caps.zoom.min, value));
-    try {
-      await this.track.applyConstraints({
-        advanced: [{ zoom: clamped } as MediaTrackConstraintSet],
-      });
-      this.zoomValue = clamped;
-    } catch {
-      // unsupported — ignore
+    const info = this.zoomInfo();
+    const clamped = Math.min(info.max, Math.max(info.min, value));
+    if (info.hardware && this.track) {
+      try {
+        await this.track.applyConstraints({
+          advanced: [{ zoom: clamped } as MediaTrackConstraintSet],
+        });
+        this.zoomValue = clamped;
+      } catch {
+        // unsupported after all — ignore
+      }
+      return this.zoomValue;
     }
+    // digital: crop-scale the preview; capture/record apply the same crop
+    this.digitalZoom = clamped;
+    this.zoomValue = clamped;
+    this.applyDigitalTransform();
     return this.zoomValue;
+  }
+
+  /** Scale factor to crop by when capturing/recording (1 = no crop). */
+  get captureZoom(): number {
+    return this.zoomInfo().hardware ? 1 : this.digitalZoom;
+  }
+
+  private applyDigitalTransform(): void {
+    if (!this.video) return;
+    const z = this.digitalZoom;
+    const mirror = this.facing === "user";
+    // combine with the front-camera mirror so both survive
+    this.video.style.transformOrigin = "center";
+    this.video.style.transform = mirror
+      ? `scaleX(${-z}) scaleY(${z})`
+      : `scale(${z})`;
   }
 
   get zoom(): number {

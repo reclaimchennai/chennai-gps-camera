@@ -56,6 +56,8 @@ export default function CameraView({ active }: { active: boolean }) {
   const [camError, setCamError] = useState<string | null>(null);
   const [torch, setTorch] = useState(false);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [zoomStops, setZoomStops] = useState<number[]>([]);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [flashFx, setFlashFx] = useState(0);
   const [focusPos, setFocusPos] = useState<{ x: number; y: number; key: number } | null>(null);
@@ -92,6 +94,9 @@ export default function CameraView({ active }: { active: boolean }) {
       if (videoRef.current) camera.attach(videoRef.current);
       setReady(true);
       setTorch(false);
+      setZoom(1);
+      // some devices populate track capabilities a beat after start
+      window.setTimeout(() => setZoomStops(camera.zoomStops()), 300);
     } catch {
       setCamError(
         "Camera unavailable. Check that permission is granted and no other app is using it."
@@ -403,7 +408,20 @@ export default function CameraView({ active }: { active: boolean }) {
         let compositeDone = false;
         const paint = () => {
           if (compositeDone) return;
-          cctx.drawImage(liveVideo, 0, 0, burnW, burnH);
+          // match digital zoom by cropping the centre of the frame
+          const dz = camera.captureZoom;
+          if (dz > 1) {
+            const sw = liveVideo.videoWidth / dz;
+            const sh = liveVideo.videoHeight / dz;
+            cctx.drawImage(
+              liveVideo,
+              (liveVideo.videoWidth - sw) / 2,
+              (liveVideo.videoHeight - sh) / 2,
+              sw, sh, 0, 0, burnW, burnH
+            );
+          } else {
+            cctx.drawImage(liveVideo, 0, 0, burnW, burnH);
+          }
           if (liveBlurOn) {
             for (const b of liveBoxesRef.current) {
               const cells = 9;
@@ -588,7 +606,17 @@ export default function CameraView({ active }: { active: boolean }) {
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchBase = useRef<{ dist: number; zoom: number } | null>(null);
 
+  // A tap that starts on a control (flash, settings, zoom pills, …)
+  // must not trigger tap-to-focus.
+  const onControl = (target: EventTarget | null) =>
+    Boolean(
+      (target as HTMLElement | null)?.closest(
+        "button, a, input, select, .cam-top, .cam-zoombar, .cam-controls"
+      )
+    );
+
   const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (onControl(e.target)) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
@@ -607,7 +635,8 @@ export default function CameraView({ active }: { active: boolean }) {
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
       const target = pinchBase.current.zoom * (dist / pinchBase.current.dist);
       void camera.setZoom(target).then((z) => {
-        if (camera.capabilities().zoom) setZoomLabel(`${z.toFixed(1)}×`);
+        setZoom(z);
+        setZoomLabel(`${z.toFixed(1)}×`);
       });
     }
   }, []);
@@ -730,6 +759,34 @@ export default function CameraView({ active }: { active: boolean }) {
         )}
         {toast && <div className="cam-toast">{toast}</div>}
         {recording && <div className="rec-timer">{fmtRec(recSeconds)}</div>}
+
+        {/* zoom pills — transparent like the watermark, above the shutter;
+            based on the camera's real zoom range (native or digital) */}
+        {zoomStops.length > 1 && (
+          <div className="cam-zoombar">
+            {zoomStops.map((z) => {
+              const active = Math.abs(zoom - z) < 0.08;
+              const label =
+                z === 1 ? "1×" : Number.isInteger(z) ? String(z) : z.toFixed(1);
+              return (
+                <button
+                  key={z}
+                  className="zoom-pill"
+                  data-active={active}
+                  onClick={() =>
+                    void camera.setZoom(z).then((v) => {
+                      setZoom(v);
+                      setZoomLabel(`${v.toFixed(1)}×`);
+                      window.setTimeout(() => setZoomLabel(null), 900);
+                    })
+                  }
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div key={flashFx} className={`flash-fx${flashFx ? " animate" : ""}`} />

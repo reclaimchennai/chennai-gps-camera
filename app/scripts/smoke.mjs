@@ -235,7 +235,7 @@ try {
   );
   if (shotsDir) await page.screenshot({ path: `${shotsDir}/5-gallery.png` });
   await page.locator(".gallery-cell").first().click();
-  await page.waitForSelector(".media-stage img", { timeout: 10000 });
+  await page.waitForSelector(".viewer-media img", { timeout: 10000 });
   check("photo detail opens", true);
   if (shotsDir) await page.screenshot({ path: `${shotsDir}/2-detail.png` });
 

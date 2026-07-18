@@ -8,6 +8,11 @@ import {
   Trash2,
   Tag,
   X,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
+  Maximize,
 } from "lucide-react";
 import { getMedia, getBlob, deleteMedia, putMedia, listMedia } from "../lib/db";
 import type { MediaRecord } from "../types";
@@ -33,6 +38,11 @@ export default function MediaDetailView({ id }: { id: string }) {
   const [neighbours, setNeighbours] = useState<{ prev?: string; next?: string }>({});
   const [slideDir, setSlideDir] = useState<"left" | "right" | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // immersive chrome (header + action bar) — tap toggles it
+  const [chrome, setChrome] = useState(true);
+  // custom video transport state (native controls are replaced by a
+  // floating bar so they never sit over the burned-in watermark)
+  const [vp, setVp] = useState({ playing: false, cur: 0, dur: 0, muted: false });
 
   // ---- photo pinch-zoom / pan / double-tap ---------------------------
   const stageRef = useRef<HTMLDivElement>(null);
@@ -134,6 +144,61 @@ export default function MediaDetailView({ id }: { id: string }) {
     });
   }, [url, rec?.kind]);
 
+  // wire the floating transport bar to the <video> element
+  useEffect(() => {
+    if (rec?.kind !== "video") return;
+    const v = videoRef.current;
+    if (!v) return;
+    const sync = () =>
+      setVp({
+        playing: !v.paused,
+        cur: v.currentTime,
+        dur: v.duration || 0,
+        muted: v.muted,
+      });
+    v.addEventListener("timeupdate", sync);
+    v.addEventListener("play", sync);
+    v.addEventListener("pause", sync);
+    v.addEventListener("loadedmetadata", sync);
+    v.addEventListener("volumechange", sync);
+    sync();
+    return () => {
+      v.removeEventListener("timeupdate", sync);
+      v.removeEventListener("play", sync);
+      v.removeEventListener("pause", sync);
+      v.removeEventListener("loadedmetadata", sync);
+      v.removeEventListener("volumechange", sync);
+    };
+  }, [url, rec?.kind]);
+
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play().catch(() => {});
+    else v.pause();
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    const v = videoRef.current as (HTMLVideoElement & {
+      webkitEnterFullscreen?: () => void;
+    }) | null;
+    if (!v) return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+    } else if (v.requestFullscreen) {
+      void v.requestFullscreen().catch(() => {});
+    } else if (v.webkitEnterFullscreen) {
+      // iOS Safari only fullscreens the video element itself
+      v.webkitEnterFullscreen();
+    }
+  }, []);
+
+  const fmtT = (s: number) => {
+    if (!Number.isFinite(s)) return "0:00";
+    const m = Math.floor(s / 60);
+    return `${m}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  };
+
   const goTo = useCallback((targetId: string, dir: "left" | "right") => {
     setSlideDir(dir);
     setCurId(targetId);
@@ -215,10 +280,11 @@ export default function MediaDetailView({ id }: { id: string }) {
             else if (dx > 0 && neighbours.prev) goTo(neighbours.prev, "right");
             return;
           }
-          // double-tap toggles photo zoom
-          if (Math.hypot(dx, dy) < 8 && rec?.kind === "photo") {
+          // a tap (no drag)
+          if (Math.hypot(dx, dy) < 8) {
             const now = Date.now();
-            if (now - lastTap.current < 300) {
+            // photo double-tap toggles zoom
+            if (rec?.kind === "photo" && now - lastTap.current < 300) {
               const z = zoomRef.current;
               z.scale = z.scale > 1 ? 1 : 2.5;
               clampZoom();
@@ -233,6 +299,8 @@ export default function MediaDetailView({ id }: { id: string }) {
               lastTap.current = 0;
             } else {
               lastTap.current = now;
+              // single tap toggles the immersive chrome (header + actions)
+              setChrome((c) => !c);
             }
           }
         }
@@ -310,26 +378,15 @@ export default function MediaDetailView({ id }: { id: string }) {
 
   const j = rec.data.jurisdiction;
 
-  return (
-    <div className="screen" style={{ position: "fixed", inset: 0, zIndex: 10, background: "var(--bg)" }}>
-      <header className="screen-header">
-        <button className="icon-btn" onClick={goBack} aria-label="Back">
-          <ArrowLeft size={20} />
-        </button>
-        <h1>
-          {new Date(rec.createdAt).toLocaleString("en-IN", {
-            dateStyle: "medium",
-            timeStyle: "short",
-          })}
-        </h1>
-        <button className="icon-btn" onClick={() => setInfo(true)} aria-label="Info">
-          <Info size={20} />
-        </button>
-      </header>
+  const isVideo = rec.kind === "video";
 
+  return (
+    <div className="viewer">
+      {/* full-bleed media area (leaves a strip at the bottom for a video's
+          floating controls so the burned watermark is never covered) */}
       <div
         ref={stageRef}
-        className="media-stage"
+        className={`viewer-media${isVideo ? " has-bar" : ""}`}
         onPointerDown={onStagePointerDown}
         onPointerMove={onStagePointerMove}
         onPointerUp={onStagePointerUp}
@@ -346,88 +403,136 @@ export default function MediaDetailView({ id }: { id: string }) {
           {url && rec.kind === "photo" && (
             <img ref={imgRef} className="media-photo" src={url} alt="" draggable={false} />
           )}
-          {url && rec.kind === "video" && (
+          {url && isVideo && (
             <video
               ref={videoRef}
               src={url}
-              controls
               playsInline
               autoPlay
               preload="auto"
               poster={poster ?? undefined}
-              onClick={(e) => {
-                // tap anywhere = pause/resume, like a native gallery
-                const v = e.currentTarget;
-                if (v.paused) void v.play().catch(() => {});
-                else v.pause();
-              }}
             />
           )}
         </div>
       </div>
 
-      <div className="tag-strip">
-        <Tag size={14} />
-        {(rec.tags ?? []).map((t) => (
-          <span key={t} className="tag-chip">
-            {t}
-            <button
-              aria-label={`Remove tag ${t}`}
-              onClick={() => void saveTags((rec.tags ?? []).filter((x) => x !== t))}
-            >
-              <X size={12} />
-            </button>
-          </span>
-        ))}
-        {tagDraft !== null ? (
+      {/* floating transport bar — always visible for video, so the native
+          control strip never sits on top of the watermark */}
+      {isVideo && (
+        <div className="viewer-transport" onPointerDown={(e) => e.stopPropagation()}>
+          <button className="vt-btn" onClick={togglePlay} aria-label={vp.playing ? "Pause" : "Play"}>
+            {vp.playing ? <Pause size={20} /> : <Play size={20} />}
+          </button>
+          <span className="vt-time">{fmtT(vp.cur)}</span>
           <input
-            className="tag-input"
-            autoFocus
-            placeholder="tag name"
-            value={tagDraft}
-            onChange={(e) => setTagDraft(e.target.value)}
-            onBlur={() => void addTag()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void addTag();
-              if (e.key === "Escape") setTagDraft(null);
+            className="vt-seek"
+            type="range"
+            min={0}
+            max={vp.dur || 0}
+            step={0.05}
+            value={Math.min(vp.cur, vp.dur || 0)}
+            onChange={(e) => {
+              const v = videoRef.current;
+              if (v) v.currentTime = Number(e.target.value);
             }}
           />
-        ) : (
-          <button className="tag-add" onClick={() => setTagDraft("")}>
-            + Add tag
+          <span className="vt-time">{fmtT(vp.dur)}</span>
+          <button
+            className="vt-btn"
+            onClick={() => {
+              const v = videoRef.current;
+              if (v) v.muted = !v.muted;
+            }}
+            aria-label={vp.muted ? "Unmute" : "Mute"}
+          >
+            {vp.muted ? <VolumeX size={19} /> : <Volume2 size={19} />}
           </button>
-        )}
-      </div>
+          <button className="vt-btn" onClick={toggleFullscreen} aria-label="Fullscreen">
+            <Maximize size={18} />
+          </button>
+        </div>
+      )}
 
-      <div className="media-actions">
-        <button className="media-action" onClick={() => void onShare()}>
-          <Share2 size={20} />
-          <span>Share</span>
+      {/* immersive chrome: slides in on tap */}
+      <header className={`viewer-top${chrome ? " show" : ""}`}>
+        <button className="icon-btn" onClick={goBack} aria-label="Back">
+          <ArrowLeft size={20} />
         </button>
-        <button
-          className="media-action"
-          onClick={() =>
-            navigate(rec.kind === "photo" ? `/edit/${curId}` : `/video-edit/${curId}`)
-          }
-        >
-          <PencilLine size={20} />
-          <span>{rec.kind === "photo" ? "Annotate" : "Edit"}</span>
+        <h1>
+          {new Date(rec.createdAt).toLocaleString("en-IN", {
+            dateStyle: "medium",
+            timeStyle: "short",
+          })}
+        </h1>
+        <button className="icon-btn" onClick={() => setInfo(true)} aria-label="Info">
+          <Info size={20} />
         </button>
-        {/* Native builds auto-save captures straight to the gallery — a
-            manual Save would only create duplicates */}
-        {!isNativeApp() && (
-          <button className="media-action" onClick={() => void onDownload()}>
-            <Download size={20} />
-            <span>Save</span>
+      </header>
+
+      <div className={`viewer-bottom${isVideo ? " has-bar" : ""}${chrome ? " show" : ""}`}>
+        <div className="tag-strip">
+          <Tag size={14} />
+          {(rec.tags ?? []).map((t) => (
+            <span key={t} className="tag-chip">
+              {t}
+              <button
+                aria-label={`Remove tag ${t}`}
+                onClick={() => void saveTags((rec.tags ?? []).filter((x) => x !== t))}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+          {tagDraft !== null ? (
+            <input
+              className="tag-input"
+              autoFocus
+              placeholder="tag name"
+              value={tagDraft}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onBlur={() => void addTag()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void addTag();
+                if (e.key === "Escape") setTagDraft(null);
+              }}
+            />
+          ) : (
+            <button className="tag-add" onClick={() => setTagDraft("")}>
+              + Add tag
+            </button>
+          )}
+        </div>
+
+        <div className="media-actions">
+          <button className="media-action" onClick={() => void onShare()}>
+            <Share2 size={20} />
+            <span>Share</span>
           </button>
-        )}
-        <button
-          className="media-action danger"
-          onClick={() => setConfirmDelete(true)}
-        >
-          <Trash2 size={20} />
-          <span>Delete</span>
-        </button>
+          <button
+            className="media-action"
+            onClick={() =>
+              navigate(rec.kind === "photo" ? `/edit/${curId}` : `/video-edit/${curId}`)
+            }
+          >
+            <PencilLine size={20} />
+            <span>{rec.kind === "photo" ? "Annotate" : "Edit"}</span>
+          </button>
+          {/* Native builds auto-save captures straight to the gallery — a
+              manual Save would only create duplicates */}
+          {!isNativeApp() && (
+            <button className="media-action" onClick={() => void onDownload()}>
+              <Download size={20} />
+              <span>Save</span>
+            </button>
+          )}
+          <button
+            className="media-action danger"
+            onClick={() => setConfirmDelete(true)}
+          >
+            <Trash2 size={20} />
+            <span>Delete</span>
+          </button>
+        </div>
       </div>
 
       {confirmDelete && (

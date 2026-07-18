@@ -164,6 +164,41 @@ textarea {
   flex-direction: column;
 }
 
+/* zoom pills: transparent chrome over the viewfinder, just above the
+   shutter — small, translucent like the watermark card */
+.cam-zoombar {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(6px);
+  z-index: 8;
+}
+
+.zoom-pill {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.zoom-pill[data-active="true"] {
+  background: rgba(255, 255, 255, 0.9);
+  color: #000;
+}
+
 .cam-viewport {
   /* the app owns all gestures here (pinch-zoom, tap-to-focus) — without
      this the Android WebView swallows two-finger gestures itself and
@@ -181,6 +216,9 @@ textarea {
   position: relative;
   max-width: 100%;
   max-height: 100%;
+  /* digital zoom scales the <video> up; clip the overflow to the box so
+     the zoomed preview is centre-cropped, not spilling over the UI */
+  overflow: hidden;
 }
 
 /* ---- Settings: Advanced section + calibration wheel ---------------- */
@@ -802,19 +840,32 @@ textarea {
 }
 
 /* ---------- media detail ---------- */
-.media-stage {
-  flex: 1;
-  display: grid;
-  place-items: center;
+/* ---------- immersive media viewer ---------- */
+
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   background: #000;
   overflow: hidden;
-  min-height: 0;
-  /* the stage owns its gestures (pinch-zoom photos, swipe navigation) */
-  touch-action: none;
-  position: relative;
 }
 
-/* the swipe layer fills the stage; media is centred within it */
+/* media fills the whole screen; for video a strip is reserved at the
+   bottom for the floating transport bar so the burned watermark is
+   never covered */
+.viewer-media {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.viewer-media.has-bar {
+  bottom: 54px;
+}
+
 .media-swipe {
   position: absolute;
   inset: 0;
@@ -822,29 +873,24 @@ textarea {
   place-items: center;
 }
 
-.media-stage img {
+.viewer-media img {
   max-width: 100%;
   max-height: 100%;
 }
 
-.media-stage .media-photo {
+.viewer-media .media-photo {
   will-change: transform;
   user-select: none;
   -webkit-user-drag: none;
 }
 
-/* Fills the stage but leaves headroom at the bottom so the burned
-   watermark clears the native control bar (scrubber/volume) that a
-   <video controls> paints along its lower edge. */
-.media-stage video {
+.viewer-media video {
   max-width: 100%;
-  max-height: calc(100% - 46px);
+  max-height: 100%;
   width: auto;
   height: auto;
 }
 
-/* swipe navigation: the incoming item slides in from the swipe side.
-   Applied to the inner layer only, so the gesture container is stable. */
 .media-swipe.slide-left {
   animation: media-slide-left 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
@@ -870,12 +916,105 @@ textarea {
   }
 }
 
+/* floating video transport — always visible, in the reserved bottom
+   strip, never over the watermark */
+.viewer-transport {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(8px + var(--safe-bottom));
+  height: 40px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  color: #fff;
+}
+
+.vt-btn {
+  color: #fff;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.vt-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.85);
+  flex-shrink: 0;
+}
+
+.vt-seek {
+  flex: 1;
+  accent-color: var(--accent);
+  height: 3px;
+}
+
+/* immersive chrome slides in on tap */
+.viewer-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 13;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: calc(8px + var(--safe-top)) 10px 10px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent);
+  transform: translateY(-100%);
+  transition: transform 0.25s ease, opacity 0.25s ease;
+  opacity: 0;
+}
+
+.viewer-top.show {
+  transform: none;
+  opacity: 1;
+}
+
+.viewer-top h1 {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.viewer-top .icon-btn {
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+}
+
+.viewer-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 13;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  transform: translateY(120%);
+  transition: transform 0.25s ease;
+}
+
+/* for video, sit just above the floating transport strip so the two
+   never overlap */
+.viewer-bottom.has-bar {
+  bottom: calc(54px + var(--safe-bottom));
+}
+
+.viewer-bottom.show {
+  transform: none;
+}
+
 .media-actions {
   display: flex;
   justify-content: space-around;
   padding: 12px 8px calc(12px + var(--safe-bottom));
-  background: var(--surface);
-  border-top: 1px solid var(--border);
 }
 
 .media-action {
@@ -1076,48 +1215,79 @@ textarea {
   white-space: nowrap;
 }
 
-.pf-select-scrim {
+/* bottom-sheet menu — escapes the editor card's overflow clip so every
+   platform is reachable (the old absolute dropdown showed only 3) */
+.sheet-scrim {
   position: fixed;
   inset: 0;
-  z-index: 19;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: flex-end;
+  animation: sheet-fade 0.18s ease;
 }
 
-.pf-select-menu {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 4px);
-  z-index: 20;
-  min-width: 150px;
+@keyframes sheet-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.sheet {
+  width: 100%;
+  max-height: 70vh;
+  overflow-y: auto;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
-  overflow: hidden;
-  animation: pf-menu-in 0.16s ease;
+  border-radius: 18px 18px 0 0;
+  padding: 8px 8px calc(14px + var(--safe-bottom));
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.45);
+  animation: sheet-up 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-@keyframes pf-menu-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
-  to { opacity: 1; transform: none; }
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+  to { transform: none; }
 }
 
-.pf-select-menu button {
+.sheet-handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 4px auto 10px;
+}
+
+.sheet-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+  padding: 0 12px 6px;
+}
+
+.sheet-option {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 12px;
+  padding: 14px 12px;
   color: var(--text);
-  font-size: 14px;
+  font-size: 15px;
   background: none;
+  border-radius: 10px;
 }
 
-.pf-select-menu button[data-active="true"] {
+.sheet-option-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+}
+
+.sheet-option[data-active="true"] {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
-.pf-select-menu button:active {
+.sheet-option:active {
   background: var(--surface-2);
 }
 
