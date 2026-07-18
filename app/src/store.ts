@@ -23,6 +23,8 @@ interface LiveState {
   addressFor: { lat: number; lng: number } | null;
   /** live ambient sound level, approximate dB (null = mic unavailable) */
   db: number | null;
+  /** session sound stats — average/min/max since the app opened */
+  dbStats: { avg: number; min: number; max: number } | null;
   setFix(fix: Fix): void;
   setLookupResult(r: LookupResult): void;
   setBearing(b: number): void;
@@ -33,6 +35,7 @@ interface LiveState {
     at: { lat: number; lng: number } | null
   ): void;
   setDb(db: number | null): void;
+  setDbStats(stats: { avg: number; min: number; max: number } | null): void;
 }
 
 export const useLiveStore = create<LiveState>((set) => ({
@@ -44,6 +47,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   locality: undefined,
   addressFor: null,
   db: null,
+  dbStats: null,
   setFix: (fix) => set({ fix }),
   setLookupResult: (lookupResult) => set({ lookupResult }),
   setBearing: (bearing) => set({ bearing }),
@@ -51,6 +55,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   setAddress: (address, locality, addressFor) =>
     set({ address, locality, addressFor }),
   setDb: (db) => set({ db }),
+  setDbStats: (dbStats) => set({ dbStats }),
 }));
 
 // ---- Persistent settings ----------------------------------------------
@@ -65,6 +70,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   liveFaceBlur: false,
   dbCalibration: 0,
   googleApiKey: "",
+  mapplsApiKey: "",
   geocoder: "auto",
 };
 

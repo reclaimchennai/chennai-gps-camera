@@ -56,6 +56,7 @@ import {
 import type { PhotoRecord } from "../types";
 import { navigate, goBack } from "../nav";
 import { useSettingsStore } from "../store";
+import { isNativeApp } from "../lib/native";
 import { downloadBlob, suggestedName } from "../lib/share";
 
 /** slider value ↔ shape parameter mapping (relative to image width) */
@@ -109,6 +110,8 @@ export default function PhotoEditorView({ id }: { id: string }) {
   // pen/highlight stroke group currently accepting more strokes
   const [openStrokeId, setOpenStrokeId] = useState<string | null>(null);
   const [showCoach, setShowCoach] = useState(false);
+  // blur-up placeholder shown while the full-res photo decodes
+  const [skelUrl, setSkelUrl] = useState<string | null>(null);
 
   useEffect(() => {
     void kvGet<boolean>("coach-photo-editor").then((seen) => {
@@ -151,6 +154,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
 
   // ---- load photo -----------------------------------------------------
   useEffect(() => {
+    let skelObjUrl: string | null = null;
     void (async () => {
       const r = await getMedia(id);
       if (!r || r.kind !== "photo") {
@@ -158,12 +162,23 @@ export default function PhotoEditorView({ id }: { id: string }) {
         return;
       }
       setRec(r);
+      // blur-up skeleton: the tiny thumbnail is already decoded in cache
+      // and paints instantly, standing in (blurred + shimmer) while the
+      // full-resolution photo decodes
+      const t = await getBlob(id, "thumb");
+      if (t) {
+        skelObjUrl = URL.createObjectURL(t);
+        setSkelUrl(skelObjUrl);
+      }
       const blob = await getBlob(id, "final");
       if (!blob) return;
       const el = await loadImage(blob);
       mosaicsRef.current.clear();
       setImg(el);
     })();
+    return () => {
+      if (skelObjUrl) URL.revokeObjectURL(skelObjUrl);
+    };
   }, [id]);
 
   // ---- fit-to-screen scale -------------------------------------------
@@ -380,9 +395,10 @@ export default function PhotoEditorView({ id }: { id: string }) {
       const p = stageRef.current?.getPointerPosition();
       if (!p) return;
       setView((v) => {
+        // proportional to scroll delta — continuous, not stepped
         const nz = Math.min(
           8,
-          Math.max(1, v.zoom * (e.evt.deltaY < 0 ? 1.12 : 1 / 1.12))
+          Math.max(1, v.zoom * Math.exp(-e.evt.deltaY * 0.0022))
         );
         const qx = (p.x - v.x) / v.zoom;
         const qy = (p.y - v.y) / v.zoom;
@@ -470,12 +486,21 @@ export default function PhotoEditorView({ id }: { id: string }) {
       const next = readPinch(te);
       const prev = pinchRef.current;
       if (!next) return;
-      setView((v) => {
-        const nz = Math.min(8, Math.max(1, v.zoom * (next.dist / prev.dist)));
-        const qx = (prev.mid.x - v.x) / v.zoom;
-        const qy = (prev.mid.y - v.y) / v.zoom;
-        return clampView(nz, next.mid.x - qx * nz, next.mid.y - qy * nz);
-      });
+      // Smoothness: drive the Konva node directly during the gesture —
+      // a React state update per touchmove re-renders the whole stage
+      // and made zooming feel stepped. State syncs on gesture end.
+      const v = viewRef.current;
+      const nz = Math.min(8, Math.max(1, v.zoom * (next.dist / prev.dist)));
+      const qx = (prev.mid.x - v.x) / v.zoom;
+      const qy = (prev.mid.y - v.y) / v.zoom;
+      const clamped = clampView(nz, next.mid.x - qx * nz, next.mid.y - qy * nz);
+      viewRef.current = clamped;
+      const stage = stageRef.current;
+      if (stage) {
+        stage.scale({ x: fit * clamped.zoom, y: fit * clamped.zoom });
+        stage.position({ x: clamped.x, y: clamped.y });
+        stage.batchDraw();
+      }
       pinchRef.current = next;
       return;
     }
@@ -526,6 +551,8 @@ export default function PhotoEditorView({ id }: { id: string }) {
     const te = e?.evt as TouchEvent | undefined;
     if (pinchRef.current && (!te?.touches || te.touches.length < 2)) {
       pinchRef.current = null;
+      // gesture over — commit the node-level transform into React state
+      setView(viewRef.current);
     }
     const strokeId = strokeDrawRef.current;
     if (strokeId) {
@@ -805,7 +832,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
       await putBlob(copy.id, "final", withExif);
       await putBlob(copy.id, "thumb", thumb);
       await putMedia(copy);
-      if (useSettingsStore.getState().settings.autoSaveToDevice) {
+      if (useSettingsStore.getState().settings.autoSaveToDevice || isNativeApp()) {
         try {
           downloadBlob(
             withExif,
@@ -858,6 +885,12 @@ export default function PhotoEditorView({ id }: { id: string }) {
     <div className="editor-screen">
       <div ref={wrapRef} className="editor-stage-wrap">
         {note && <div className="editor-note">{note}</div>}
+        {!img && (
+          <div className="editor-skel">
+            {skelUrl && <img src={skelUrl} alt="" />}
+            <div className="editor-skel-shimmer" />
+          </div>
+        )}
         {img && (
           <Stage
             ref={stageRef}

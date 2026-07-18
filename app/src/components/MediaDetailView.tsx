@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Info,
@@ -9,7 +9,7 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import { getMedia, getBlob, deleteMedia, putMedia } from "../lib/db";
+import { getMedia, getBlob, deleteMedia, putMedia, listMedia } from "../lib/db";
 import type { MediaRecord } from "../types";
 import { navigate, goBack } from "../nav";
 import { shareBlob, downloadBlob, suggestedName } from "../lib/share";
@@ -23,10 +23,54 @@ export default function MediaDetailView({ id }: { id: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [info, setInfo] = useState(false);
   const [tagDraft, setTagDraft] = useState<string | null>(null);
+  // gallery order for swipe navigation
+  const [neighbours, setNeighbours] = useState<{ prev?: string; next?: string }>({});
+  const [slideDir, setSlideDir] = useState<"left" | "right" | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // ---- photo pinch-zoom / pan / double-tap ---------------------------
+  const stageRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef({ scale: 1, x: 0, y: 0 });
+  const imgRef = useRef<HTMLImageElement>(null);
+  const gesturePointers = useRef(new Map<number, { x: number; y: number }>());
+  const gestureBase = useRef<{
+    dist: number;
+    scale: number;
+    mid: { x: number; y: number };
+    origin: { x: number; y: number };
+  } | null>(null);
+  const panBase = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
+  const lastTap = useRef(0);
+
+  const applyZoom = useCallback(() => {
+    const img = imgRef.current;
+    if (!img) return;
+    const z = zoomRef.current;
+    img.style.transform = `translate(${z.x}px, ${z.y}px) scale(${z.scale})`;
+  }, []);
+
+  const clampZoom = useCallback(() => {
+    const z = zoomRef.current;
+    const stage = stageRef.current;
+    if (!stage) return;
+    z.scale = Math.min(6, Math.max(1, z.scale));
+    // keep the photo covering the viewport when zoomed
+    const maxX = (stage.clientWidth * (z.scale - 1)) / 2;
+    const maxY = (stage.clientHeight * (z.scale - 1)) / 2;
+    z.x = Math.min(maxX, Math.max(-maxX, z.x));
+    z.y = Math.min(maxY, Math.max(-maxY, z.y));
+    if (z.scale === 1) {
+      z.x = 0;
+      z.y = 0;
+    }
+  }, []);
 
   useEffect(() => {
     let objectUrl: string | null = null;
     let posterUrl: string | null = null;
+    // reset zoom when navigating between items
+    zoomRef.current = { scale: 1, x: 0, y: 0 };
     void (async () => {
       const r = await getMedia(id);
       if (!r) {
@@ -34,6 +78,13 @@ export default function MediaDetailView({ id }: { id: string }) {
         return;
       }
       setRec(r);
+      // neighbours in gallery order, for swipe left/right
+      const all = await listMedia();
+      const idx = all.findIndex((m) => m.id === id);
+      setNeighbours({
+        prev: idx > 0 ? all[idx - 1].id : undefined,
+        next: idx >= 0 && idx < all.length - 1 ? all[idx + 1].id : undefined,
+      });
       // Videos get their stored thumbnail as a poster so the detail view
       // shows a real frame, not the browser's gray play-button splash.
       if (r.kind === "video") {
@@ -58,6 +109,124 @@ export default function MediaDetailView({ id }: { id: string }) {
       if (posterUrl) URL.revokeObjectURL(posterUrl);
     };
   }, [id]);
+
+  // Videos start playing on open (native-gallery feel). If the browser
+  // refuses unmuted autoplay, fall back to muted so playback still
+  // starts — tapping toggles pause.
+  useEffect(() => {
+    if (!url || rec?.kind !== "video") return;
+    const v = videoRef.current;
+    if (!v) return;
+    v.play().catch(() => {
+      v.muted = true;
+      v.play().catch(() => {
+        // truly blocked — poster + controls remain
+      });
+    });
+  }, [url, rec?.kind]);
+
+  const goTo = useCallback((targetId: string, dir: "left" | "right") => {
+    setSlideDir(dir);
+    navigate(`/media/${targetId}`);
+  }, []);
+
+  // ---- stage gestures: pinch-zoom photos, swipe between items --------
+  const onStagePointerDown = useCallback((e: React.PointerEvent) => {
+    gesturePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pts = [...gesturePointers.current.values()];
+    if (pts.length === 2) {
+      swipeStart.current = null;
+      panBase.current = null;
+      gestureBase.current = {
+        dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+        scale: zoomRef.current.scale,
+        mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+        origin: { x: zoomRef.current.x, y: zoomRef.current.y },
+      };
+    } else if (pts.length === 1) {
+      if (zoomRef.current.scale > 1) {
+        panBase.current = {
+          x: e.clientX,
+          y: e.clientY,
+          ox: zoomRef.current.x,
+          oy: zoomRef.current.y,
+        };
+      } else {
+        swipeStart.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+      }
+    }
+  }, []);
+
+  const onStagePointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!gesturePointers.current.has(e.pointerId)) return;
+      gesturePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const pts = [...gesturePointers.current.values()];
+      if (pts.length === 2 && gestureBase.current && rec?.kind === "photo") {
+        const b = gestureBase.current;
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        const ns = b.scale * (dist / b.dist);
+        const z = zoomRef.current;
+        // zoom around the pinch midpoint, panning with it
+        z.scale = ns;
+        z.x = b.origin.x + (mid.x - b.mid.x) - (b.mid.x - window.innerWidth / 2) * (ns / b.scale - 1);
+        z.y = b.origin.y + (mid.y - b.mid.y) - (b.mid.y - window.innerHeight / 2) * (ns / b.scale - 1);
+        clampZoom();
+        applyZoom();
+      } else if (pts.length === 1 && panBase.current && rec?.kind === "photo") {
+        const z = zoomRef.current;
+        z.x = panBase.current.ox + (e.clientX - panBase.current.x);
+        z.y = panBase.current.oy + (e.clientY - panBase.current.y);
+        clampZoom();
+        applyZoom();
+      }
+    },
+    [rec?.kind, clampZoom, applyZoom]
+  );
+
+  const onStagePointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      gesturePointers.current.delete(e.pointerId);
+      if (gesturePointers.current.size < 2) gestureBase.current = null;
+      if (gesturePointers.current.size === 0) {
+        panBase.current = null;
+        const start = swipeStart.current;
+        swipeStart.current = null;
+        if (start && zoomRef.current.scale === 1) {
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          const dt = Date.now() - start.t;
+          if (Math.abs(dx) > 64 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 600) {
+            if (dx < 0 && neighbours.next) goTo(neighbours.next, "left");
+            else if (dx > 0 && neighbours.prev) goTo(neighbours.prev, "right");
+            return;
+          }
+          // double-tap toggles photo zoom
+          if (Math.hypot(dx, dy) < 8 && rec?.kind === "photo") {
+            const now = Date.now();
+            if (now - lastTap.current < 300) {
+              const z = zoomRef.current;
+              z.scale = z.scale > 1 ? 1 : 2.5;
+              clampZoom();
+              const img = imgRef.current;
+              if (img) {
+                img.style.transition = "transform 0.25s ease";
+                window.setTimeout(() => {
+                  if (img) img.style.transition = "";
+                }, 260);
+              }
+              applyZoom();
+              lastTap.current = 0;
+            } else {
+              lastTap.current = now;
+            }
+          }
+        }
+      }
+    },
+    [neighbours, rec?.kind, goTo, clampZoom, applyZoom]
+  );
 
   if (!rec) return null;
 
@@ -145,15 +314,34 @@ export default function MediaDetailView({ id }: { id: string }) {
         </button>
       </header>
 
-      <div className="media-stage">
-        {url && rec.kind === "photo" && <img src={url} alt="" />}
+      <div
+        ref={stageRef}
+        className={`media-stage${slideDir ? ` slide-${slideDir}` : ""}`}
+        key={id}
+        onPointerDown={onStagePointerDown}
+        onPointerMove={onStagePointerMove}
+        onPointerUp={onStagePointerUp}
+        onPointerCancel={onStagePointerUp}
+        onAnimationEnd={() => setSlideDir(null)}
+      >
+        {url && rec.kind === "photo" && (
+          <img ref={imgRef} className="media-photo" src={url} alt="" draggable={false} />
+        )}
         {url && rec.kind === "video" && (
           <video
+            ref={videoRef}
             src={url}
             controls
             playsInline
-            preload="metadata"
+            autoPlay
+            preload="auto"
             poster={poster ?? undefined}
+            onClick={(e) => {
+              // tap anywhere = pause/resume, like a native gallery
+              const v = e.currentTarget;
+              if (v.paused) void v.play().catch(() => {});
+              else v.pause();
+            }}
           />
         )}
       </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Screen, Row, Toggle } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
@@ -45,6 +45,39 @@ export default function WatermarkEditorView() {
   const setSettings = useSettingsStore((s) => s.setSettings);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const assetsRef = useRef<WatermarkAssets>({});
+  // The pinned preview eats half the screen while the keyboard is up —
+  // collapse it whenever a text input has focus so users can see what
+  // they type, and slide it back when the keyboard goes away.
+  const [typing, setTyping] = useState(false);
+  useEffect(() => {
+    const isText = (el: EventTarget | null) => {
+      const t = el as HTMLElement | null;
+      if (!t) return false;
+      const tag = t.tagName;
+      return (
+        tag === "TEXTAREA" ||
+        (tag === "INPUT" &&
+          !["checkbox", "radio", "range", "file"].includes(
+            (t as HTMLInputElement).type
+          ))
+      );
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      if (isText(e.target)) setTyping(true);
+    };
+    const onFocusOut = () => {
+      // wait a beat: focus may be moving between two inputs
+      window.setTimeout(() => {
+        if (!isText(document.activeElement)) setTyping(false);
+      }, 120);
+    };
+    document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
 
   // Live preview — same renderer as capture (§5.3: one implementation).
   // Shows JUST the card (tight crop, no fake photo behind it); only when
@@ -130,7 +163,7 @@ export default function WatermarkEditorView() {
     <Screen title="Watermark">
       {/* frozen while scrolling: every toggle updates it live; all
           changes save immediately — there is no save button */}
-      <div className="wm-preview-wrap">
+      <div className="wm-preview-wrap" data-typing={typing}>
         <canvas ref={canvasRef} className="wm-preview" />
       </div>
 

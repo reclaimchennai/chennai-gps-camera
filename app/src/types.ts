@@ -84,6 +84,8 @@ export interface WatermarkData {
   digipin?: string; // India Post DIGIPIN, computed offline when enabled
   /** Ambient sound level at capture, approximate dB (uncalibrated mic). */
   db?: number;
+  /** Session sound statistics (since the app was opened). */
+  dbStats?: { avg: number; min: number; max: number };
   timestamp: number;
   tzOffsetMinutes: number;
 }
@@ -174,5 +176,8 @@ export interface AppSettings {
   dbCalibration: number;
   /** Optional Google Cloud key for the PWA geocode/static-map upgrade (§7). */
   googleApiKey: string;
-  geocoder: "auto" | "google" | "nominatim" | "off";
+  /** Optional Mappls (MapmyIndia) key — Indian addresses, user-supplied. */
+  mapplsApiKey: string;
+  /** "system" = the Android OS geocoder; only offered in the native app. */
+  geocoder: "auto" | "system" | "google" | "mappls" | "nominatim" | "off";
 }

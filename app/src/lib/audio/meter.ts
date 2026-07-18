@@ -29,6 +29,12 @@ let timer: number | null = null;
 let smoothed: number | null = null;
 let starting = false;
 let generation = 0;
+// session statistics — reset only when the app reloads, not on meter
+// restarts, so "average since the app opened" stays true across screens
+let statSum = 0;
+let statCount = 0;
+let statMin = Infinity;
+let statMax = -Infinity;
 
 function teardownGraph() {
   if (timer != null) {
@@ -79,10 +85,27 @@ function tick() {
         ? smoothed * 0.4 + db * 0.6
         : smoothed * 0.75 + db * 0.25;
   const rounded = Math.round(smoothed);
-  // only touch the store when the displayed value changes — every set
+  statSum += rounded;
+  statCount++;
+  if (rounded < statMin) statMin = rounded;
+  if (rounded > statMax) statMax = rounded;
+  const stats = {
+    avg: Math.round(statSum / statCount),
+    min: statMin,
+    max: statMax,
+  };
+  // only touch the store when displayed values change — every set
   // triggers a full watermark-overlay repaint in the viewfinder
-  if (useLiveStore.getState().db !== rounded) {
-    useLiveStore.getState().setDb(rounded);
+  const live = useLiveStore.getState();
+  if (live.db !== rounded) live.setDb(rounded);
+  const prev = live.dbStats;
+  if (
+    !prev ||
+    prev.avg !== stats.avg ||
+    prev.min !== stats.min ||
+    prev.max !== stats.max
+  ) {
+    live.setDbStats(stats);
   }
 }
 

@@ -12,6 +12,7 @@ import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { playShutter } from "../lib/sound";
 import { useLiveStore, useSettingsStore } from "../store";
+import { isNativeApp } from "../lib/native";
 import { navigate } from "../nav";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
@@ -81,12 +82,13 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
 
   // ---- camera lifecycle (pre-warm on mount, §2) ---------------------
-  const startCam = useCallback(async (m: Mode) => {
+  // One stream serves both modes — startCam only runs on mount, camera
+  // flip, and visibility restore. Photo/video switching never touches it.
+  const startCam = useCallback(async (_m?: Mode) => {
     setReady(false);
     setCamError(null);
     try {
-      if (m === "video") await camera.startWithAudio();
-      else await camera.start();
+      await camera.start();
       if (videoRef.current) camera.attach(videoRef.current);
       setReady(true);
       setTorch(false);
@@ -122,19 +124,20 @@ export default function CameraView({ active }: { active: boolean }) {
       stopMeter();
       return;
     }
-    // video mode: tap the camera's audio track (single mic consumer);
-    // photo mode: the meter opens its own unprocessed mic stream
-    startMeter(mode === "video" ? camera.stream : null);
+    // the shared camera stream always carries the (unprocessed) mic
+    // track — one meter attach, stable across photo/video switches
+    startMeter(camera.stream);
     return () => stopMeter();
-  }, [active, ready, soundOn, mode]);
+  }, [active, ready, soundOn]);
 
   const switchMode = useCallback(
     (m: Mode) => {
       if (m === modeRef.current || recording) return;
+      // no camera restart: the shared stream keeps running, so the
+      // switch is instant and torch/zoom/meter state all survive
       setMode(m);
-      void startCam(m);
     },
-    [recording, startCam]
+    [recording]
   );
 
   // ---- last-capture thumbnail ----------------------------------------
@@ -527,7 +530,7 @@ export default function CameraView({ active }: { active: boolean }) {
         if (needsBackfill) scheduleBackfill();
         if (thumb) updateThumb(record.id, thumb);
         // auto-save to device, same as photos
-        if (useSettingsStore.getState().settings.autoSaveToDevice) {
+        if (useSettingsStore.getState().settings.autoSaveToDevice || isNativeApp()) {
           try {
             downloadBlob(
               blob,

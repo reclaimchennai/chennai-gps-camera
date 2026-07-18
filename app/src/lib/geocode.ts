@@ -86,6 +86,38 @@ async function nominatim(lat: number, lng: number): Promise<GeocodeResult | null
   };
 }
 
+/** Mappls (MapmyIndia) reverse geocode — user-supplied key. */
+async function mappls(
+  lat: number,
+  lng: number,
+  key: string
+): Promise<GeocodeResult | null> {
+  const url =
+    `https://apis.mappls.com/advancedmaps/v1/${encodeURIComponent(key)}` +
+    `/rev_geocode?lat=${lat}&lng=${lng}`;
+  const r = await fetch(url);
+  if (!r.ok) return null;
+  const j = (await r.json()) as {
+    results?: {
+      formatted_address?: string;
+      locality?: string;
+      subLocality?: string;
+      city?: string;
+      district?: string;
+      state?: string;
+    }[];
+  };
+  const first = j.results?.[0];
+  if (!first?.formatted_address) return null;
+  return {
+    address: cleanAddress(first.formatted_address, first.state ?? "Tamil Nadu"),
+    locality: joinLocality(
+      first.subLocality ?? first.locality,
+      first.city ?? first.district
+    ),
+  };
+}
+
 async function google(
   lat: number,
   lng: number,
@@ -124,26 +156,42 @@ export async function reverseGeocode(
   lng: number
 ): Promise<GeocodeResult | null> {
   const { settings } = useSettingsStore.getState();
-  if (settings.geocoder === "off") return null;
+  const mode = settings.geocoder;
+  if (mode === "off") return null;
   try {
-    // APK build: the OS geocoder answers offline-fast in English and
-    // costs nothing — always worth the first try
-    const n = await nativeReverseGeocode(lat, lng);
-    if (n) {
-      return {
-        address: cleanAddress(n.addressLine, n.adminArea ?? "Tamil Nadu"),
-        locality: joinLocality(n.subLocality, n.locality),
-      };
-    }
-    if (
-      settings.googleApiKey &&
-      (settings.geocoder === "google" || settings.geocoder === "auto")
-    ) {
+    const trySystem = async () => {
+      // APK build: the OS geocoder answers offline-fast in English and
+      // costs nothing (no-op in the browser)
+      const n = await nativeReverseGeocode(lat, lng);
+      return n
+        ? {
+            address: cleanAddress(n.addressLine, n.adminArea ?? "Tamil Nadu"),
+            locality: joinLocality(n.subLocality, n.locality),
+          }
+        : null;
+    };
+    if (mode === "system") return await trySystem();
+    if (mode === "google")
+      return settings.googleApiKey
+        ? await google(lat, lng, settings.googleApiKey)
+        : null;
+    if (mode === "mappls")
+      return settings.mapplsApiKey
+        ? await mappls(lat, lng, settings.mapplsApiKey)
+        : null;
+    if (mode === "nominatim") return await nominatim(lat, lng);
+
+    // auto: system → google (keyed) → mappls (keyed) → nominatim
+    const sys = await trySystem();
+    if (sys) return sys;
+    if (settings.googleApiKey) {
       const g = await google(lat, lng, settings.googleApiKey);
       if (g) return g;
-      if (settings.geocoder === "google") return null;
     }
-    if (settings.geocoder === "google") return null;
+    if (settings.mapplsApiKey) {
+      const m = await mappls(lat, lng, settings.mapplsApiKey);
+      if (m) return m;
+    }
     return await nominatim(lat, lng);
   } catch {
     return null;

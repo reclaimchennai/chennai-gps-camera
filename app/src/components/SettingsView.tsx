@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { Screen, Row, Toggle } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
@@ -10,19 +11,83 @@ import { startMeter, stopMeter } from "../lib/audio/meter";
 // returns automatically. Delete /new.gif and this block after that date.
 const NEW_GIF_UNTIL = Date.UTC(2026, 6, 21); // months are 0-based → July 21
 
+const WHEEL_ITEM_PX = 36;
+
+/** Scroll-snap number wheel (clock-app style) for the calibration
+ *  reference level: 0–120 dB, centre item selected. */
+function WheelPicker({
+  value,
+  onChange,
+  min = 0,
+  max = 120,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const settleTimer = useRef(0);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (el) el.scrollTop = (value - min) * WHEEL_ITEM_PX;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onScroll = () => {
+    const el = ref.current;
+    if (!el) return;
+    window.clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(() => {
+      const idx = Math.round(el.scrollTop / WHEEL_ITEM_PX);
+      const v = Math.min(max, Math.max(min, min + idx));
+      if (v !== value) onChange(v);
+    }, 80);
+  };
+
+  const count = max - min + 1;
+  return (
+    <div className="wheel-wrap">
+      <div className="wheel" ref={ref} onScroll={onScroll}>
+        <div className="wheel-pad" />
+        {Array.from({ length: count }, (_, i) => (
+          <div
+            key={i}
+            className="wheel-item"
+            data-active={min + i === value}
+            onClick={() => {
+              const el = ref.current;
+              if (el)
+                el.scrollTo({ top: i * WHEEL_ITEM_PX, behavior: "smooth" });
+            }}
+          >
+            {min + i}
+          </div>
+        ))}
+        <div className="wheel-pad" />
+      </div>
+      <div className="wheel-band" />
+    </div>
+  );
+}
+
 export default function SettingsView() {
   const settings = useSettingsStore((s) => s.settings);
   const setSettings = useSettingsStore((s) => s.setSettings);
   const liveDb = useLiveStore((s) => s.db);
+  const native = isNativeApp();
   // reference level the user is exposing the mic to (dB), for Match
-  const [calRef, setCalRef] = useState("60");
+  const [calRef, setCalRef] = useState(60);
+  const [advOpen, setAdvOpen] = useState(false);
 
   // keep the mic meter running here so the calibration row shows a live
   // reading; CameraView restarts its own metering when it regains focus
   useEffect(() => {
+    if (!advOpen) return;
     startMeter();
     return () => stopMeter();
-  }, []);
+  }, [advOpen]);
 
   return (
     <Screen title="Settings">
@@ -53,15 +118,19 @@ export default function SettingsView() {
 
       <div className="card">
         <div className="card-title">Camera</div>
-        <Row
-          label="Auto-save photos to device"
-          hint="Each shot is also saved to your phone (Downloads), so it shows in the gallery app"
-        >
-          <Toggle
-            on={settings.autoSaveToDevice}
-            onChange={(v) => setSettings({ autoSaveToDevice: v })}
-          />
-        </Row>
+        {/* the native app always saves captures to the gallery — no
+            toggle to confuse things there */}
+        {!native && (
+          <Row
+            label="Auto-save photos to device"
+            hint="Each shot is also saved to your phone (Downloads), so it shows in the gallery app"
+          >
+            <Toggle
+              on={settings.autoSaveToDevice}
+              onChange={(v) => setSettings({ autoSaveToDevice: v })}
+            />
+          </Row>
+        )}
         <Row label="Shutter sound">
           <Toggle
             on={settings.shutterSound}
@@ -83,105 +152,151 @@ export default function SettingsView() {
             onChange={(v) => setSettings({ mirrorFrontPhoto: v })}
           />
         </Row>
-        <Row
-          label={
-            <>
-              Live face blur{" "}
-              {Date.now() < NEW_GIF_UNTIL ? (
-                <img
-                  src="/new.gif"
-                  alt="New"
-                  style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
-                />
-              ) : (
-                <span className="exp-chip">Experimental</span>
-              )}
-            </>
-          }
-          hint="Blurs detected faces in the viewfinder and burns them into photos and recorded videos. Best-effort — always review; uses more battery."
+      </div>
+
+      <div className="card">
+        <button
+          className="adv-toggle"
+          aria-expanded={advOpen}
+          onClick={() => setAdvOpen((o) => !o)}
         >
-          <Toggle
-            on={settings.liveFaceBlur}
-            onChange={(v) => setSettings({ liveFaceBlur: v })}
+          <span className="card-title" style={{ padding: 0 }}>Advanced</span>
+          <ChevronDown
+            size={18}
+            style={{
+              transition: "transform 0.25s ease",
+              transform: advOpen ? "rotate(180deg)" : "none",
+            }}
           />
-        </Row>
-        <Row
-          label={`Sound meter calibration (${settings.dbCalibration >= 0 ? "+" : ""}${settings.dbCalibration} dB)`}
-          hint={`Live reading: ${liveDb != null ? `≈ ${liveDb} dB` : "listening…"}. Play a known level near the phone (e.g. a calibrated 60 dB tone or a reference noise-meter app), type that number, then tap Match.`}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              type="number"
-              min={30}
-              max={110}
-              step={1}
-              style={{ width: 64 }}
-              value={calRef}
-              onChange={(e) => setCalRef(e.target.value)}
-            />
-            <button
-              className="ghost-btn"
-              disabled={liveDb == null || calRef.trim() === ""}
-              onClick={() => {
-                const target = Number(calRef);
-                if (liveDb == null || !Number.isFinite(target)) return;
-                // current uncalibrated reading + new offset = target
-                const raw = liveDb - settings.dbCalibration;
-                setSettings({
-                  dbCalibration: Math.max(-40, Math.min(40, Math.round(target - raw))),
-                });
-              }}
+        </button>
+        <div className="adv-body" data-open={advOpen}>
+          <div>
+            <Row
+              label={
+                <>
+                  Live face blur{" "}
+                  {Date.now() < NEW_GIF_UNTIL ? (
+                    <img
+                      src="/new.gif"
+                      alt="New"
+                      style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
+                    />
+                  ) : (
+                    <span className="exp-chip">Experimental</span>
+                  )}
+                </>
+              }
+              hint="Blurs detected faces in the viewfinder and burns them into photos and recorded videos. Best-effort — always review; uses more battery."
             >
-              Match
-            </button>
-            <button
-              className="ghost-btn"
-              disabled={settings.dbCalibration === 0}
-              onClick={() => setSettings({ dbCalibration: 0 })}
+              <Toggle
+                on={settings.liveFaceBlur}
+                onChange={(v) => setSettings({ liveFaceBlur: v })}
+              />
+            </Row>
+
+            <div className="cal-block">
+              <div className="label">
+                Sound meter calibration
+                {settings.dbCalibration !== 0 &&
+                  ` (${settings.dbCalibration > 0 ? "+" : ""}${settings.dbCalibration} dB)`}
+              </div>
+              <p className="hint cal-para">
+                Phone microphones are not calibrated instruments, so the
+                meter can drift from reality. To correct it, expose the
+                phone to a sound of a known level — a calibrated 60 dB
+                reference tone, or simply a noise-meter app you trust
+                running next to it. Pick that known level on the wheel
+                below, then tap Match while the sound is playing; the
+                meter computes the exact offset. Current live reading:{" "}
+                <strong>{liveDb != null ? `≈ ${liveDb} dB` : "listening…"}</strong>
+              </p>
+              <div className="cal-controls">
+                <WheelPicker value={calRef} onChange={setCalRef} />
+                <button
+                  className="ghost-btn"
+                  disabled={liveDb == null}
+                  onClick={() => {
+                    if (liveDb == null) return;
+                    // current uncalibrated reading + new offset = target
+                    const raw = liveDb - settings.dbCalibration;
+                    setSettings({
+                      dbCalibration: Math.max(
+                        -40,
+                        Math.min(40, Math.round(calRef - raw))
+                      ),
+                    });
+                  }}
+                >
+                  Match
+                </button>
+                <button
+                  className="ghost-btn"
+                  disabled={settings.dbCalibration === 0}
+                  onClick={() => setSettings({ dbCalibration: 0 })}
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            <div className="card-title" style={{ paddingTop: 14 }}>
+              Address lookup (online)
+            </div>
+            <Row
+              label="Provider"
+              hint="Addresses are fetched in the background — never before a photo saves"
             >
-              Reset
-            </button>
+              <select
+                style={{ width: 160 }}
+                value={settings.geocoder}
+                onChange={(e) =>
+                  setSettings({
+                    geocoder: e.target.value as typeof settings.geocoder,
+                  })
+                }
+              >
+                <option value="auto">Automatic</option>
+                {native && <option value="system">System (Android)</option>}
+                <option value="nominatim">OpenStreetMap</option>
+                <option value="google">Google (needs key)</option>
+                <option value="mappls">Mappls (needs key)</option>
+                <option value="off">Off</option>
+              </select>
+            </Row>
+            <Row
+              label="Google Maps API key"
+              hint="Optional. Enables Google addresses + real map thumbnails"
+            >
+              <input
+                style={{ width: 170 }}
+                type="password"
+                placeholder="Not set"
+                value={settings.googleApiKey}
+                onChange={(e) =>
+                  setSettings({ googleApiKey: e.target.value.trim() })
+                }
+              />
+            </Row>
+            <Row
+              label="Mappls API key"
+              hint="Optional. MapmyIndia addresses — strong Indian coverage"
+            >
+              <input
+                style={{ width: 170 }}
+                type="password"
+                placeholder="Not set"
+                value={settings.mapplsApiKey}
+                onChange={(e) =>
+                  setSettings({ mapplsApiKey: e.target.value.trim() })
+                }
+              />
+            </Row>
           </div>
-        </Row>
+        </div>
       </div>
 
       <div className="card">
-        <div className="card-title">Address lookup (online)</div>
-        <Row
-          label="Provider"
-          hint="Addresses are fetched in the background — never before a photo saves"
-        >
-          <select
-            style={{ width: 150 }}
-            value={settings.geocoder}
-            onChange={(e) =>
-              setSettings({
-                geocoder: e.target.value as typeof settings.geocoder,
-              })
-            }
-          >
-            <option value="auto">Automatic</option>
-            <option value="nominatim">OpenStreetMap</option>
-            <option value="google">Google (needs key)</option>
-            <option value="off">Off</option>
-          </select>
-        </Row>
-        <Row
-          label="Google Maps API key"
-          hint="Optional. Enables Google addresses + real map thumbnails"
-        >
-          <input
-            style={{ width: 170 }}
-            type="password"
-            placeholder="Not set"
-            value={settings.googleApiKey}
-            onChange={(e) => setSettings({ googleApiKey: e.target.value.trim() })}
-          />
-        </Row>
-      </div>
-
-      <div className="card">
-        {!isNativeApp() && (
+        {!native && (
           <Row
             label="Android app (APK)"
             hint="Native Android build — English addresses from the phone's own geocoder, saves straight to the gallery"

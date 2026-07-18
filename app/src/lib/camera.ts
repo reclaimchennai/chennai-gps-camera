@@ -7,8 +7,6 @@
  * full sensor resolution, falling back to grabbing the video frame.
  */
 
-import { isNativeApp } from "./native";
-
 export type FacingMode = "environment" | "user";
 
 export interface CameraCapabilitiesLite {
@@ -34,61 +32,45 @@ export class CameraController {
   private zoomValue = 1;
   private torchOn = false;
 
+  /**
+   * ONE stream serves both photo and video mode, so switching modes is
+   * instant (no camera restart), the torch state survives, and the
+   * sound meter never has to re-attach. Audio rides along from the
+   * start — voice processing disabled so recordings and the dB meter
+   * both see the real signal. Stills are unaffected by the 1080p
+   * stream: ImageCapture.takePhoto() reads the full sensor.
+   */
   async start(facing: FacingMode = this.facing): Promise<MediaStream> {
     this.stop();
     this.facing = facing;
-    // Native WebView: compositing a 4K live preview is what made the APK
-    // feel sluggish — cap the *stream* at 1080p there. Stills are
-    // unaffected: ImageCapture.takePhoto() reads the full sensor.
-    const native = isNativeApp();
-    const constraints: MediaStreamConstraints = {
-      audio: false,
-      video: {
-        facingMode: facing,
-        width: { ideal: native ? 1920 : 4096 },
-        height: { ideal: native ? 1080 : 2160 },
-      },
-    };
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch {
-      // some devices reject the high ideal resolution outright
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: facing },
-      });
-    }
-    this.zoomValue = 1;
-    this.torchOn = false;
-    return this.stream;
-  }
-
-  /** Re-acquire the stream with audio for video recording. Voice
-   *  processing is disabled so the sound meter can tap this same track
-   *  for an honest dB reading — opening a *second* mic stream just for
-   *  the meter conflicts on Android and silences this recording track. */
-  async startWithAudio(): Promise<MediaStream> {
-    this.stop();
     const audio: MediaTrackConstraints = {
       echoCancellation: false,
       noiseSuppression: false,
       autoGainControl: false,
     };
+    const video: MediaTrackConstraints = {
+      facingMode: facing,
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+    };
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio,
-        video: {
-          facingMode: this.facing,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-      });
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio, video });
     } catch {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: this.facing },
-      });
+      try {
+        // mic denied — camera still works, recordings will be silent
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video,
+        });
+      } catch {
+        this.stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: facing },
+        });
+      }
     }
+    this.zoomValue = 1;
+    this.torchOn = false;
     return this.stream;
   }
 

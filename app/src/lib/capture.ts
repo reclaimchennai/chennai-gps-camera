@@ -13,6 +13,7 @@ import { writeExif } from "./exif";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";
 import { newId, putBlob, putMedia, getBlob } from "./db";
 import { useLiveStore, useSettingsStore } from "../store";
+import { isNativeApp } from "./native";
 import type { PhotoRecord, WatermarkData } from "../types";
 import { scheduleBackfill } from "./backfill";
 import { downloadBlob, suggestedName } from "./share";
@@ -52,6 +53,7 @@ export function collectWatermarkData(): WatermarkData {
         ? (latLngToDigipin(live.fix.lat, live.fix.lng) ?? undefined)
         : undefined,
     db: watermark.fields.soundLevel ? (live.db ?? undefined) : undefined,
+    dbStats: watermark.fields.soundLevel ? (live.dbStats ?? undefined) : undefined,
     timestamp: now,
     tzOffsetMinutes: new Date(now).getTimezoneOffset(),
   };
@@ -203,7 +205,7 @@ export async function capturePhoto(
   // Auto-save to the device (web build: Downloads folder, which gallery
   // apps index). Saved immediately with GPS/jurisdiction data baked in;
   // the street-address backfill only upgrades the in-app copy.
-  if (settings.autoSaveToDevice) {
+  if (settings.autoSaveToDevice || isNativeApp()) {
     try {
       downloadBlob(
         withExif,

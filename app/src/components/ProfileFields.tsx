@@ -2,15 +2,143 @@
  * Profile + social-handles form, embedded inline wherever needed
  * (expands under the "Social handles" toggle in the watermark editor).
  */
-import { useEffect, useRef, useState } from "react";
-import { Plus, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Plus, X, ChevronDown, Globe } from "lucide-react";
+
+/** Brand glyphs (lucide dropped its brand icons) — classic outline paths
+ *  drawn in the same 24×24 stroke style so they sit next to lucide. */
+function Brand({ size = 15, children }: { size?: number; children: ReactNode }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {children}
+    </svg>
+  );
+}
+
+const Instagram = ({ size = 15 }: { size?: number }) => (
+  <Brand size={size}>
+    <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+    <line x1="17.5" x2="17.51" y1="6.5" y2="6.5" />
+  </Brand>
+);
+
+const Facebook = ({ size = 15 }: { size?: number }) => (
+  <Brand size={size}>
+    <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
+  </Brand>
+);
+
+const Youtube = ({ size = 15 }: { size?: number }) => (
+  <Brand size={size}>
+    <path d="M2.5 17a24.12 24.12 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.56 49.56 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24.12 24.12 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.55 49.55 0 0 1-16.2 0A2 2 0 0 1 2.5 17" />
+    <path d="m10 15 5-3-5-3z" />
+  </Brand>
+);
+
+const Linkedin = ({ size = 15 }: { size?: number }) => (
+  <Brand size={size}>
+    <path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4V8h4v2a6 6 0 0 1 2-2z" />
+    <rect width="4" height="12" x="2" y="9" />
+    <circle cx="4" cy="4" r="2" />
+  </Brand>
+);
 import { Toggle } from "./ui";
 import { useSettingsStore } from "../store";
 import { circleCrop } from "../lib/img";
 import { getBlob, putBlob, deleteBlob, newId } from "../lib/db";
 import type { SocialHandle } from "../types";
 
-const PLATFORMS = ["Instagram", "X", "Facebook", "YouTube", "LinkedIn", "Other"];
+/** Bold X glyph for the platform formerly known as Twitter. */
+function XIcon({ size = 15 }: { size?: number }) {
+  return (
+    <span
+      style={{
+        fontSize: size - 1,
+        fontWeight: 800,
+        lineHeight: 1,
+        width: size,
+        display: "inline-grid",
+        placeItems: "center",
+      }}
+    >
+      𝕏
+    </span>
+  );
+}
+
+const PLATFORMS: { name: string; icon: ReactNode }[] = [
+  { name: "Instagram", icon: <Instagram size={15} /> },
+  { name: "X", icon: <XIcon /> },
+  { name: "Facebook", icon: <Facebook size={15} /> },
+  { name: "YouTube", icon: <Youtube size={15} /> },
+  { name: "LinkedIn", icon: <Linkedin size={15} /> },
+  { name: "Other", icon: <Globe size={15} /> },
+];
+
+/** In-app dropdown with platform icons — replaces the OS <select>
+ *  popup, which rendered as a bare text list. */
+function PlatformSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (p: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const current = PLATFORMS.find((p) => p.name === value) ?? PLATFORMS[5];
+  return (
+    <div className="pf-select">
+      <button
+        className="pf-select-btn"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {current.icon}
+        <span className="pf-select-label">{current.name}</span>
+        <ChevronDown
+          size={14}
+          style={{
+            transition: "transform 0.2s ease",
+            transform: open ? "rotate(180deg)" : "none",
+          }}
+        />
+      </button>
+      {open && (
+        <>
+          <div className="pf-select-scrim" onClick={() => setOpen(false)} />
+          <div className="pf-select-menu" role="listbox">
+            {PLATFORMS.map((p) => (
+              <button
+                key={p.name}
+                role="option"
+                aria-selected={p.name === value}
+                data-active={p.name === value}
+                onClick={() => {
+                  onChange(p.name);
+                  setOpen(false);
+                }}
+              >
+                {p.icon}
+                {p.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function ProfileFields() {
   const profile = useSettingsStore((s) => s.profile);
@@ -95,15 +223,10 @@ export default function ProfileFields() {
 
       {profile.handles.map((h) => (
         <div className="handle-row" key={h.id}>
-          <select
-            style={{ width: 105 }}
+          <PlatformSelect
             value={h.platform}
-            onChange={(e) => setHandle(h.id, { platform: e.target.value })}
-          >
-            {PLATFORMS.map((p) => (
-              <option key={p}>{p}</option>
-            ))}
-          </select>
+            onChange={(p) => setHandle(h.id, { platform: p })}
+          />
           <input
             style={{ flex: 1 }}
             placeholder="handle"

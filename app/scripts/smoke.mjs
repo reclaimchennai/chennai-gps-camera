@@ -343,6 +343,9 @@ try {
   await vidPage.waitForTimeout(2000);
   await vidPage.locator('[aria-label="Settings"]').click();
   await vidPage.waitForTimeout(500);
+  // live face blur lives in the collapsed Advanced section now
+  await vidPage.locator(".adv-toggle").click();
+  await vidPage.waitForTimeout(450);
   await vidPage
     .locator(".row", { hasText: "Live face blur" })
     .locator("button.switch")

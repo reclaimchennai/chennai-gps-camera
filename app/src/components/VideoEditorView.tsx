@@ -53,6 +53,7 @@ import {
 } from "../lib/editor/shapes";
 import { exportVideo, type CropRect } from "../lib/video/export";
 import { useSettingsStore } from "../store";
+import { isNativeApp } from "../lib/native";
 import { downloadBlob, suggestedName } from "../lib/share";
 
 type VTool =
@@ -756,7 +757,7 @@ export default function VideoEditorView({ id }: { id: string }) {
       await putBlob(copy.id, "final", result.blob);
       if (result.thumb) await putBlob(copy.id, "thumb", result.thumb);
       await putMedia(copy);
-      if (useSettingsStore.getState().settings.autoSaveToDevice) {
+      if (useSettingsStore.getState().settings.autoSaveToDevice || isNativeApp()) {
         try {
           downloadBlob(
             result.blob,

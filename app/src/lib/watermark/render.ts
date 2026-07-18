@@ -209,48 +209,57 @@ function buildLines(
     });
   }
 
-  if (f.soundLevel && data.db != null) {
+  if (f.soundLevel && (data.dbStats || data.db != null)) {
+    // session statistics: average since the app opened, with the range
+    const s = data.dbStats;
     lines.push({
-      text: `Sound ≈ ${Math.round(data.db)} dB`,
+      text: s
+        ? `Sound ≈ ${s.avg} dB avg · min ${s.min} · max ${s.max}`
+        : `Sound ≈ ${Math.round(data.db!)} dB`,
       font: small,
       color: theme.dim,
     });
   }
 
   // ---- jurisdiction rows (honesty rules baked in) -------------------
+  // Layout: corporation on its own line; "Zone · Ward" together on the
+  // next; police as one line, clubbing L&O + Traffic when they are the
+  // same station.
   if (j && j.scope !== "out") {
     const wardPending = j.wardPending || j.scope === "avadi";
-    const corpParts: string[] = [];
-    if ((f.ward || f.zone) && j.corporation) corpParts.push(j.corporation);
-    if (f.ward) {
-      if (wardPending) corpParts.push("Ward: not yet available");
-      else if (j.ward)
-        corpParts.push(
-          `Ward ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}`
-        );
+    let firstJurLine = true;
+    const pushJur = (text: string, wrapMax = 2) => {
+      wrapText(ctx, text, body, maxWidth, wrapMax).forEach((seg) => {
+        lines.push({
+          text: seg,
+          font: body,
+          color: theme.accent,
+          gapBefore: firstJurLine ? 0.35 : undefined,
+        });
+        firstJurLine = false;
+      });
+    };
+
+    if ((f.ward || f.zone) && j.corporation) pushJur(j.corporation);
+    if (wardPending && f.ward) {
+      pushJur("Ward: not yet available");
+    } else {
+      const zw: string[] = [];
+      if (f.zone && j.zone) zw.push(fmtZone(j.zone));
+      if (f.ward && j.ward)
+        zw.push(`Ward ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}`);
+      if (zw.length) pushJur(zw.join(" · "));
     }
-    if (f.zone && j.zone && !wardPending) corpParts.push(fmtZone(j.zone));
-    if (corpParts.length) {
-      wrapText(ctx, corpParts.join(" · "), body, maxWidth, 2).forEach(
-        (seg, i) => {
-          lines.push({
-            text: seg,
-            font: body,
-            color: theme.accent,
-            gapBefore: i === 0 ? 0.35 : undefined,
-          });
-        }
-      );
-    }
-    if (f.loStation && j.loStation) {
-      for (const seg of wrapText(ctx, `Police (L&O): ${j.loStation}`, body, maxWidth, 2)) {
-        lines.push({ text: seg, font: body, color: theme.accent });
-      }
-    }
-    if (f.trafficStation && j.trafficStation) {
-      for (const seg of wrapText(ctx, `Traffic: ${j.trafficStation}`, body, maxWidth, 2)) {
-        lines.push({ text: seg, font: body, color: theme.accent });
-      }
+
+    const lo = f.loStation ? j.loStation : undefined;
+    const traffic = f.trafficStation ? j.trafficStation : undefined;
+    if (lo && traffic) {
+      if (lo === traffic) pushJur(`Police (L&O & Traffic): ${lo}`);
+      else pushJur(`Police: L&O – ${lo} · Traffic – ${traffic}`, 3);
+    } else if (lo) {
+      pushJur(`Police (L&O): ${lo}`);
+    } else if (traffic) {
+      pushJur(`Traffic: ${traffic}`);
     }
   }
 
@@ -355,17 +364,43 @@ export function renderWatermark(
   const contentY = panelY + pad;
   if (mapSize && assets.miniMap) {
     const mx = panelX + pad;
-    const my = contentY + (contentH - mapSize) / 2;
+    // stretch with the card: when the text stack is taller than the
+    // square map, the map grows vertically to fill (cover-cropped from
+    // the square source so nothing distorts), capped at ~2.4× so a very
+    // long card doesn't produce a sliver-thin map view
+    const mapH = Math.round(
+      Math.min(Math.max(contentH, mapSize), mapSize * 2.4)
+    );
+    const my = contentY + (contentH - mapH) / 2;
     ctx.save();
-    roundRect(ctx, mx, my, mapSize, mapSize, Math.round(10 * s));
+    roundRect(ctx, mx, my, mapSize, mapH, Math.round(10 * s));
     ctx.clip();
-    ctx.drawImage(assets.miniMap, mx, my, mapSize, mapSize);
+    const src = assets.miniMap;
+    const srcW = (src as HTMLCanvasElement).width ?? mapSize;
+    const srcH = (src as HTMLCanvasElement).height ?? mapSize;
+    // cover-crop: keep the aspect of the destination
+    const destRatio = mapSize / mapH;
+    let cw = srcW;
+    let chh = srcH;
+    if (srcW / srcH > destRatio) cw = srcH * destRatio;
+    else chh = srcW / destRatio;
+    ctx.drawImage(
+      src,
+      (srcW - cw) / 2,
+      (srcH - chh) / 2,
+      cw,
+      chh,
+      mx,
+      my,
+      mapSize,
+      mapH
+    );
     // Attribution only for genuine Google imagery (§5.4)
     if (assets.miniMapIsGoogle) {
       ctx.font = `600 ${Math.round(bodyPx * 0.55)}px ${FONT_STACK}`;
       ctx.fillStyle = "rgba(255,255,255,0.9)";
       ctx.textBaseline = "bottom";
-      ctx.fillText("Google", mx + 6 * s, my + mapSize - 4 * s);
+      ctx.fillText("Google", mx + 6 * s, my + mapH - 4 * s);
     }
     ctx.restore();
   }
