@@ -109,19 +109,35 @@ const GCC_ZONE_NUMBERS: Record<string, number> = {
   shozhanganallur: 15,
 };
 
-/** "Teynampet" → "Zone Teynampet (9)"; "Zone 2" → "Zone 2";
- *  "Zone 5 Royapuram" → "Zone Royapuram (5)"; boroughs pass through. */
+/** Number-first, name in brackets — same convention as fmtWard, so the
+ *  zone and ward read consistently everywhere, regardless of how each
+ *  city pack happens to encode the raw value:
+ *  "Teynampet" → "Zone 9 (Teynampet)" (Chennai, via the lookup table)
+ *  "Zone 5 Royapuram" → "Zone 5 (Royapuram)" (Chennai, "Zone N Name")
+ *  "Gandhinagar (2)" → "Zone 2 (Gandhinagar)" (Bengaluru, "Name (N)")
+ *  "Zone 2" → "Zone 2"; boroughs pass through unchanged. */
 export function fmtZone(zone?: string): string {
   if (!zone) return "";
   // Kolkata-style boroughs are their own term — no "Zone" prefix
   if (/^borough/i.test(zone)) return zone;
   // "North Zone" → "North" (the prefix we add would double the word)
-  zone = zone.replace(/\s+zone$/i, "").trim();
-  const m = zone.match(/^zone\s*(\d+)\s*(.*)$/i);
-  if (m) {
-    const name = m[2].trim();
-    return name ? `Zone ${name} (${Number(m[1])})` : `Zone ${Number(m[1])}`;
+  let raw = zone.replace(/\s+zone$/i, "").trim();
+  // "Zone 5 Royapuram" / "Zone 2" → strip the leading word, keep the rest
+  raw = raw.replace(/^zone\s*/i, "").trim();
+
+  // "5 Royapuram" or bare "2" (no name to bracket)
+  const leading = raw.match(/^(\d+)(?:\s+(.+))?$/);
+  if (leading) {
+    const name = leading[2]?.trim();
+    return name ? `Zone ${Number(leading[1])} (${name})` : `Zone ${Number(leading[1])}`;
   }
-  const num = GCC_ZONE_NUMBERS[zone.trim().toLowerCase()];
-  return num ? `Zone ${zone} (${num})` : `Zone ${zone}`;
+
+  // "Gandhinagar (2)" — name with the number already parenthesised
+  const trailing = raw.match(/^(.+?)\s*\((\d+)\)$/);
+  if (trailing) return `Zone ${Number(trailing[2])} (${trailing[1].trim()})`;
+
+  // bare name — only Chennai's zones are numbered without embedding the
+  // number in the data itself
+  const num = GCC_ZONE_NUMBERS[raw.toLowerCase()];
+  return num ? `Zone ${num} (${raw})` : `Zone ${raw}`;
 }
