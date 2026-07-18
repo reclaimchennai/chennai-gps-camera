@@ -52,8 +52,17 @@ export function useRoute(): Route {
   return parse(hash);
 }
 
-export function navigate(path: string): void {
-  window.location.hash = path;
+export function navigate(path: string, opts?: { replace?: boolean }): void {
+  const hash = path.startsWith("#") ? path : `#${path.startsWith("/") ? "" : "/"}${path}`;
+  if (opts?.replace) {
+    // swap the current history entry instead of pushing a new one — used
+    // when swiping between gallery items so Back returns to the gallery
+    // in one step rather than replaying the swipe history
+    history.replaceState(null, "", hash);
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  } else {
+    window.location.hash = path;
+  }
 }
 
 export function goBack(): void {

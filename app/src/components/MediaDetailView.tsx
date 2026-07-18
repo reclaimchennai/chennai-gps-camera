@@ -17,6 +17,12 @@ import { isNativeApp } from "../lib/native";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../lib/geo/format";
 
 export default function MediaDetailView({ id }: { id: string }) {
+  // The currently-shown item is tracked internally so swiping between
+  // gallery items never remounts this whole view (that caused the janky
+  // slide, the polluted Back history, and taps being dropped right after
+  // a swipe). `id` only seeds it; real route changes re-seed via effect.
+  const [curId, setCurId] = useState(id);
+  useEffect(() => setCurId(id), [id]);
   const [rec, setRec] = useState<MediaRecord | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [poster, setPoster] = useState<string | null>(null);
@@ -69,10 +75,13 @@ export default function MediaDetailView({ id }: { id: string }) {
   useEffect(() => {
     let objectUrl: string | null = null;
     let posterUrl: string | null = null;
-    // reset zoom when navigating between items
+    // reset zoom + clear the previous blob so the freshly-keyed swipe
+    // layer never briefly renders a just-revoked object URL
     zoomRef.current = { scale: 1, x: 0, y: 0 };
+    setUrl(null);
+    setPoster(null);
     void (async () => {
-      const r = await getMedia(id);
+      const r = await getMedia(curId);
       if (!r) {
         goBack();
         return;
@@ -80,7 +89,7 @@ export default function MediaDetailView({ id }: { id: string }) {
       setRec(r);
       // neighbours in gallery order, for swipe left/right
       const all = await listMedia();
-      const idx = all.findIndex((m) => m.id === id);
+      const idx = all.findIndex((m) => m.id === curId);
       setNeighbours({
         prev: idx > 0 ? all[idx - 1].id : undefined,
         next: idx >= 0 && idx < all.length - 1 ? all[idx + 1].id : undefined,
@@ -88,7 +97,7 @@ export default function MediaDetailView({ id }: { id: string }) {
       // Videos get their stored thumbnail as a poster so the detail view
       // shows a real frame, not the browser's gray play-button splash.
       if (r.kind === "video") {
-        const t = await getBlob(id, "thumb");
+        const t = await getBlob(curId, "thumb");
         if (t) {
           posterUrl = URL.createObjectURL(t);
           setPoster(posterUrl);
@@ -97,8 +106,8 @@ export default function MediaDetailView({ id }: { id: string }) {
       const variant = r.kind === "photo" ? "final" : "source";
       // exported videos store their burned copy as `final`
       const blob =
-        (r.kind === "video" && (await getBlob(id, "final"))) ||
-        (await getBlob(id, variant));
+        (r.kind === "video" && (await getBlob(curId, "final"))) ||
+        (await getBlob(curId, variant));
       if (blob) {
         objectUrl = URL.createObjectURL(blob);
         setUrl(objectUrl);
@@ -108,7 +117,7 @@ export default function MediaDetailView({ id }: { id: string }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       if (posterUrl) URL.revokeObjectURL(posterUrl);
     };
-  }, [id]);
+  }, [curId]);
 
   // Videos start playing on open (native-gallery feel). If the browser
   // refuses unmuted autoplay, fall back to muted so playback still
@@ -127,7 +136,11 @@ export default function MediaDetailView({ id }: { id: string }) {
 
   const goTo = useCallback((targetId: string, dir: "left" | "right") => {
     setSlideDir(dir);
-    navigate(`/media/${targetId}`);
+    setCurId(targetId);
+    // keep the URL in sync for reload / deep-link WITHOUT a router
+    // re-render (which would remount and undo the smoothness) — and
+    // without pushing, so Back still returns straight to the gallery
+    history.replaceState(null, "", `#/media/${targetId}`);
   }, []);
 
   // ---- stage gestures: pinch-zoom photos, swipe between items --------
@@ -232,8 +245,8 @@ export default function MediaDetailView({ id }: { id: string }) {
 
   const onShare = async () => {
     const blob =
-      (rec.kind === "video" && (await getBlob(id, "final"))) ||
-      (await getBlob(id, rec.kind === "photo" ? "final" : "source"));
+      (rec.kind === "video" && (await getBlob(curId, "final"))) ||
+      (await getBlob(curId, rec.kind === "photo" ? "final" : "source"));
     if (!blob) return;
     // Location context rides along with the file (§ share: ward, zone,
     // address, and a Google Maps link for the exact coordinates).
@@ -270,14 +283,14 @@ export default function MediaDetailView({ id }: { id: string }) {
 
   const onDownload = async () => {
     const blob =
-      (rec.kind === "video" && (await getBlob(id, "final"))) ||
-      (await getBlob(id, rec.kind === "photo" ? "final" : "source"));
+      (rec.kind === "video" && (await getBlob(curId, "final"))) ||
+      (await getBlob(curId, rec.kind === "photo" ? "final" : "source"));
     if (blob)
       downloadBlob(blob, suggestedName(rec.kind, rec.createdAt, blob.type));
   };
 
   const onDelete = async () => {
-    await deleteMedia(id);
+    await deleteMedia(curId);
     navigate("/gallery");
   };
 
@@ -316,34 +329,41 @@ export default function MediaDetailView({ id }: { id: string }) {
 
       <div
         ref={stageRef}
-        className={`media-stage${slideDir ? ` slide-${slideDir}` : ""}`}
-        key={id}
+        className="media-stage"
         onPointerDown={onStagePointerDown}
         onPointerMove={onStagePointerMove}
         onPointerUp={onStagePointerUp}
         onPointerCancel={onStagePointerUp}
-        onAnimationEnd={() => setSlideDir(null)}
       >
-        {url && rec.kind === "photo" && (
-          <img ref={imgRef} className="media-photo" src={url} alt="" draggable={false} />
-        )}
-        {url && rec.kind === "video" && (
-          <video
-            ref={videoRef}
-            src={url}
-            controls
-            playsInline
-            autoPlay
-            preload="auto"
-            poster={poster ?? undefined}
-            onClick={(e) => {
-              // tap anywhere = pause/resume, like a native gallery
-              const v = e.currentTarget;
-              if (v.paused) void v.play().catch(() => {});
-              else v.pause();
-            }}
-          />
-        )}
+        {/* only this inner layer remounts + slides on swipe — the gesture
+            container above stays mounted so taps right after a swipe are
+            never dropped */}
+        <div
+          className={`media-swipe${slideDir ? ` slide-${slideDir}` : ""}`}
+          key={curId}
+          onAnimationEnd={() => setSlideDir(null)}
+        >
+          {url && rec.kind === "photo" && (
+            <img ref={imgRef} className="media-photo" src={url} alt="" draggable={false} />
+          )}
+          {url && rec.kind === "video" && (
+            <video
+              ref={videoRef}
+              src={url}
+              controls
+              playsInline
+              autoPlay
+              preload="auto"
+              poster={poster ?? undefined}
+              onClick={(e) => {
+                // tap anywhere = pause/resume, like a native gallery
+                const v = e.currentTarget;
+                if (v.paused) void v.play().catch(() => {});
+                else v.pause();
+              }}
+            />
+          )}
+        </div>
       </div>
 
       <div className="tag-strip">
@@ -387,7 +407,7 @@ export default function MediaDetailView({ id }: { id: string }) {
         <button
           className="media-action"
           onClick={() =>
-            navigate(rec.kind === "photo" ? `/edit/${id}` : `/video-edit/${id}`)
+            navigate(rec.kind === "photo" ? `/edit/${curId}` : `/video-edit/${curId}`)
           }
         >
           <PencilLine size={20} />

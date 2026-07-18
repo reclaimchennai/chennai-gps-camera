@@ -194,22 +194,29 @@ export default function SettingsView() {
               />
             </Row>
 
-            <div className="cal-block">
+            {/* styled exactly like the other settings rows: bold label,
+                lighter hint at the standard size */}
+            <div className="row" style={{ display: "block" }}>
               <div className="label">
                 Sound meter calibration
                 {settings.dbCalibration !== 0 &&
                   ` (${settings.dbCalibration > 0 ? "+" : ""}${settings.dbCalibration} dB)`}
               </div>
-              <p className="hint cal-para">
+              <div className="hint" style={{ lineHeight: 1.5 }}>
                 Phone microphones are not calibrated instruments, so the
                 meter can drift from reality. To correct it, expose the
                 phone to a sound of a known level — a calibrated 60 dB
                 reference tone, or simply a noise-meter app you trust
                 running next to it. Pick that known level on the wheel
-                below, then tap Match while the sound is playing; the
-                meter computes the exact offset. Current live reading:{" "}
-                <strong>{liveDb != null ? `≈ ${liveDb} dB` : "listening…"}</strong>
-              </p>
+                below, then tap Match while the sound is playing; the meter
+                computes the exact offset.
+              </div>
+              <div className="hint" style={{ marginTop: 6 }}>
+                Current live reading:{" "}
+                <strong style={{ color: "var(--text)" }}>
+                  {liveDb != null ? `≈ ${liveDb} dB` : "listening…"}
+                </strong>
+              </div>
               <div className="cal-controls">
                 <WheelPicker value={calRef} onChange={setCalRef} />
                 <button

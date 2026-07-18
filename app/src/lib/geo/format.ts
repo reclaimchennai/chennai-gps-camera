@@ -42,7 +42,7 @@ export function fmtDateOnly(
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
 }
 
-/** "Wednesday, 08/07/2026 06:47:32 PM GMT +05:30" (§5.3 reference layout).
+/** "Wednesday, 08/07/2026 06:47:32 PM UTC+05:30" (§5.3 reference layout).
  *  The date portion follows the user's date-format setting. Seconds are
  *  included so video watermarks can tick in real time. */
 export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
@@ -59,7 +59,7 @@ export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
   return (
     `${WEEKDAYS[d.getDay()]}, ${fmtDateOnly(ts, format)} ` +
     `${pad(h)}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${ampm} ` +
-    `GMT ${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+    `UTC${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
   );
 }
 

@@ -214,8 +214,8 @@ function buildLines(
     const s = data.dbStats;
     lines.push({
       text: s
-        ? `Sound ≈ ${s.avg} dB avg · min ${s.min} · max ${s.max}`
-        : `Sound ≈ ${Math.round(data.db!)} dB`,
+        ? `Noise: Avg ${s.avg} dB · Min ${s.min} dB · Max ${s.max} dB`
+        : `Noise: ${Math.round(data.db!)} dB`,
       font: small,
       color: theme.dim,
     });
