@@ -2,6 +2,7 @@ package city.reclaimchennai.cam;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
 import android.location.Address;
 import android.location.Geocoder;
 import android.media.MediaScannerConnection;
@@ -10,6 +11,8 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
+
+import androidx.core.content.FileProvider;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -250,6 +253,107 @@ public class NativeBridgePlugin extends Plugin {
                 ps.legacyFile.delete();
             }
         } catch (Exception ignored) {
+        }
+    }
+
+    // ---- streamed native share (Android share sheet) --------------------
+    // A WebView's navigator.share() cannot attach files, so shares fell
+    // back to a silent re-save. This writes the file to the app cache in
+    // chunks (bounded memory) then fires ACTION_SEND via the FileProvider.
+
+    private static class PendingShare {
+        FileOutputStream stream;
+        File file;
+        String mime;
+    }
+
+    private final Map<String, PendingShare> shares = new HashMap<>();
+
+    @PluginMethod
+    public void shareBegin(PluginCall call) {
+        final String filename = call.getString("filename", "gpscam.bin");
+        final String mime = call.getString("mime", "application/octet-stream");
+        JSObject out = new JSObject();
+        try {
+            File dir = new File(getContext().getCacheDir(), "share");
+            if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("mkdir");
+            PendingShare ps = new PendingShare();
+            ps.mime = mime;
+            ps.file = new File(dir, filename);
+            ps.stream = new FileOutputStream(ps.file);
+            String id = UUID.randomUUID().toString();
+            synchronized (shares) {
+                shares.put(id, ps);
+            }
+            out.put("ok", true);
+            out.put("id", id);
+            call.resolve(out);
+        } catch (Exception e) {
+            out.put("ok", false);
+            call.resolve(out);
+        }
+    }
+
+    @PluginMethod
+    public void shareChunk(PluginCall call) {
+        final String id = call.getString("id", "");
+        final String base64 = call.getString("base64", "");
+        JSObject out = new JSObject();
+        PendingShare ps;
+        synchronized (shares) {
+            ps = shares.get(id);
+        }
+        if (ps == null) {
+            out.put("ok", false);
+            call.resolve(out);
+            return;
+        }
+        try {
+            synchronized (ps) {
+                ps.stream.write(Base64.decode(base64, Base64.DEFAULT));
+            }
+            out.put("ok", true);
+            call.resolve(out);
+        } catch (Exception e) {
+            out.put("ok", false);
+            call.resolve(out);
+        }
+    }
+
+    @PluginMethod
+    public void shareEnd(PluginCall call) {
+        final String id = call.getString("id", "");
+        final String text = call.getString("text", "");
+        final Context ctx = getContext();
+        JSObject out = new JSObject();
+        PendingShare ps;
+        synchronized (shares) {
+            ps = shares.remove(id);
+        }
+        if (ps == null) {
+            out.put("ok", false);
+            call.resolve(out);
+            return;
+        }
+        try {
+            ps.stream.close();
+            Uri uri = FileProvider.getUriForFile(
+                ctx, ctx.getPackageName() + ".fileprovider", ps.file);
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType(ps.mime);
+            send.putExtra(Intent.EXTRA_STREAM, uri);
+            if (text != null && !text.isEmpty()) {
+                send.putExtra(Intent.EXTRA_TEXT, text);
+            }
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent chooser = Intent.createChooser(send, "Share");
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(chooser);
+            out.put("ok", true);
+            call.resolve(out);
+        } catch (Exception e) {
+            out.put("ok", false);
+            call.resolve(out);
         }
     }
 }

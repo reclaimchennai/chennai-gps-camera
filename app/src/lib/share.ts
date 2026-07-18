@@ -1,5 +1,5 @@
 /** Share / download helpers for gallery items. */
-import { nativeSaveToGallery } from "./native";
+import { nativeSaveToGallery, nativeShareFile, isNativeApp } from "./native";
 
 function extFor(type: string): string {
   if (type.includes("jpeg")) return "jpg";
@@ -23,6 +23,12 @@ export async function shareBlob(
   filename: string,
   text?: string
 ): Promise<"shared" | "downloaded"> {
+  // APK: the WebView's navigator.share can't attach files, so use the
+  // native ACTION_SEND share sheet (matches the web behaviour of opening
+  // a real share target with the file + caption).
+  if (isNativeApp()) {
+    if (await nativeShareFile(blob, filename, text ?? "")) return "shared";
+  }
   const file = new File([blob], filename, { type: blob.type });
   const nav = navigator as Navigator & {
     canShare?: (d: ShareData) => boolean;

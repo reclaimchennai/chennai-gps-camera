@@ -30,6 +30,12 @@ interface NativeBridgePlugin {
   }): Promise<{ ok: boolean }>;
   saveToGalleryEnd(opts: { id: string }): Promise<{ ok: boolean }>;
   saveToGalleryAbort(opts: { id: string }): Promise<{ ok: boolean }>;
+  shareBegin(opts: {
+    filename: string;
+    mime: string;
+  }): Promise<{ ok: boolean; id?: string }>;
+  shareChunk(opts: { id: string; base64: string }): Promise<{ ok: boolean }>;
+  shareEnd(opts: { id: string; text: string }): Promise<{ ok: boolean }>;
   getAppInfo(): Promise<{
     ok: boolean;
     versionName?: string;
@@ -107,6 +113,37 @@ function blobChunkToBase64(chunk: Blob): Promise<string> {
     fr.onerror = () => rej(new Error("read failed"));
     fr.readAsDataURL(chunk);
   });
+}
+
+/** Share a file through the Android share sheet (ACTION_SEND), streamed
+ *  in chunks. Returns false in the browser — callers fall back to the
+ *  Web Share API / download. */
+export async function nativeShareFile(
+  blob: Blob,
+  filename: string,
+  text: string
+): Promise<boolean> {
+  const b = bridge();
+  if (!b) return false;
+  let id: string | undefined;
+  try {
+    const begin = await b.shareBegin({
+      filename,
+      mime: blob.type || "application/octet-stream",
+    });
+    if (!begin.ok || !begin.id) return false;
+    id = begin.id;
+    for (let off = 0; off < blob.size; off += SAVE_CHUNK_BYTES) {
+      const base64 = await blobChunkToBase64(
+        blob.slice(off, off + SAVE_CHUNK_BYTES)
+      );
+      const r = await b.shareChunk({ id, base64 });
+      if (!r.ok) throw new Error("chunk failed");
+    }
+    return (await b.shareEnd({ id, text })).ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Save a captured file into the device gallery (MediaStore), streamed
