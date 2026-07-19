@@ -100,6 +100,9 @@ export default function VideoEditorView({ id }: { id: string }) {
   const [rec, setRec] = useState<VideoRecord | null>(null);
   const [srcUrl, setSrcUrl] = useState<string | null>(null);
   const [srcBlob, setSrcBlob] = useState<Blob | null>(null);
+  // cover frame (same thumbnail the gallery shows) painted while the video
+  // decodes, instead of the browser's blank play-button placeholder
+  const [posterUrl, setPosterUrl] = useState<string | null>(null);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [fit, setFit] = useState(1);
   const [duration, setDuration] = useState(0);
@@ -196,6 +199,7 @@ export default function VideoEditorView({ id }: { id: string }) {
   // ---- load --------------------------------------------------------------
   useEffect(() => {
     let url: string | null = null;
+    let posterObjUrl: string | null = null;
     void (async () => {
       const r = await getMedia(id);
       if (!r || r.kind !== "video") {
@@ -207,6 +211,13 @@ export default function VideoEditorView({ id }: { id: string }) {
       // recordings) → pre-arm auto face blur; blurBurned files are
       // already blurred on disk, nothing to arm
       if (r.liveBlur && !r.blurBurned) setAutoBlur(true);
+      // the video's cover thumbnail (already decoded for the gallery) as a
+      // poster — shows a real frame instead of the grey splash while loading
+      const thumb = await getBlob(id, "thumb");
+      if (thumb) {
+        posterObjUrl = URL.createObjectURL(thumb);
+        setPosterUrl(posterObjUrl);
+      }
       const blob = await getBlob(id, "source");
       if (!blob) return;
       setSrcBlob(blob);
@@ -215,6 +226,7 @@ export default function VideoEditorView({ id }: { id: string }) {
     })();
     return () => {
       if (url) URL.revokeObjectURL(url);
+      if (posterObjUrl) URL.revokeObjectURL(posterObjUrl);
     };
   }, [id]);
 
@@ -821,7 +833,9 @@ export default function VideoEditorView({ id }: { id: string }) {
             <video
               ref={videoRef}
               src={srcUrl}
+              poster={posterUrl ?? undefined}
               playsInline
+              preload="auto"
               onLoadedMetadata={onMeta}
               onEnded={() => setPlaying(false)}
               style={{ width: "100%", height: "100%", display: "block" }}

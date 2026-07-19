@@ -205,6 +205,104 @@ function hasAbsoluteBaseOffsets(buf: Uint8Array): boolean {
   return false;
 }
 
+/** Iterate the immediate child boxes in [start, end), calling cb with the
+ *  box type and its start/content/end offsets. Content start is after the
+ *  8-byte header (these full boxes never use the 64-bit size form). */
+function eachChildBox(
+  buf: Uint8Array,
+  dv: DataView,
+  start: number,
+  end: number,
+  cb: (type: string, boxStart: number, contentStart: number, boxEnd: number) => void
+): void {
+  let off = start;
+  while (off + 8 <= end) {
+    let size = readU32(buf, off);
+    const type = String.fromCharCode(buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]);
+    let header = 8;
+    if (size === 1) {
+      size = Number(dv.getBigUint64(off + 8));
+      header = 16;
+    } else if (size === 0) {
+      size = end - off;
+    }
+    if (size < header || off + size > end) return;
+    cb(type, off, off + 8, off + size);
+    off += size;
+  }
+}
+
+/**
+ * MediaRecorder's fragmented MP4 leaves the moov track durations at 0 — the
+ * real timing lives in the fragments — so phone galleries and pickers that
+ * read only the moov show a bogus (short) length. Patch the measured total
+ * into mvhd/tkhd (movie timescale) and each mdhd (its own media timescale),
+ * IN PLACE: these are fixed-size fields, so nothing shifts and the mfra
+ * seek index stays valid. Any structural surprise → return the blob as-is.
+ */
+export async function patchMp4Duration(blob: Blob, durationMs: number): Promise<Blob> {
+  try {
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const durSec = durationMs / 1000;
+
+    let moov: { s: number; cs: number; e: number } | null = null;
+    eachChildBox(buf, dv, 0, buf.length, (type, s, cs, e) => {
+      if (type === "moov") moov = { s, cs, e };
+    });
+    if (!moov) return blob;
+    const { cs: moovContent, e: moovEnd } = moov;
+
+    // movie timescale from mvhd (needed for mvhd + every tkhd duration)
+    let movieTs = 0;
+    eachChildBox(buf, dv, moovContent, moovEnd, (type, _s, cs) => {
+      if (type === "mvhd") {
+        const v = buf[cs];
+        movieTs = v === 1 ? dv.getUint32(cs + 20) : dv.getUint32(cs + 12);
+      }
+    });
+    if (!movieTs) return blob;
+
+    // mvhd/mdhd share a layout: duration at cs+16 (v0, u32) or cs+24 (v1, u64)
+    const writeMvhdLike = (cs: number, ts: number) => {
+      if (!ts) return;
+      const val = Math.round(durSec * ts);
+      if (buf[cs] === 1) dv.setBigUint64(cs + 24, BigInt(val));
+      else dv.setUint32(cs + 16, val >>> 0);
+    };
+    // tkhd: duration at cs+20 (v0, u32) or cs+28 (v1, u64), movie timescale
+    const writeTkhd = (cs: number) => {
+      const val = Math.round(durSec * movieTs);
+      if (buf[cs] === 1) dv.setBigUint64(cs + 28, BigInt(val));
+      else dv.setUint32(cs + 20, val >>> 0);
+    };
+
+    eachChildBox(buf, dv, moovContent, moovEnd, (type, s, cs, e) => {
+      if (type === "mvhd") {
+        writeMvhdLike(cs, movieTs);
+      } else if (type === "trak") {
+        eachChildBox(buf, dv, s + 8, e, (t2, s2, cs2, e2) => {
+          if (t2 === "tkhd") {
+            writeTkhd(cs2);
+          } else if (t2 === "mdia") {
+            eachChildBox(buf, dv, s2 + 8, e2, (t3, _s3, cs3) => {
+              if (t3 === "mdhd") {
+                const v = buf[cs3];
+                const mediaTs = v === 1 ? dv.getUint32(cs3 + 20) : dv.getUint32(cs3 + 12);
+                writeMvhdLike(cs3, mediaTs);
+              }
+            });
+          }
+        });
+      }
+    });
+
+    return new Blob([buf], { type: blob.type });
+  } catch {
+    return blob;
+  }
+}
+
 /** All post-recording container fixes in one place. */
 export async function finalizeVideoBlob(
   blob: Blob,
@@ -212,7 +310,10 @@ export async function finalizeVideoBlob(
   fix: Fix | null
 ): Promise<Blob> {
   if (blob.type.includes("mp4")) {
-    return fix ? injectMp4Location(blob, fix.lat, fix.lng) : blob;
+    let out = blob;
+    if (durationMs > 0) out = await patchMp4Duration(out, durationMs);
+    if (fix) out = await injectMp4Location(out, fix.lat, fix.lng);
+    return out;
   }
   if (blob.type.includes("webm") && durationMs > 0) {
     try {

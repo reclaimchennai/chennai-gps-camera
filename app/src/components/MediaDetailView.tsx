@@ -512,11 +512,19 @@ export default function MediaDetailView({ id }: { id: string }) {
   };
 
   const addTag = async () => {
-    const t = tagDraft?.trim().toLowerCase();
+    const raw = tagDraft ?? "";
     setTagDraft(null);
-    if (!t) return;
-    const tags = rec.tags ?? [];
-    if (!tags.includes(t)) await saveTags([...tags, t]);
+    // one tag per comma-separated token: "food, pani puri, street vendor"
+    // becomes three separate tags
+    const parts = raw
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean);
+    if (!parts.length) return;
+    const existing = rec.tags ?? [];
+    const merged = [...existing];
+    for (const p of parts) if (!merged.includes(p)) merged.push(p);
+    if (merged.length !== existing.length) await saveTags(merged);
   };
 
   const j = rec.data.jurisdiction;
@@ -643,7 +651,7 @@ export default function MediaDetailView({ id }: { id: string }) {
             <input
               className="tag-input"
               autoFocus
-              placeholder="tag name"
+              placeholder="e.g. food, pani puri, street vendor"
               value={tagDraft}
               onChange={(e) => setTagDraft(e.target.value)}
               onBlur={() => void addTag()}

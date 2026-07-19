@@ -30,8 +30,9 @@ let timer: number | null = null;
 let smoothed: number | null = null;
 let starting = false;
 let generation = 0;
-// session statistics — reset only when the app reloads, not on meter
-// restarts, so "average since the app opened" stays true across screens
+// per-session statistics — reset every time the meter fully stops (leaving
+// the camera for the gallery, backgrounding, close/reopen), so avg/min/max
+// always reflect the CURRENT active camera session, not the whole app run
 let statSum = 0;
 let statCount = 0;
 let statMin = Infinity;
@@ -192,6 +193,12 @@ export function startMeter(cameraStream?: MediaStream | null): void {
 export function stopMeter(): void {
   generation++;
   teardownGraph();
+  // clear the session stats so the next active session starts fresh
+  statSum = 0;
+  statCount = 0;
+  statMin = Infinity;
+  statMax = -Infinity;
+  useLiveStore.getState().setDbStats(null);
 }
 
 /** Compute an approximate dB value from an existing AnalyserNode — used
