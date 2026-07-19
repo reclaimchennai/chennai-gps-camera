@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="index,follow" />
+    <title>Privacy Policy — Chennai GPS Camera</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 2rem 1.15rem 5rem;
+        font: 16px/1.65 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+        max-width: 760px; margin-inline: auto;
+        background: #ffffff; color: #16181c;
+      }
+      h1 { font-size: 1.7rem; line-height: 1.25; margin: 0 0 .25rem; }
+      h2 { font-size: 1.18rem; margin: 2.1rem 0 .6rem; }
+      .sub { color: #6b7280; margin: 0 0 1.5rem; font-size: .95rem; }
+      a { color: #1d63d8; }
+      ul { padding-left: 1.2rem; }
+      li { margin: .3rem 0; }
+      .card {
+        border: 1px solid #e5e7eb; border-radius: 14px;
+        padding: 1rem 1.2rem; margin: 1.2rem 0; background: #f9fafb;
+      }
+      code { font-size: .9em; }
+      footer { margin-top: 3rem; font-size: .85rem; color: #6b7280; }
+      /* Dark overrides come LAST so they win the same-specificity tie —
+         otherwise the light .card background beat the dark one and its
+         light text became invisible on a light card. */
+      @media (prefers-color-scheme: dark) {
+        body { background: #0d0f12; color: #e6e8ea; }
+        a { color: #7db4ff; }
+        .sub, footer { color: #9aa4b2; }
+        .card { background: #16191e; border-color: #262b33; color: #e6e8ea; }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Privacy Policy</h1>
+    <p class="sub">Chennai GPS Camera (<code>city.reclaimchennai.cam</code>) · Last updated 19 July 2026</p>
+
+    <p>
+      Chennai GPS Camera is a privacy-first GPS/location-stamp camera. It is
+      built so that your photos, videos, and location <strong>stay on your
+      device</strong>. We do not run accounts, we do not have a server that
+      receives your media, and we do not use analytics, advertising, or
+      tracking of any kind.
+    </p>
+
+    <div class="card">
+      <strong>The short version:</strong> Everything the app produces —
+      photos, videos, and the location watermark — is created and stored
+      locally on your phone. Nothing is uploaded to us. The only times any
+      data leaves your device are the clearly-listed, on-demand cases below.
+    </div>
+
+    <h2>What the app accesses, and why</h2>
+    <ul>
+      <li>
+        <strong>Camera</strong> — to show the viewfinder and take photos and
+        videos. Images are processed on-device and saved to your phone.
+      </li>
+      <li>
+        <strong>Microphone</strong> — to record audio for videos and to show
+        the live sound-level (dB) reading on the watermark. Audio is processed
+        on-device; the meter reading is a number, not a recording.
+      </li>
+      <li>
+        <strong>Location (GPS)</strong> — to stamp coordinates, address,
+        DIGIPIN, and jurisdiction (ward / zone / police limits) onto your
+        photos and videos. Jurisdiction is resolved using map data that ships
+        <em>inside</em> the app, fully offline.
+      </li>
+      <li>
+        <strong>Photos / storage</strong> — to save your captures to your
+        device gallery (on Android 9 and below this uses a storage permission;
+        newer versions save via the system media store).
+      </li>
+    </ul>
+
+    <h2>When data leaves your device</h2>
+    <p>
+      By default the app works offline. Data is sent off your device only in
+      these specific, functional cases:
+    </p>
+    <ul>
+      <li>
+        <strong>Address lookup (reverse geocoding).</strong> To turn your
+        coordinates into a street address for the watermark, the app may send
+        those coordinates to a mapping service: OpenStreetMap Nominatim by
+        default, or Google / MapmyIndia (Mappls) if you supply your own API
+        key in Settings. Only the coordinates are sent — no photo, no
+        identity. This happens only when you are online and address lookup is
+        enabled. It is not used to identify you and the request is not stored
+        by us.
+      </li>
+      <li>
+        <strong>Optional online mini-map.</strong> If you enable the Google
+        static-map upgrade and provide a Google API key, coordinates are sent
+        to Google to fetch a map thumbnail.
+      </li>
+      <li>
+        <strong>Sending us a bug report.</strong> If you use “Report an issue,”
+        the message you type — and the annotated screenshot you choose to
+        attach — is sent to the developers over Telegram so we can help. This
+        is entirely initiated by you, and only includes what you put in the
+        report.
+      </li>
+    </ul>
+    <p>
+      The app also downloads its own offline map/data packs from its website
+      (<code>cam.reclaimchennai.city</code>). These are anonymous static-file
+      requests and contain none of your data.
+    </p>
+
+    <h2>What we collect</h2>
+    <p>
+      <strong>Nothing.</strong> We operate no backend that receives your
+      photos, videos, location history, or usage. There are no user accounts,
+      no advertising IDs, and no third-party analytics SDKs in the app.
+    </p>
+
+    <h2>Data retention &amp; deletion</h2>
+    <p>
+      Your captures live in your device’s gallery and in the app’s local
+      storage. You control them: delete them from the in-app gallery or your
+      phone’s gallery, or clear the app’s storage / uninstall the app to
+      remove everything. Because we hold none of your data, there is nothing
+      for us to delete on a server.
+    </p>
+
+    <h2>Children</h2>
+    <p>
+      The app is a general-purpose utility and is not directed at children. It
+      collects no personal data and has no accounts.
+    </p>
+
+    <h2>Third-party services</h2>
+    <p>
+      When you use the optional online features above, your request is subject
+      to that provider’s privacy policy: OpenStreetMap Foundation, Google, or
+      MapmyIndia (Mappls) for geocoding/maps, and Telegram for bug reports you
+      choose to send.
+    </p>
+
+    <h2>Changes</h2>
+    <p>
+      If this policy changes, the “Last updated” date above will change and the
+      new version will be posted at this URL.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+      Reclaim Chennai · <a href="mailto:contact@reclaimchennai.city">contact@reclaimchennai.city</a><br />
+      <a href="https://reclaimchennai.city" rel="noopener">reclaimchennai.city</a>
+    </p>
+
+    <footer>
+      Chennai GPS Camera is part of the Reclaim Chennai civic-tech family. This
+      policy applies to the Android app and the web app at
+      cam.reclaimchennai.city.
+    </footer>
+  </body>
+</html>

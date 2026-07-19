@@ -272,8 +272,8 @@ function buildLines(
     });
   }
 
-  // social handles render as a separate vertical logo strip on the
-  // photo's right edge (socialStrip.ts), not as card text lines
+  // social handles render as separate vertical logo towers up the photo's
+  // right edge (socialStrip.ts), side by side, not as card text lines
 
   return lines;
 }

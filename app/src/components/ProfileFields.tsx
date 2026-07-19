@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Plus, X, ChevronDown, Globe } from "lucide-react";
+import { siReddit } from "simple-icons";
 
 /** Brand glyphs (lucide dropped its brand icons) — classic outline paths
  *  drawn in the same 24×24 stroke style so they sit next to lucide. */
@@ -53,16 +54,12 @@ const Linkedin = ({ size = 15 }: { size?: number }) => (
   </Brand>
 );
 
+/** Official Reddit "Snoo" mark (simple-icons path), drawn filled so it
+ *  reads correctly rather than the old hand-rolled outline. */
 const Reddit = ({ size = 15 }: { size?: number }) => (
-  <Brand size={size}>
-    <circle cx="12" cy="13" r="9" />
-    <circle cx="8.5" cy="13" r="1.2" fill="currentColor" stroke="none" />
-    <circle cx="15.5" cy="13" r="1.2" fill="currentColor" stroke="none" />
-    <path d="M9 16.5c.9.6 2 .9 3 .9s2.1-.3 3-.9" />
-    <circle cx="18.5" cy="8" r="1.6" />
-    <path d="M15.5 5.2 17 3l1.5 1.4" />
-    <path d="M12 4V3" />
-  </Brand>
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+    <path d={siReddit.path} />
+  </svg>
 );
 import { Toggle } from "./ui";
 import { useSettingsStore } from "../store";
@@ -198,6 +195,47 @@ export default function ProfileFields() {
     });
   };
 
+  // Focus a freshly-split handle input on the render after it appears.
+  const inputRefs = useRef(new Map<string, HTMLInputElement>());
+  const focusIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = focusIdRef.current;
+    if (id) {
+      inputRefs.current.get(id)?.focus();
+      focusIdRef.current = null;
+    }
+  });
+
+  // Typing (or pasting) commas splits the value into separate handles of
+  // the same platform — one tag per comma-separated token. The text after
+  // the final comma stays in a new field so the user can keep typing.
+  const onHandleInput = (h: SocialHandle, raw: string) => {
+    if (!raw.includes(",")) {
+      setHandle(h.id, { handle: raw });
+      return;
+    }
+    const parts = raw.split(",");
+    const tail = (parts.pop() ?? "").replace(/^@/, "").trimStart();
+    const done = parts.map((p) => p.replace(/^@/, "").trim()).filter(Boolean);
+    if (!done.length) {
+      setHandle(h.id, { handle: raw.replace(/,/g, "") });
+      return;
+    }
+    const extras: SocialHandle[] = [...done.slice(1), tail].map((handle) => ({
+      id: newId(),
+      platform: h.platform,
+      handle,
+      show: true,
+    }));
+    focusIdRef.current = extras[extras.length - 1]?.id ?? null;
+    setProfile({
+      ...profile,
+      handles: profile.handles.flatMap((x) =>
+        x.id === h.id ? [{ ...x, handle: done[0] }, ...extras] : [x]
+      ),
+    });
+  };
+
   return (
     <div className="profile-fields">
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
@@ -243,10 +281,18 @@ export default function ProfileFields() {
             onChange={(p) => setHandle(h.id, { platform: p })}
           />
           <input
+            ref={(el) => {
+              if (el) inputRefs.current.set(h.id, el);
+              else inputRefs.current.delete(h.id);
+            }}
             style={{ flex: 1 }}
-            placeholder="handle"
+            placeholder="handle (comma-separate for more)"
             value={h.handle}
-            onChange={(e) => setHandle(h.id, { handle: e.target.value })}
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => onHandleInput(h, e.target.value)}
           />
           <Toggle on={h.show} onChange={(v) => setHandle(h.id, { show: v })} />
           <button

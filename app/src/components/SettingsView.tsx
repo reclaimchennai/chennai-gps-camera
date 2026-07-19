@@ -169,14 +169,13 @@ export default function SettingsView() {
               label={
                 <>
                   Live face blur{" "}
-                  {Date.now() < NEW_GIF_UNTIL ? (
+                  <span className="exp-chip">Experimental</span>
+                  {Date.now() < NEW_GIF_UNTIL && (
                     <img
                       src="/new.gif"
                       alt="New"
                       style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
                     />
-                  ) : (
-                    <span className="exp-chip">Experimental</span>
                   )}
                 </>
               }
@@ -302,7 +301,10 @@ export default function SettingsView() {
             label="Android app (APK)"
             hint="Native Android build — English addresses from the phone's own geocoder, saves straight to the gallery"
             onClick={() => {
-              window.location.href = "/download/chennai-gps-camera.apk";
+              // always the newest release asset, straight from GitHub —
+              // avoids the Cloudflare-cached copy of the self-hosted file
+              window.location.href =
+                "https://github.com/reclaimchennai/chennai-gps-camera/releases/latest/download/app-release.apk";
             }}
           />
         )}
@@ -315,6 +317,17 @@ export default function SettingsView() {
           label="About, data & accuracy"
           hint="Boundary data caveats, licences"
           onClick={() => navigate("/about")}
+        />
+        <Row
+          label="Privacy policy"
+          hint="What stays on your device, and the few things that don't"
+          onClick={() => {
+            window.open(
+              "https://cam.reclaimchennai.city/privacy.html",
+              "_blank",
+              "noopener,noreferrer"
+            );
+          }}
         />
       </div>
     </Screen>

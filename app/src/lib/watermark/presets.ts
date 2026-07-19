@@ -25,7 +25,7 @@ export const ALL_FIELDS: WatermarkFields = {
 export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
   preset: "detailed",
   fields: { ...ALL_FIELDS },
-  fontScale: 1,
+  fontScale: 0.8, // smallest by default — users can size it up in the editor
   opacity: 0.55,
   theme: "dark",
   customLabelText: "",
