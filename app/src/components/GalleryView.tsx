@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Play, RefreshCw, Search, X, MapPin } from "lucide-react";
+import { Play, RefreshCw, Search, X, MapPin, Layers } from "lucide-react";
 import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
 import type { MediaRecord } from "../types";
@@ -46,6 +46,7 @@ function haystack(rec: MediaRecord): string {
     j?.loStation,
     j?.trafficStation,
     ...(rec.tags ?? []),
+    ...(rec.kind === "photo" ? (rec.plates ?? []) : []),
     new Date(rec.createdAt).toDateString(),
   ]
     .filter(Boolean)
@@ -108,10 +109,35 @@ export default function GalleryView() {
     return [...tags].sort();
   }, [cells]);
 
+  // frame photos grabbed from a video group under it (folder-in-folder);
+  // count per video drives the stack badge on its cell
+  const frameCounts = useMemo(() => {
+    const videoIds = new Set(
+      (cells ?? []).filter((c) => c.rec.kind === "video").map((c) => c.rec.id)
+    );
+    const counts = new Map<string, number>();
+    for (const { rec } of cells ?? []) {
+      if (rec.kind === "photo" && rec.sourceVideoId && videoIds.has(rec.sourceVideoId)) {
+        counts.set(rec.sourceVideoId, (counts.get(rec.sourceVideoId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [cells]);
+
   const visible = useMemo(() => {
     if (!cells) return null;
     const q = query.trim().toLowerCase();
     return cells.filter(({ rec }) => {
+      // frames live inside their video's group, not the main grid — but a
+      // search can still surface them directly (e.g. by plate number)
+      if (
+        !q &&
+        rec.kind === "photo" &&
+        rec.sourceVideoId &&
+        frameCounts.has(rec.sourceVideoId)
+      ) {
+        return false;
+      }
       if (chip === "photos" && rec.kind !== "photo") return false;
       if (chip === "videos" && rec.kind !== "video") return false;
       if (chip.startsWith("tag:") && !(rec.tags ?? []).includes(chip.slice(4)))
@@ -119,7 +145,7 @@ export default function GalleryView() {
       if (q && !haystack(rec).includes(q)) return false;
       return true;
     });
-  }, [cells, query, chip]);
+  }, [cells, query, chip, frameCounts]);
 
   const fmtDur = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
@@ -199,7 +225,13 @@ export default function GalleryView() {
             <button
               key={rec.id}
               className={`gallery-cell${flashIds.has(rec.id) ? " updated" : ""}`}
-              onClick={() => navigate(`/media/${rec.id}`)}
+              onClick={() =>
+                navigate(
+                  rec.kind === "video" && frameCounts.has(rec.id)
+                    ? `/gallery/group/${rec.id}`
+                    : `/media/${rec.id}`
+                )
+              }
             >
               {url ? (
                 <img src={url} alt="" loading="lazy" />
@@ -217,6 +249,12 @@ export default function GalleryView() {
               {rec.kind === "video" && (
                 <span className="badge">
                   <Play size={9} /> {fmtDur(rec.duration)}
+                  {frameCounts.has(rec.id) && (
+                    <>
+                      {" · "}
+                      <Layers size={9} /> {(frameCounts.get(rec.id) ?? 0) + 1}
+                    </>
+                  )}
                 </span>
               )}
               {rec.kind === "photo" && rec.backfill === "pending" && (

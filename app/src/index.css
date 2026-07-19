@@ -716,6 +716,25 @@ textarea {
   font-size: 13px;
 }
 
+/* licence-plate OCR results: same chip anatomy, amber accent so a
+   machine-read value never masquerades as a user tag */
+.plate-chip {
+  border-color: rgba(217, 119, 6, 0.55);
+  color: #d97706;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
+
+/* frame-grab feedback: quick shutter-style pulse on the transport button */
+@keyframes frame-grab-pulse {
+  0% { transform: scale(1); }
+  35% { transform: scale(0.72); }
+  100% { transform: scale(1); }
+}
+.vt-btn.frame-grabbed {
+  animation: frame-grab-pulse 0.35s ease;
+}
+
 .tag-input {
   width: 120px;
   padding: 5px 10px;

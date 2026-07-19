@@ -289,18 +289,17 @@ export function positionIsTop(p: WatermarkConfig["position"]): boolean {
 }
 
 /** Horizontal anchor: corners pin to their side; the centre values centre
- *  a narrower-than-canvas card (landscape) and left-align a full-width or
- *  portrait card, matching the app's historical look. */
+ *  the shrink-wrapped card in BOTH orientations — as content grows the
+ *  card fills toward both sides evenly, like the old full-width look. */
 function panelXFor(
   p: WatermarkConfig["position"],
   width: number,
   panelW: number,
-  margin: number,
-  landscape: boolean
+  margin: number
 ): number {
   if (p.endsWith("left")) return margin;
   if (p.endsWith("right")) return width - margin - panelW;
-  return landscape ? Math.round((width - panelW) / 2) : margin;
+  return Math.max(margin, Math.round((width - panelW) / 2));
 }
 
 export function renderWatermark(
@@ -387,7 +386,7 @@ export function renderWatermark(
   // Branding-free card: no app badge, just the clean address panel.
   const contentH = Math.max(textH, mapSize);
   const panelH = pad * 2 + contentH;
-  const panelX = panelXFor(config.position, width, fitW, margin, landscape);
+  const panelX = panelXFor(config.position, width, fitW, margin);
   const panelY = positionIsTop(config.position)
     ? margin
     : height - margin - panelH;
@@ -482,7 +481,7 @@ function renderMinimal(
     rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes));
   }
   if (config.fields.soundLevel && data.db != null) {
-    rows.push(`Sound ≈ ${Math.round(data.db)} dB`);
+    rows.push(`Noise ≈ ${Math.round(data.db)} dB`);
   }
   const j = data.jurisdiction;
   if (
@@ -503,9 +502,8 @@ function renderMinimal(
   const lineH = Math.round(bodyPx * 1.35);
   const panelW = w + pad * 2;
   const panelH = rows.length * lineH + pad * 2 - (lineH - bodyPx);
-  // the minimal chip is small enough for corners to be meaningful in any
-  // orientation — honour left/right; centre keeps the legacy left-align
-  const x = panelXFor(config.position, width, panelW, margin, false);
+  // the minimal chip honours corners in any orientation; centre centres
+  const x = panelXFor(config.position, width, panelW, margin);
   const y = positionIsTop(config.position)
     ? margin
     : height - margin - panelH;

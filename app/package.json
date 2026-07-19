@@ -36,6 +36,7 @@
     "react-dom": "^19.2.7",
     "react-konva": "^19.2.5",
     "simple-icons": "^16.25.0",
+    "tesseract.js": "^7.0.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

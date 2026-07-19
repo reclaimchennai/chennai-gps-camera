@@ -52,7 +52,7 @@ export const FIELD_META: FieldMeta[] = [
   { key: "trafficStation", label: "Traffic police station" },
   { key: "miniMap", label: "Mini-map" },
   { key: "compass", label: "Compass bearing" },
-  { key: "soundLevel", label: "Sound level (dB)", hint: "Approximate — phone mics are uncalibrated" },
+  { key: "soundLevel", label: "Noise level (dB)", hint: "Approximate — phone mics are uncalibrated" },
   { key: "profilePhoto", label: "Profile photo" },
   { key: "socialHandles", label: "Social handles" },
   { key: "customLabel", label: "Custom label" },

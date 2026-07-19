@@ -54,6 +54,7 @@ export default defineConfig({
           "download/**",
           "og-card.png",
           "privacy.html",
+          "ocr/**", // tesseract worker/core/lang — fetched on first OCR use
         ],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",

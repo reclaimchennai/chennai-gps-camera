@@ -130,6 +130,12 @@ export interface PhotoRecord {
   download?: "queued" | "done";
   annotatedFrom?: string; // id of source photo if this is a flattened copy
   tags?: string[]; // user-assigned, searchable in the gallery
+  /** EXPERIMENTAL on-device licence-plate OCR results. undefined = not
+   *  scanned; [] = scanned, none found. */
+  plates?: string[];
+  /** set when this photo is a frame grabbed from a recorded video —
+   *  groups it under that video in the gallery */
+  sourceVideoId?: string;
 }
 
 export interface VideoRecord {
@@ -169,6 +175,8 @@ export type DateFormat = "DD/MM/YYYY" | "D MMMM YYYY" | "D MMM YYYY";
 
 export interface AppSettings {
   gridLines: boolean;
+  /** EXPERIMENTAL: on-device licence-plate OCR on captured photos */
+  plateOcr: boolean;
   mirrorFrontPhoto: boolean;
   /** Auto-download each captured photo to the device (Downloads folder
    *  on the web build; gallery apps index it). */

@@ -13,13 +13,28 @@ import {
   Volume2,
   VolumeX,
   Maximize,
+  Camera,
+  Car,
 } from "lucide-react";
-import { getMedia, getBlob, deleteMedia, putMedia, listMedia } from "../lib/db";
-import type { MediaRecord } from "../types";
+import {
+  getMedia,
+  getBlob,
+  deleteMedia,
+  putMedia,
+  putBlob,
+  listMedia,
+  newId,
+} from "../lib/db";
+import type { MediaRecord, PhotoRecord } from "../types";
 import { navigate, goBack } from "../nav";
 import { shareBlob, downloadBlob, suggestedName } from "../lib/share";
 import { isNativeApp } from "../lib/native";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../lib/geo/format";
+import { canvasToBlob, makeThumbnail } from "../lib/img";
+import { writeExif } from "../lib/exif";
+import { scheduleDownloads } from "../lib/downloadQueue";
+import { queuePlateScan } from "../lib/detect/plateQueue";
+import { useSettingsStore } from "../store";
 
 export default function MediaDetailView({ id }: { id: string }) {
   // The currently-shown item is tracked internally so swiping between
@@ -452,6 +467,50 @@ export default function MediaDetailView({ id }: { id: string }) {
     [neighbours, rec?.kind, commit, clampZoom, applyZoom]
   );
 
+  // ---- video frame grab (camera button in the transport bar) ----------
+  // Snapshots the CURRENT frame at the video's native resolution — the
+  // stored orientation, regardless of how the phone is held or whether
+  // the player is fullscreen — and saves it as a photo grouped under this
+  // video. The card is already burned into the frame; plate OCR queues in
+  // the background so scrubbing + grabbing stays instant.
+  // (Hooks live ABOVE the null-guard — see React error #310.)
+  const [frameFx, setFrameFx] = useState(0);
+  const grabVideoFrame = useCallback(async () => {
+    const v = videoRef.current;
+    const r = rec;
+    if (!r || r.kind !== "video" || !v || !v.videoWidth) return;
+    setFrameFx((k) => k + 1);
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    const cx = c.getContext("2d");
+    if (!cx) return;
+    cx.drawImage(v, 0, 0);
+    const jpeg = await canvasToBlob(c, "image/jpeg", 0.95);
+    const withExif = await writeExif(jpeg, r.data);
+    const thumb = await makeThumbnail(c, c.width, c.height);
+    const { settings } = useSettingsStore.getState();
+    const frameRec: PhotoRecord = {
+      id: newId(),
+      kind: "photo",
+      createdAt: Date.now(),
+      width: c.width,
+      height: c.height,
+      data: r.data,
+      config: r.config,
+      backfill: "not-needed",
+      hasRaw: false,
+      sourceVideoId: r.id,
+      download:
+        settings.autoSaveToDevice || isNativeApp() ? "queued" : undefined,
+    };
+    await putBlob(frameRec.id, "final", withExif);
+    await putBlob(frameRec.id, "thumb", thumb);
+    await putMedia(frameRec);
+    scheduleDownloads();
+    queuePlateScan(frameRec.id);
+  }, [rec]);
+
   if (!rec) return null;
 
   const onShare = async () => {
@@ -479,6 +538,11 @@ export default function MediaDetailView({ id }: { id: string }) {
       lines.push(parts.filter(Boolean).join(" · "));
       if (jd.loStation) lines.push(`Police (L&O): ${jd.loStation}`);
       if (jd.trafficStation) lines.push(`Traffic: ${jd.trafficStation}`);
+    }
+    if (rec.kind === "photo" && rec.plates?.length) {
+      lines.push(
+        `Licence plate${rec.plates.length > 1 ? "s" : ""} (OCR, verify): ${rec.plates.join(", ")}`
+      );
     }
     if (d.fix) {
       lines.push(
@@ -611,6 +675,14 @@ export default function MediaDetailView({ id }: { id: string }) {
           >
             {vp.muted ? <VolumeX size={19} /> : <Volume2 size={19} />}
           </button>
+          <button
+            key={frameFx}
+            className={`vt-btn${frameFx ? " frame-grabbed" : ""}`}
+            onClick={() => void grabVideoFrame()}
+            aria-label="Save this frame as a photo"
+          >
+            <Camera size={19} />
+          </button>
           <button className="vt-btn" onClick={toggleFullscreen} aria-label="Fullscreen">
             <Maximize size={18} />
           </button>
@@ -635,6 +707,30 @@ export default function MediaDetailView({ id }: { id: string }) {
 
       {/* slim floating action pill + a compact tags row, raised on tap */}
       <div className={`viewer-bottom${chrome ? " show" : ""}`}>
+        {rec.kind === "photo" && (rec.plates?.length ?? 0) > 0 && (
+          <div className="viewer-tags">
+            {rec.plates!.map((p) => (
+              <span key={p} className="tag-chip plate-chip" title="Read by on-device OCR — verify before reporting">
+                <Car size={12} /> {p}
+                <button
+                  aria-label={`Remove plate ${p}`}
+                  onClick={() =>
+                    void (async () => {
+                      const updated = {
+                        ...rec,
+                        plates: rec.plates!.filter((x) => x !== p),
+                      };
+                      setRec(updated);
+                      await putMedia(updated);
+                    })()
+                  }
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="viewer-tags">
           {(rec.tags ?? []).map((t) => (
             <span key={t} className="tag-chip">

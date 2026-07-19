@@ -187,11 +187,26 @@ export default function SettingsView() {
               />
             </Row>
 
+            <Row
+              label={
+                <>
+                  Licence plate reader{" "}
+                  <span className="exp-chip">Experimental</span>
+                </>
+              }
+              hint="Reads vehicle number plates from photos, fully on-device, in the background — never slows the shutter. Found plates show on the photo and ride along when you share it. Best-effort: verify before reporting."
+            >
+              <Toggle
+                on={settings.plateOcr}
+                onChange={(v) => setSettings({ plateOcr: v })}
+              />
+            </Row>
+
             {/* styled exactly like the other settings rows: bold label,
                 lighter hint at the standard size */}
             <div className="row" style={{ display: "block" }}>
               <div className="label">
-                Sound meter calibration
+                Noise meter calibration
                 {settings.dbCalibration !== 0 &&
                   ` (${settings.dbCalibration > 0 ? "+" : ""}${settings.dbCalibration} dB)`}
               </div>

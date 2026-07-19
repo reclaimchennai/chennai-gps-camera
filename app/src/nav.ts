@@ -8,6 +8,7 @@ export interface Route {
   name:
     | "camera"
     | "gallery"
+    | "group"
     | "media"
     | "edit"
     | "video-edit"
@@ -22,6 +23,9 @@ function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   switch (parts[0]) {
     case "gallery":
+      // folder-in-folder: a video's grabbed frames live in a sub-view
+      if (parts[1] === "group" && parts[2])
+        return { name: "group", id: parts[2] };
       return { name: "gallery" };
     case "media":
       return { name: "media", id: parts[1] };

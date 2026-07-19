@@ -67,6 +67,7 @@ export const useLiveStore = create<LiveState>((set) => ({
 
 export const DEFAULT_SETTINGS: AppSettings = {
   gridLines: false,
+  plateOcr: false,
   mirrorFrontPhoto: false,
   autoSaveToDevice: true,
   appTheme: "system",

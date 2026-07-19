@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { useRoute } from "./nav";
 import CameraView from "./components/CameraView";
 import GalleryView from "./components/GalleryView";
+import VideoGroupView from "./components/VideoGroupView";
 import MediaDetailView from "./components/MediaDetailView";
 import SettingsView from "./components/SettingsView";
 import WatermarkEditorView from "./components/WatermarkEditorView";
@@ -23,6 +24,7 @@ export default function App() {
     <>
       <CameraView active={route.name === "camera"} />
       {route.name === "gallery" && <GalleryView />}
+      {route.name === "group" && route.id && <VideoGroupView id={route.id} />}
       {route.name === "media" && route.id && <MediaDetailView id={route.id} />}
       <Suspense fallback={null}>
         {route.name === "edit" && route.id && <PhotoEditorView id={route.id} />}
