@@ -41,10 +41,22 @@ export default defineConfig({
           "**/*.{js,css,html,png,svg,woff2}",
           "data/packs/chennai.json",
         ],
-        // download/ holds the Android APK — served, never precached
-        globIgnores: ["mediapipe/**", "models/**", "download/**", "og-card.png"],
+        // download/ holds the Android APK — served, never precached.
+        // privacy.html is a legal page that must always be current — never
+        // precache it (a stale precached copy once kept showing an outdated
+        // contact), so it's fetched fresh from the network every time.
+        globIgnores: [
+          "mediapipe/**",
+          "models/**",
+          "download/**",
+          "og-card.png",
+          "privacy.html",
+        ],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: "index.html",
+        // keep /privacy.html out of the SPA navigation fallback so it hits
+        // the network directly instead of being served index.html
+        navigateFallbackDenylist: [/^\/privacy\.html$/],
         runtimeCaching: [
           {
             // pack index stays fresh (it drives OTA data updates)

@@ -1,7 +1,24 @@
 # Inner static file server for the cam-app sidecar container.
-# TLS, compression, cache-control and security headers are all handled by
-# the shared edge Caddy (caddy-caddy-1) which reverse-proxies to this.
+# The shared edge Caddy (caddy-caddy-1) terminates TLS + compresses; but it
+# does NOT set cache-control, so those rules live HERE. Without them
+# CloudFlare applies its default 4h browser TTL to EVERYTHING — including
+# sw.js — which froze installed PWAs on a stale service worker (and a stale,
+# precached privacy policy). The service worker MUST be uncacheable.
 :8080 {
 	root * /srv/current
 	file_server
+
+	# hashed build assets + data bundle: content-addressed, cache forever
+	@assets {
+		path *.js *.css *.svg *.png *.jpg *.jpeg *.webp *.woff2 *.ico *.geojson *.tflite *.wasm *.task
+		not path /sw.js /registerSW.js
+	}
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	# the service worker, app shell and legal pages must never be cached, or
+	# installed apps keep serving a stale precache (and a stale privacy policy)
+	@nocache path / /index.html /sw.js /registerSW.js /manifest.webmanifest /privacy.html /data/packs/index.json
+	header @nocache Cache-Control "no-cache, no-store, must-revalidate"
+
+	header Service-Worker-Allowed "/"
 }
