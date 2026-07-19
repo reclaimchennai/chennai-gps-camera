@@ -367,6 +367,7 @@ export function renderWatermark(
 
   // ---- measure ------------------------------------------------------
   let textH = 0;
+  let maxLineW = 0;
   for (const ln of lines) {
     ctx.font = ln.font;
     const m = ctx.measureText("Mg");
@@ -374,19 +375,26 @@ export function renderWatermark(
       (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || bodyPx) +
       lineGap;
     textH += lh + (ln.gapBefore ? ln.gapBefore * bodyPx : 0);
+    maxLineW = Math.max(maxLineW, ctx.measureText(ln.text).width);
   }
+
+  // Shrink-wrap the card to its content: panelW above is only the WRAP
+  // limit — the painted card hugs the longest actual line, so it covers
+  // as little of the photo as the enabled fields allow (no dead space).
+  const usedTextW = lines.length ? Math.min(textW, Math.ceil(maxLineW)) : 0;
+  const fitW = pad * 2 + mapSize + mapGap + usedTextW;
 
   // Branding-free card: no app badge, just the clean address panel.
   const contentH = Math.max(textH, mapSize);
   const panelH = pad * 2 + contentH;
-  const panelX = panelXFor(config.position, width, panelW, margin, landscape);
+  const panelX = panelXFor(config.position, width, fitW, margin, landscape);
   const panelY = positionIsTop(config.position)
     ? margin
     : height - margin - panelH;
 
   // ---- panel ---------------------------------------------------------
   ctx.save();
-  roundRect(ctx, panelX, panelY, panelW, panelH, Math.round(16 * s));
+  roundRect(ctx, panelX, panelY, fitW, panelH, Math.round(16 * s));
   ctx.fillStyle = theme.panel(config.opacity);
   ctx.fill();
 
@@ -449,7 +457,7 @@ export function renderWatermark(
     ty += asc + lineGap;
   }
   ctx.restore();
-  return finish({ x: panelX, y: panelY, width: panelW, height: panelH });
+  return finish({ x: panelX, y: panelY, width: fitW, height: panelH });
 }
 
 function renderMinimal(

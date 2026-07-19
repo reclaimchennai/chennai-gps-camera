@@ -67,9 +67,10 @@ function drawIcon(
  * (Timemark-style) — every handle keeps the same orientation as the first
  * and they run end-to-end with clear spacing; the profile photo sits at
  * the tower's base. LANDSCAPE: profile photo + handles sit side by side
- * as a horizontal row instead. Both hug the info card: above a bottom
- * card, below a top card — so the strip follows the card wherever it is
- * positioned. Plain white with a soft shadow, no chip backgrounds.
+ * as a horizontal row instead. Both pin to the screen border OPPOSITE the
+ * card (bottom card → strip hugging the top edge, and vice versa), so the
+ * strip tracks the user's card choice while staying off the subject.
+ * Plain white with a soft shadow, no chip backgrounds.
  */
 export function renderSocialStrip(
   ctx: CanvasRenderingContext2D,
@@ -101,14 +102,13 @@ export function renderSocialStrip(
   const iconPx = Math.round(fontPx * 1.0);
   const iconTextGap = Math.round(6 * s); // logo → its own handle text
   const stackGap = Math.round(fontPx * 1.4); // clear space between handles
-  const top = position.startsWith("top");
-
-  // hug the card when it spans the width: above a bottom card, below a
-  // top card; else start from the photo margin
-  const cardSpans = panel && panel.x + panel.width > width * 0.7;
+  // the strip pins to the screen border OPPOSITE the card: a bottom card
+  // puts the strip hugging the top edge and vice versa — always clear of
+  // the card and off the photo's centre
+  const top = !position.startsWith("top"); // true = strip along the top border
   const baseY = top
-    ? (cardSpans ? panel.y + panel.height : margin) + Math.round(12 * s)
-    : (cardSpans ? panel.y : height - margin) - Math.round(12 * s);
+    ? margin + Math.round(4 * s)
+    : height - margin - Math.round(4 * s);
 
   ctx.save();
   ctx.shadowColor = "rgba(0,0,0,0.65)";
@@ -165,8 +165,7 @@ export function renderSocialStrip(
 }
 
 /** LANDSCAPE strip: profile photo + handles side by side in one horizontal
- *  row, right-aligned, hugging the card (above a bottom card, below a top
- *  one) so it tracks the card's configured position. */
+ *  row, right-aligned, pinned to the screen border opposite the card. */
 function renderRow(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -174,7 +173,7 @@ function renderRow(
   s: number,
   handles: Profile["handles"],
   photo: CanvasImageSource | null | undefined,
-  panel: WatermarkRect | null,
+  _panel: WatermarkRect | null, // kept for signature parity; strip pins to the border now
   position: WatermarkConfig["position"]
 ): void {
   const margin = Math.round(height * 0.025);
@@ -201,12 +200,12 @@ function renderRow(
     photoGap;
 
   const rowH = Math.max(fontPx, photoD);
-  const gap = Math.round(12 * s);
-  // hug the card vertically; the compact landscape card never spans the
-  // width, so anchor to the card's edge when present, else the margin
-  const centerY = top
-    ? (panel ? panel.y + panel.height : margin) + gap + rowH / 2
-    : (panel ? panel.y : height - margin) - gap - rowH / 2;
+  // pin to the screen border OPPOSITE the card (bottom card → row hugging
+  // the top edge, and vice versa) — never mid-frame over the subject
+  const stripTop = !top; // `top` here is the CARD's side
+  const centerY = stripTop
+    ? margin + rowH / 2
+    : height - margin - rowH / 2;
 
   ctx.shadowColor = "rgba(0,0,0,0.65)";
   ctx.shadowBlur = fontPx * 0.35;
