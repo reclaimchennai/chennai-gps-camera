@@ -25,6 +25,8 @@ interface LiveState {
   db: number | null;
   /** session sound stats — average/min/max since the app opened */
   dbStats: { avg: number; min: number; max: number } | null;
+  /** physical device rotation for in-place UI rotation (lib/orientation) */
+  uiRotation: 0 | 90 | -90;
   setFix(fix: Fix): void;
   setLookupResult(r: LookupResult): void;
   setBearing(b: number): void;
@@ -36,6 +38,7 @@ interface LiveState {
   ): void;
   setDb(db: number | null): void;
   setDbStats(stats: { avg: number; min: number; max: number } | null): void;
+  setUiRotation(r: 0 | 90 | -90): void;
 }
 
 export const useLiveStore = create<LiveState>((set) => ({
@@ -48,6 +51,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   addressFor: null,
   db: null,
   dbStats: null,
+  uiRotation: 0,
   setFix: (fix) => set({ fix }),
   setLookupResult: (lookupResult) => set({ lookupResult }),
   setBearing: (bearing) => set({ bearing }),
@@ -56,6 +60,7 @@ export const useLiveStore = create<LiveState>((set) => ({
     set({ address, locality, addressFor }),
   setDb: (db) => set({ db }),
   setDbStats: (dbStats) => set({ dbStats }),
+  setUiRotation: (uiRotation) => set({ uiRotation }),
 }));
 
 // ---- Persistent settings ----------------------------------------------

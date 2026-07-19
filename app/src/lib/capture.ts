@@ -76,6 +76,38 @@ export interface CaptureResult {
   thumb: Blob;
 }
 
+/**
+ * Bake the physical device rotation into the pixels: when the phone is
+ * held landscape the saved photo becomes a true landscape image (world
+ * upright, card along its bottom) — like native camera apps, and with no
+ * reliance on EXIF orientation flags that many viewers ignore.
+ */
+function rotateFrameCanvas(
+  src: HTMLCanvasElement,
+  rot: 90 | -90
+): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = src.height;
+  out.height = src.width;
+  const octx = out.getContext("2d");
+  if (!octx) return src;
+  if (rot === 90) {
+    // device turned counter-clockwise → world-up lies along the frame's
+    // +x; rotate the content CCW to stand it upright
+    octx.translate(0, out.height);
+    octx.rotate(-Math.PI / 2);
+  } else {
+    octx.translate(out.width, 0);
+    octx.rotate(Math.PI / 2);
+  }
+  octx.drawImage(src, 0, 0);
+  // CRITICAL: this same context is what the pipeline draws the watermark
+  // (and face blur) on next — leave it with the identity transform, or
+  // everything after the frame renders rotated/off-canvas.
+  octx.setTransform(1, 0, 0, 1, 0, 0);
+  return out;
+}
+
 /** A grabbed frame plus the world-state snapshot at the shutter moment —
  *  everything the background pipeline needs to finish the photo without
  *  touching the live camera again. */
@@ -134,14 +166,21 @@ export async function grabFrame(): Promise<{
   if (mirror) ctx.restore();
   frame.close();
 
+  // held landscape → save a true landscape image (see rotateFrameCanvas)
+  const rot = live.uiRotation;
+  const outCanvas =
+    rot === 90 || rot === -90 ? rotateFrameCanvas(canvas, rot) : canvas;
+  const outW = outCanvas.width;
+  const outH = outCanvas.height;
+
   // tiny preview for the fly-to-gallery animation (no watermark needed)
   let preview = "";
   try {
     const pv = document.createElement("canvas");
-    const scale = Math.min(1, 220 / Math.max(w, h));
-    pv.width = Math.max(1, Math.round(w * scale));
-    pv.height = Math.max(1, Math.round(h * scale));
-    pv.getContext("2d")?.drawImage(canvas, 0, 0, pv.width, pv.height);
+    const scale = Math.min(1, 220 / Math.max(outW, outH));
+    pv.width = Math.max(1, Math.round(outW * scale));
+    pv.height = Math.max(1, Math.round(outH * scale));
+    pv.getContext("2d")?.drawImage(outCanvas, 0, 0, pv.width, pv.height);
     preview = pv.toDataURL("image/jpeg", 0.6);
   } catch {
     preview = "";
@@ -150,9 +189,9 @@ export async function grabFrame(): Promise<{
   return {
     preview,
     job: {
-      canvas,
-      w,
-      h,
+      canvas: outCanvas,
+      w: outW,
+      h: outH,
       data,
       config,
       lookupResult: live.lookupResult,

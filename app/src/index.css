@@ -368,6 +368,15 @@ textarea {
   background: var(--accent-strong);
 }
 
+/* Landscape shooting: the layout stays portrait and the icons rotate in
+   place (native-camera style) — --ui-rot is set on .cam-screen from the
+   accelerometer watcher, so this works with the OS rotate-lock ON. */
+.cam-round,
+.cam-actions .thumb-btn {
+  transform: rotate(var(--ui-rot, 0deg));
+  transition: transform 0.35s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+
 .cam-controls {
   flex-shrink: 0;
   background: #000;

@@ -68,6 +68,9 @@ export default function CameraView({ active }: { active: boolean }) {
   const [saving, setSaving] = useState(0);
 
   const settings = useSettingsStore((s) => s.settings);
+  // physical device rotation → in-place icon/overlay rotation (camera-app
+  // style; the layout itself never reflows)
+  const uiRot = useLiveStore((s) => s.uiRotation);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recChunksRef = useRef<Blob[]>([]);
@@ -219,6 +222,7 @@ export default function CameraView({ active }: { active: boolean }) {
         live.bearing == null ? null : Math.round(live.bearing),
         live.gpsStatus, live.address, live.lookupResult, watermark,
         profile, assetsRef.current.miniMap, assetsRef.current.profilePhoto,
+        live.uiRotation,
       ];
       if (
         !blurLive &&
@@ -260,7 +264,24 @@ export default function CameraView({ active }: { active: boolean }) {
         }
       }
 
-      renderWatermark(ctx, w, h, data, watermark, profile, assetsRef.current);
+      // Held landscape: rotate the drawing space the same way the icons
+      // rotate (CSS --ui-rot), so the card previews upright and in its
+      // true landscape layout — exactly what the capture will bake in.
+      const rot = live.uiRotation;
+      if (rot === 90 || rot === -90) {
+        ctx.save();
+        if (rot === 90) {
+          ctx.translate(w, 0);
+          ctx.rotate(Math.PI / 2);
+        } else {
+          ctx.translate(0, h);
+          ctx.rotate(-Math.PI / 2);
+        }
+        renderWatermark(ctx, h, w, data, watermark, profile, assetsRef.current);
+        ctx.restore();
+      } else {
+        renderWatermark(ctx, w, h, data, watermark, profile, assetsRef.current);
+      }
     };
 
     // throttled on-device detection for the live blur preview
@@ -389,8 +410,14 @@ export default function CameraView({ active }: { active: boolean }) {
     let burnH = 0;
     if (liveVideo && liveVideo.videoWidth) {
       try {
-        burnW = Math.floor(liveVideo.videoWidth / 2) * 2;
-        burnH = Math.floor(liveVideo.videoHeight / 2) * 2;
+        // physical rotation at record START decides the file's orientation
+        // for the whole clip (standard camera-app behaviour): held
+        // landscape → a true landscape recording, frame + card upright
+        const recRot = useLiveStore.getState().uiRotation;
+        const vw = Math.floor(liveVideo.videoWidth / 2) * 2;
+        const vh = Math.floor(liveVideo.videoHeight / 2) * 2;
+        burnW = recRot === 0 ? vw : vh;
+        burnH = recRot === 0 ? vh : vw;
         const cc = document.createElement("canvas");
         cc.width = burnW;
         cc.height = burnH;
@@ -425,6 +452,17 @@ export default function CameraView({ active }: { active: boolean }) {
         let compositeDone = false;
         const paint = () => {
           if (compositeDone) return;
+          // frame + blur draw in the camera's own (portrait) pixel space;
+          // when recording landscape the whole space is rotated upright
+          // first, then the (already landscape) watermark goes on top
+          cctx.save();
+          if (recRot === 90) {
+            cctx.translate(0, cc.height);
+            cctx.rotate(-Math.PI / 2);
+          } else if (recRot === -90) {
+            cctx.translate(cc.width, 0);
+            cctx.rotate(Math.PI / 2);
+          }
           // match digital zoom by cropping the centre of the frame
           const dz = camera.captureZoom;
           if (dz > 1) {
@@ -434,10 +472,10 @@ export default function CameraView({ active }: { active: boolean }) {
               liveVideo,
               (liveVideo.videoWidth - sw) / 2,
               (liveVideo.videoHeight - sh) / 2,
-              sw, sh, 0, 0, burnW, burnH
+              sw, sh, 0, 0, vw, vh
             );
           } else {
-            cctx.drawImage(liveVideo, 0, 0, burnW, burnH);
+            cctx.drawImage(liveVideo, 0, 0, vw, vh);
           }
           if (liveBlurOn) {
             for (const b of liveBoxesRef.current) {
@@ -450,6 +488,7 @@ export default function CameraView({ active }: { active: boolean }) {
               cctx.imageSmoothingEnabled = true;
             }
           }
+          cctx.restore();
           const wmTick = Math.floor(Date.now() / 500);
           if (wmTick !== lastWmTick) {
             lastWmTick = wmTick;
@@ -688,7 +727,12 @@ export default function CameraView({ active }: { active: boolean }) {
   return (
     <div
       className="cam-screen"
-      style={{ visibility: active ? "visible" : "hidden" }}
+      style={
+        {
+          visibility: active ? "visible" : "hidden",
+          "--ui-rot": `${uiRot}deg`,
+        } as React.CSSProperties
+      }
     >
       {/* Viewfinder zone — the live watermark card anchors to the bottom
           of the video box, which ends ABOVE the opaque controls bar, so

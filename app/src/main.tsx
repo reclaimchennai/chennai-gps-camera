@@ -18,6 +18,7 @@ import { initBackfill } from "./lib/backfill";
 import { initDownloadQueue } from "./lib/downloadQueue";
 import { warmGeodata } from "./lib/geo/geodata";
 import { initTheme, applyTheme } from "./lib/theme";
+import { startOrientationWatch } from "./lib/orientation";
 
 // Auto-update for installed PWAs: the service worker is registered in
 // autoUpdate mode (new versions skipWaiting + claim + reload the page).
@@ -42,6 +43,7 @@ registerSW({
 // Kick off everything the first shutter tap depends on, in parallel with
 // the first render — camera pre-warm happens in CameraView's mount effect.
 initTheme(); // system theme immediately; re-applied once settings hydrate
+startOrientationWatch(); // in-place UI rotation for landscape shooting
 void hydrateSettings().then(() => {
   applyTheme();
   startLocation();

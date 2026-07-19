@@ -5,7 +5,7 @@
  * separate from the main info card.
  */
 import { siInstagram, siX, siFacebook, siYoutube, siReddit } from "simple-icons";
-import type { Profile } from "../../types";
+import type { Profile, WatermarkConfig } from "../../types";
 import type { WatermarkRect } from "./render";
 
 const ICON_PATHS: Record<string, string> = {
@@ -63,25 +63,25 @@ function drawIcon(
 }
 
 /**
- * Draw the handles as vertical "towers" up the photo's right edge
- * (Timemark-style): each handle is its own column — logo at the base,
- * @handle text rotated 90° running UP. Multiple handles sit SIDE BY SIDE
- * as separate parallel towers marching in from the right edge, never
- * stacked on top of one another and clear of the info card. Plain white
- * with a soft shadow, no chip backgrounds. The profile photo (when
- * enabled) is an unrotated circle at the base of the first tower.
+ * PORTRAIT: handles stack as ONE vertical tower up the photo's right edge
+ * (Timemark-style) — every handle keeps the same orientation as the first
+ * and they run end-to-end with clear spacing; the profile photo sits at
+ * the tower's base. LANDSCAPE: profile photo + handles sit side by side
+ * as a horizontal row instead. Both hug the info card: above a bottom
+ * card, below a top card — so the strip follows the card wherever it is
+ * positioned. Plain white with a soft shadow, no chip backgrounds.
  */
 export function renderSocialStrip(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  s: number, // global scale (width/1080 * fontScale)
+  s: number, // global scale (short-side/1080 * fontScale)
   profile: Profile,
   showHandles: boolean,
   showPhoto: boolean,
   photo: CanvasImageSource | null | undefined,
   panel: WatermarkRect | null,
-  position: "bottom" | "top" = "bottom"
+  position: WatermarkConfig["position"] = "bottom"
 ): void {
   const handles = showHandles
     ? profile.handles.filter((h) => h.show && h.handle.trim())
@@ -89,12 +89,19 @@ export function renderSocialStrip(
   const wantPhoto = showPhoto && photo;
   if (!handles.length && !wantPhoto) return;
 
+  if (width > height) {
+    renderRow(
+      ctx, width, height, s, handles, wantPhoto ? photo : null, panel, position
+    );
+    return;
+  }
+
   const margin = Math.round(width * 0.025);
   const fontPx = Math.max(10, Math.round(20 * s));
   const iconPx = Math.round(fontPx * 1.0);
   const iconTextGap = Math.round(6 * s); // logo → its own handle text
   const stackGap = Math.round(fontPx * 1.4); // clear space between handles
-  const top = position === "top";
+  const top = position.startsWith("top");
 
   // hug the card when it spans the width: above a bottom card, below a
   // top card; else start from the photo margin
@@ -152,6 +159,85 @@ export function renderSocialStrip(
     ctx.restore();
     // advance along the SAME column to stack the next handle end-to-end
     cursor = top ? cursor + colLen + stackGap : cursor - colLen - stackGap;
+  }
+
+  ctx.restore();
+}
+
+/** LANDSCAPE strip: profile photo + handles side by side in one horizontal
+ *  row, right-aligned, hugging the card (above a bottom card, below a top
+ *  one) so it tracks the card's configured position. */
+function renderRow(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  s: number,
+  handles: Profile["handles"],
+  photo: CanvasImageSource | null | undefined,
+  panel: WatermarkRect | null,
+  position: WatermarkConfig["position"]
+): void {
+  const margin = Math.round(height * 0.025);
+  const fontPx = Math.max(10, Math.round(20 * s));
+  const iconPx = Math.round(fontPx * 1.0);
+  const iconTextGap = Math.round(5 * s); // logo → its own handle text
+  const itemGap = Math.round(fontPx * 0.9); // between handles
+  const top = position.startsWith("top");
+
+  ctx.save();
+  ctx.font = `500 ${fontPx}px system-ui, sans-serif`;
+  ctx.textBaseline = "middle";
+
+  const items = handles.map((h) => {
+    const text = `@${h.handle.replace(/^@/, "")}`;
+    return { h, text, w: iconPx + iconTextGap + ctx.measureText(text).width };
+  });
+  const photoD = photo ? Math.round(fontPx * 2) : 0;
+  const photoGap = photo && items.length ? itemGap : 0;
+  const totalW =
+    items.reduce((a, it) => a + it.w, 0) +
+    itemGap * Math.max(0, items.length - 1) +
+    photoD +
+    photoGap;
+
+  const rowH = Math.max(fontPx, photoD);
+  const gap = Math.round(12 * s);
+  // hug the card vertically; the compact landscape card never spans the
+  // width, so anchor to the card's edge when present, else the margin
+  const centerY = top
+    ? (panel ? panel.y + panel.height : margin) + gap + rowH / 2
+    : (panel ? panel.y : height - margin) - gap - rowH / 2;
+
+  ctx.shadowColor = "rgba(0,0,0,0.65)";
+  ctx.shadowBlur = fontPx * 0.35;
+
+  // right-aligned; never run off the left edge
+  let x = Math.max(margin, width - margin - totalW);
+
+  if (photo) {
+    const cx = x + photoD / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, centerY, photoD / 2, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(photo, cx - photoD / 2, centerY - photoD / 2, photoD, photoD);
+    ctx.restore();
+    ctx.beginPath();
+    ctx.arc(cx, centerY, photoD / 2, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.lineWidth = Math.max(1.5, 2 * s);
+    ctx.stroke();
+    x += photoD + photoGap;
+  }
+
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    drawIcon(ctx, it.h.platform, x, centerY - iconPx / 2, iconPx, "rgba(255,255,255,0.95)");
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.font = `500 ${fontPx}px system-ui, sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(it.text, x + iconPx + iconTextGap, centerY);
+    x += it.w + (i < items.length - 1 ? itemGap : 0);
   }
 
   ctx.restore();

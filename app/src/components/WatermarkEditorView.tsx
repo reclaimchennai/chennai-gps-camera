@@ -185,19 +185,44 @@ export default function WatermarkEditorView() {
             {PRESET_META.find((p) => p.key === config.preset)?.hint}
           </div>
         </div>
-        <Row label="Card position">
-          <div className="seg" style={{ width: 170 }}>
-            {(["bottom", "top"] as const).map((p) => (
-              <button
-                key={p}
-                data-active={config.position === p}
-                onClick={() => set({ position: p })}
-              >
-                {p[0].toUpperCase() + p.slice(1)}
-              </button>
-            ))}
+        <div className="row" style={{ display: "block" }}>
+          <div className="label">Card position</div>
+          <div className="hint" style={{ margin: "2px 0 8px" }}>
+            Corners apply to landscape shots — portrait cards span the width
           </div>
-        </Row>
+          {(
+            [
+              ["top-left", "Top left"],
+              ["top", "Top"],
+              ["top-right", "Top right"],
+              ["bottom-left", "Bottom left"],
+              ["bottom", "Bottom"],
+              ["bottom-right", "Bottom right"],
+            ] as const
+          ).reduce<[string, string][][]>((rows, opt, i) => {
+            if (i % 3 === 0) rows.push([]);
+            rows[rows.length - 1].push([opt[0], opt[1]]);
+            return rows;
+          }, []).map((row, ri) => (
+            <div
+              key={ri}
+              className="seg"
+              style={{ marginTop: ri ? 6 : 0, width: "100%" }}
+            >
+              {row.map(([key, label]) => (
+                <button
+                  key={key}
+                  data-active={config.position === key}
+                  onClick={() =>
+                    set({ position: key as typeof config.position })
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="card">

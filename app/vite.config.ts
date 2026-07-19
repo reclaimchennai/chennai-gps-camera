@@ -19,6 +19,9 @@ export default defineConfig({
           "Location-stamped camera for Chennai — ward, zone and police jurisdiction on every photo, resolved offline.",
         start_url: "/",
         display: "standalone",
+        // layout is portrait-designed; landscape is handled by rotating
+        // the UI elements in place (lib/orientation.ts), camera-app style
+        orientation: "portrait",
         theme_color: "#0b0f14",
         background_color: "#0b0f14",
         icons: [

@@ -71,7 +71,13 @@ export interface WatermarkConfig {
   /** Online Google-map thumbnail upgrade when connectivity allows (§5.4). */
   onlineMapUpgrade: boolean;
   /** Where the card sits on the photo. */
-  position: "bottom" | "top";
+  position:
+    | "bottom"
+    | "top"
+    | "top-left"
+    | "top-right"
+    | "bottom-left"
+    | "bottom-right";
 }
 
 /** Everything the renderer may stamp. Resolved at capture time. */

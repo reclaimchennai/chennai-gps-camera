@@ -283,6 +283,26 @@ function buildLines(
  * the photo/video frame. Coordinates cover the full canvas size.
  * Returns the painted panel's rect (canvas px), or null if nothing drew.
  */
+/** Vertical anchor for a card position value. */
+export function positionIsTop(p: WatermarkConfig["position"]): boolean {
+  return p.startsWith("top");
+}
+
+/** Horizontal anchor: corners pin to their side; the centre values centre
+ *  a narrower-than-canvas card (landscape) and left-align a full-width or
+ *  portrait card, matching the app's historical look. */
+function panelXFor(
+  p: WatermarkConfig["position"],
+  width: number,
+  panelW: number,
+  margin: number,
+  landscape: boolean
+): number {
+  if (p.endsWith("left")) return margin;
+  if (p.endsWith("right")) return width - margin - panelW;
+  return landscape ? Math.round((width - panelW) / 2) : margin;
+}
+
 export function renderWatermark(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -293,7 +313,12 @@ export function renderWatermark(
   assets: WatermarkAssets = {}
 ): WatermarkRect | null {
   const theme = THEMES[config.theme];
-  const s = (width / 1080) * config.fontScale;
+  // scale from the SHORT side so a landscape shot gets the same absolute
+  // card size as a portrait one (a width-based scale ballooned the card
+  // across landscape photos and buried the subject)
+  const base = Math.min(width, height);
+  const landscape = width > height;
+  const s = (base / 1080) * config.fontScale;
   const preset = config.preset;
 
   const finish = (panel: WatermarkRect | null): WatermarkRect | null => {
@@ -319,9 +344,13 @@ export function renderWatermark(
   }
 
   const detailed = preset === "detailed";
-  const margin = Math.round(width * 0.025);
+  const margin = Math.round(base * 0.025);
   const pad = Math.round(18 * s);
-  const panelW = width - margin * 2;
+  // landscape: compact card (portrait-like width) instead of a full-bleed
+  // strip across the wide edge that hides the photo's subject
+  const panelW = landscape
+    ? Math.min(width - margin * 2, Math.round(height * 1.25))
+    : width - margin * 2;
   const bodyPx = Math.max(10, Math.round((detailed ? 26 : 24) * s));
   const lineGap = Math.round(bodyPx * 0.45);
 
@@ -350,9 +379,10 @@ export function renderWatermark(
   // Branding-free card: no app badge, just the clean address panel.
   const contentH = Math.max(textH, mapSize);
   const panelH = pad * 2 + contentH;
-  const panelX = margin;
-  const panelY =
-    config.position === "top" ? margin : height - margin - panelH;
+  const panelX = panelXFor(config.position, width, panelW, margin, landscape);
+  const panelY = positionIsTop(config.position)
+    ? margin
+    : height - margin - panelH;
 
   // ---- panel ---------------------------------------------------------
   ctx.save();
@@ -433,7 +463,7 @@ function renderMinimal(
 ): WatermarkRect | null {
   const bodyPx = Math.max(9, Math.round(22 * s));
   const pad = Math.round(12 * s);
-  const margin = Math.round(width * 0.025);
+  const margin = Math.round(Math.min(width, height) * 0.025);
   const rows: string[] = [];
   if (config.fields.coords) {
     rows.push(
@@ -465,8 +495,12 @@ function renderMinimal(
   const lineH = Math.round(bodyPx * 1.35);
   const panelW = w + pad * 2;
   const panelH = rows.length * lineH + pad * 2 - (lineH - bodyPx);
-  const x = margin;
-  const y = config.position === "top" ? margin : height - margin - panelH;
+  // the minimal chip is small enough for corners to be meaningful in any
+  // orientation — honour left/right; centre keeps the legacy left-align
+  const x = panelXFor(config.position, width, panelW, margin, false);
+  const y = positionIsTop(config.position)
+    ? margin
+    : height - margin - panelH;
 
   ctx.save();
   roundRect(ctx, x, y, panelW, panelH, Math.round(10 * s));
