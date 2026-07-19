@@ -167,7 +167,42 @@ export default function MediaDetailView({ id }: { id: string }) {
         return;
       }
       setRec(r);
-      const all = await listMedia();
+      // plate scans live in an in-memory queue — one that was pending when
+      // the app closed is lost. plates===undefined means "never scanned",
+      // so opening the photo re-queues it (no-op when the setting is off
+      // or it was already scanned; [] marks a completed empty scan).
+      if (r.kind === "photo" && r.plates === undefined) {
+        queuePlateScan(r.id);
+      }
+      let all = await listMedia();
+      // group-scoped swiping: inside a video's stack, the carousel walks
+      // ONLY that group (video first, frames in capture order); in the
+      // main gallery it skips grouped frames entirely — never a random
+      // hours-later frame appearing between unrelated items.
+      const groupOf = (videoId: string) =>
+        all
+          .filter((m) => m.kind === "photo" && m.sourceVideoId === videoId)
+          .sort((a, b) => a.createdAt - b.createdAt);
+      if (r.kind === "photo" && r.sourceVideoId) {
+        const video = all.find(
+          (m) => m.kind === "video" && m.id === r.sourceVideoId
+        );
+        all = [...(video ? [video] : []), ...groupOf(r.sourceVideoId)];
+      } else if (r.kind === "video" && groupOf(r.id).length) {
+        all = [r, ...groupOf(r.id)];
+      } else {
+        const videoIds = new Set(
+          all.filter((m) => m.kind === "video").map((m) => m.id)
+        );
+        all = all.filter(
+          (m) =>
+            !(
+              m.kind === "photo" &&
+              m.sourceVideoId &&
+              videoIds.has(m.sourceVideoId)
+            )
+        );
+      }
       const idx = all.findIndex((m) => m.id === curId);
       const prev = idx > 0 ? all[idx - 1] : undefined;
       const next = idx >= 0 && idx < all.length - 1 ? all[idx + 1] : undefined;
@@ -224,11 +259,12 @@ export default function MediaDetailView({ id }: { id: string }) {
           had = true;
         }
       }
+      // refresh for the CURRENT item even when no blob URL was cached —
+      // record-only updates (a finished plate scan) must repaint too
       if (
-        had &&
-        (mid === curId ||
-          mid === neighbours.prev?.id ||
-          mid === neighbours.next?.id)
+        mid === curId ||
+        (had &&
+          (mid === neighbours.prev?.id || mid === neighbours.next?.id))
       ) {
         setRefresh((n) => n + 1);
       }
@@ -474,7 +510,9 @@ export default function MediaDetailView({ id }: { id: string }) {
   // video. The card is already burned into the frame; plate OCR queues in
   // the background so scrubbing + grabbing stays instant.
   // (Hooks live ABOVE the null-guard — see React error #310.)
+  const [showPlates, setShowPlates] = useState(false);
   const [frameFx, setFrameFx] = useState(0);
+  const [frameFly, setFrameFly] = useState<{ src: string; key: number } | null>(null);
   const grabVideoFrame = useCallback(async () => {
     const v = videoRef.current;
     const r = rec;
@@ -486,6 +524,18 @@ export default function MediaDetailView({ id }: { id: string }) {
     const cx = c.getContext("2d");
     if (!cx) return;
     cx.drawImage(v, 0, 0);
+    // instant fly-away preview (same feel as the camera shutter) BEFORE
+    // any encoding — grabs stay tap-tap-tap fast, saving trails behind
+    try {
+      const pv = document.createElement("canvas");
+      const scale = Math.min(1, 200 / Math.max(c.width, c.height));
+      pv.width = Math.max(1, Math.round(c.width * scale));
+      pv.height = Math.max(1, Math.round(c.height * scale));
+      pv.getContext("2d")?.drawImage(c, 0, 0, pv.width, pv.height);
+      setFrameFly({ src: pv.toDataURL("image/jpeg", 0.6), key: Date.now() });
+    } catch {
+      // preview is decorative only
+    }
     const jpeg = await canvasToBlob(c, "image/jpeg", 0.95);
     const withExif = await writeExif(jpeg, r.data);
     const thumb = await makeThumbnail(c, c.width, c.height);
@@ -689,6 +739,16 @@ export default function MediaDetailView({ id }: { id: string }) {
         </div>
       )}
 
+      {frameFly && (
+        <img
+          key={frameFly.key}
+          className="capture-fly"
+          src={frameFly.src}
+          alt=""
+          onAnimationEnd={() => setFrameFly(null)}
+        />
+      )}
+
       {/* immersive chrome: slides in on tap */}
       <header className={`viewer-top${chrome ? " show" : ""}`}>
         <button className="icon-btn" onClick={goBack} aria-label="Back">
@@ -707,7 +767,7 @@ export default function MediaDetailView({ id }: { id: string }) {
 
       {/* slim floating action pill + a compact tags row, raised on tap */}
       <div className={`viewer-bottom${chrome ? " show" : ""}`}>
-        {rec.kind === "photo" && (rec.plates?.length ?? 0) > 0 && (
+        {rec.kind === "photo" && (rec.plates?.length ?? 0) > 0 && showPlates && (
           <div className="viewer-tags">
             {rec.plates!.map((p) => (
               <span key={p} className="tag-chip plate-chip" title="Read by on-device OCR — verify before reporting">
@@ -759,6 +819,15 @@ export default function MediaDetailView({ id }: { id: string }) {
           ) : (
             <button className="tag-add chip-btn" onClick={() => setTagDraft("")}>
               <Tag size={12} /> Tag
+            </button>
+          )}
+          {rec.kind === "photo" && (rec.plates?.length ?? 0) > 0 && (
+            <button
+              className={`tag-chip plate-chip plate-pill${showPlates ? " open" : ""}`}
+              onClick={() => setShowPlates((s) => !s)}
+              aria-label={`${rec.plates!.length} licence plate${rec.plates!.length > 1 ? "s" : ""} detected`}
+            >
+              <Car size={12} /> {rec.plates!.length}
             </button>
           )}
         </div>
@@ -850,6 +919,13 @@ export default function MediaDetailView({ id }: { id: string }) {
                       {j.trafficMeta ? ` (${j.trafficMeta})` : ""}
                     </>
                   )}
+                </>
+              )}
+              {rec.kind === "photo" && (rec.plates?.length ?? 0) > 0 && (
+                <>
+                  <br />
+                  Licence plate{rec.plates!.length > 1 ? "s" : ""} (OCR,
+                  verify): {rec.plates!.join(", ")}
                 </>
               )}
               {rec.kind === "photo" && rec.backfill === "pending" && (

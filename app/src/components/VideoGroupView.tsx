@@ -10,6 +10,7 @@ import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
 import type { MediaRecord } from "../types";
 import { navigate } from "../nav";
+import { queuePlateScan } from "../lib/detect/plateQueue";
 
 interface Cell {
   rec: MediaRecord;
@@ -28,6 +29,11 @@ export default function VideoGroupView({ id }: { id: string }) {
       const frames = items
         .filter((m) => m.kind === "photo" && m.sourceVideoId === id)
         .sort((a, b) => a.createdAt - b.createdAt);
+      // retry plate scans that never completed (in-memory queue — lost if
+      // the app closed before a slow first scan finished)
+      for (const f of frames) {
+        if (f.kind === "photo" && f.plates === undefined) queuePlateScan(f.id);
+      }
       const group = video ? [video, ...frames] : frames;
       const loaded = await Promise.all(
         group.map(async (rec) => {

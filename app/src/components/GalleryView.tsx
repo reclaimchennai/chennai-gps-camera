@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Play, RefreshCw, Search, X, MapPin, Layers } from "lucide-react";
+import { Play, RefreshCw, Search, X, MapPin, Layers, Map as MapIcon } from "lucide-react";
 import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
 import type { MediaRecord } from "../types";
@@ -151,7 +151,19 @@ export default function GalleryView() {
     `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
   return (
-    <Screen title="Gallery">
+    <Screen
+      title="Gallery"
+      actions={
+        <button
+          className="icon-btn"
+          style={{ marginLeft: "auto" }}
+          onClick={() => navigate("/gallery/map")}
+          aria-label="Photo map"
+        >
+          <MapIcon size={20} />
+        </button>
+      }
+    >
       <div className="gal-search">
         <Search size={17} />
         <input

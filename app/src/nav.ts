@@ -8,6 +8,7 @@ export interface Route {
   name:
     | "camera"
     | "gallery"
+    | "map"
     | "group"
     | "media"
     | "edit"
@@ -26,6 +27,7 @@ function parse(hash: string): Route {
       // folder-in-folder: a video's grabbed frames live in a sub-view
       if (parts[1] === "group" && parts[2])
         return { name: "group", id: parts[2] };
+      if (parts[1] === "map") return { name: "map" };
       return { name: "gallery" };
     case "media":
       return { name: "media", id: parts[1] };

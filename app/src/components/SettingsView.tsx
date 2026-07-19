@@ -10,6 +10,8 @@ import { startMeter, stopMeter } from "../lib/audio/meter";
 // live-face-blur row until 2026-07-21, after which the Experimental chip
 // returns automatically. Delete /new.gif and this block after that date.
 const NEW_GIF_UNTIL = Date.UTC(2026, 6, 21); // months are 0-based → July 21
+// plate reader launched 2026-07-19 — its NEW gif runs a week
+const PLATE_NEW_UNTIL = Date.UTC(2026, 6, 27);
 
 const WHEEL_ITEM_PX = 36;
 
@@ -192,6 +194,13 @@ export default function SettingsView() {
                 <>
                   Licence plate reader{" "}
                   <span className="exp-chip">Experimental</span>
+                  {Date.now() < PLATE_NEW_UNTIL && (
+                    <img
+                      src="/new.gif"
+                      alt="New"
+                      style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
+                    />
+                  )}
                 </>
               }
               hint="Reads vehicle number plates from photos, fully on-device, in the background — never slows the shutter. Found plates show on the photo and ride along when you share it. Best-effort: verify before reporting."
