@@ -743,6 +743,132 @@ textarea {
   animation: frame-grab-pulse 0.35s ease;
 }
 
+/* ---- collage builder ---------------------------------------------- */
+.gallery-cell.selected {
+  outline: 3px solid var(--accent-strong);
+  outline-offset: -3px;
+}
+.pick-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  border: 2px solid #fff;
+}
+.collage-board {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  touch-action: none; /* dragging tiles, not scrolling */
+}
+.collage-row {
+  display: flex;
+  gap: 6px;
+  min-height: 0;
+}
+.collage-tile {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+  transition: box-shadow 0.15s ease;
+}
+.collage-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+.collage-tile.dragging {
+  z-index: 5;
+  opacity: 0.85;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  transition: none;
+}
+.collage-tile.target {
+  outline: 3px dashed var(--accent-strong);
+  outline-offset: -3px;
+}
+.tile-label {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  max-width: calc(100% - 12px);
+  padding: 2px 7px;
+  border-radius: 8px;
+  background: rgba(10, 14, 20, 0.6);
+  color: #fff;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.collage-shelf {
+  flex-shrink: 0;
+  min-height: 72px;
+  margin-top: 8px;
+  border: 1.5px dashed var(--border);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  overflow-x: auto;
+}
+.collage-shelf.target {
+  border-color: var(--accent-strong);
+  background: rgba(29, 99, 216, 0.08);
+}
+.shelf-item {
+  width: 54px;
+  height: 54px;
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.shelf-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* long-press peek preview: media floats over a dim scrim until release */
+.peek-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(0, 0, 0, 0.82);
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  animation: peek-in 0.16s ease;
+}
+.peek-layer img,
+.peek-layer video {
+  max-width: 94vw;
+  max-height: 82vh;
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+@keyframes peek-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 /* ---- photo map (leaflet) ------------------------------------------ */
 .photo-map {
   flex: 1;
@@ -816,7 +942,9 @@ textarea {
 }
 
 .tag-input {
-  width: 120px;
+  /* wide enough that the "e.g. food, pani puri, street vendor" example
+     placeholder is fully readable, capped for small screens */
+  width: min(78vw, 300px);
   padding: 5px 10px;
   border-radius: 14px;
   font-size: 13px;

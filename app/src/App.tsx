@@ -16,6 +16,7 @@ const VideoEditorView = lazy(() => import("./components/VideoEditorView"));
 const ReportView = lazy(() => import("./components/ReportView"));
 // Leaflet + plugins are heavy — the photo map loads on demand.
 const PhotoMapView = lazy(() => import("./components/PhotoMapView"));
+const CollageView = lazy(() => import("./components/CollageView"));
 
 export default function App() {
   const route = useRoute();
@@ -29,6 +30,7 @@ export default function App() {
       {route.name === "group" && route.id && <VideoGroupView id={route.id} />}
       <Suspense fallback={null}>
         {route.name === "map" && <PhotoMapView />}
+        {route.name === "collage" && <CollageView />}
       </Suspense>
       {route.name === "media" && route.id && <MediaDetailView id={route.id} />}
       <Suspense fallback={null}>

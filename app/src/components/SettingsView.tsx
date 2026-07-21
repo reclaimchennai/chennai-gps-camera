@@ -5,6 +5,7 @@ import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
 import { isNativeApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
+import { testPlateReader } from "../lib/detect/plates";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -82,6 +83,7 @@ export default function SettingsView() {
   // reference level the user is exposing the mic to (dB), for Match
   const [calRef, setCalRef] = useState(60);
   const [advOpen, setAdvOpen] = useState(false);
+  const [plateTest, setPlateTest] = useState<string | null>(null);
 
   // keep the mic meter running here so the calibration row shows a live
   // reading; CameraView restarts its own metering when it regains focus
@@ -210,6 +212,27 @@ export default function SettingsView() {
                 onChange={(v) => setSettings({ plateOcr: v })}
               />
             </Row>
+            {settings.plateOcr && (
+              <div className="row" style={{ display: "block" }}>
+                <button
+                  className="ghost-btn"
+                  disabled={plateTest === "running"}
+                  onClick={() => {
+                    setPlateTest("running");
+                    void testPlateReader().then((r) =>
+                      setPlateTest(`${r.ok ? "✓" : "✗"} ${r.detail}`)
+                    );
+                  }}
+                >
+                  {plateTest === "running" ? "Testing…" : "Test the reader"}
+                </button>
+                {plateTest && plateTest !== "running" && (
+                  <div className="hint" style={{ marginTop: 6 }}>
+                    {plateTest}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* styled exactly like the other settings rows: bold label,
                 lighter hint at the standard size */}

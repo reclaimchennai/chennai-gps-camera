@@ -9,6 +9,7 @@ export interface Route {
     | "camera"
     | "gallery"
     | "map"
+    | "collage"
     | "group"
     | "media"
     | "edit"
@@ -28,6 +29,7 @@ function parse(hash: string): Route {
       if (parts[1] === "group" && parts[2])
         return { name: "group", id: parts[2] };
       if (parts[1] === "map") return { name: "map" };
+      if (parts[1] === "collage") return { name: "collage" };
       return { name: "gallery" };
     case "media":
       return { name: "media", id: parts[1] };

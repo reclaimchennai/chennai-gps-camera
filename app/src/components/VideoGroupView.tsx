@@ -11,6 +11,7 @@ import { listMedia, getBlob } from "../lib/db";
 import type { MediaRecord } from "../types";
 import { navigate } from "../nav";
 import { queuePlateScan } from "../lib/detect/plateQueue";
+import { usePeek } from "./peek";
 
 interface Cell {
   rec: MediaRecord;
@@ -19,6 +20,7 @@ interface Cell {
 
 export default function VideoGroupView({ id }: { id: string }) {
   const [cells, setCells] = useState<Cell[] | null>(null);
+  const { bind: bindPeek, layer: peekLayer } = usePeek();
 
   useEffect(() => {
     let cancelled = false;
@@ -69,6 +71,7 @@ export default function VideoGroupView({ id }: { id: string }) {
           <button
             key={rec.id}
             className="gallery-cell"
+            {...bindPeek(rec)}
             onClick={() => navigate(`/media/${rec.id}`)}
           >
             {url ? (
@@ -98,6 +101,7 @@ export default function VideoGroupView({ id }: { id: string }) {
         Frames you grab with the camera button in the video player collect
         here alongside their video.
       </div>
+      {peekLayer}
     </Screen>
   );
 }

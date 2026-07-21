@@ -165,7 +165,20 @@ function buildLines(
   }
 
   if (f.address && data.address) {
-    for (const seg of wrapText(ctx, data.address, body, maxWidth, detailed ? 3 : 1)) {
+    // A single long address must not balloon the shrink-wrapped card far
+    // wider than every other row (ugly on landscape shots): cap its wrap
+    // width near the widest standard line (a full date row), so long
+    // addresses wrap earlier and still ellipsize at their line cap.
+    ctx.font = body;
+    const addrCap = Math.min(
+      maxWidth,
+      Math.max(
+        ctx.measureText("Sunday, 00 September 2026 00:00:00 PM UTC+00:00")
+          .width,
+        maxWidth * 0.5
+      )
+    );
+    for (const seg of wrapText(ctx, data.address, body, addrCap, detailed ? 3 : 1)) {
       lines.push({ text: seg, font: body, color: theme.dim });
     }
   }

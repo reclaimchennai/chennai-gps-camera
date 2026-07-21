@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Play, RefreshCw, Search, X, MapPin, Layers, Map as MapIcon } from "lucide-react";
+import { Play, RefreshCw, Search, X, MapPin, Layers, Map as MapIcon, LayoutGrid } from "lucide-react";
 import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
 import type { MediaRecord } from "../types";
 import { navigate } from "../nav";
 import { fmtWard } from "../lib/geo/format";
+import { usePeek } from "./peek";
 
 interface Cell {
   rec: MediaRecord;
@@ -62,6 +63,7 @@ export default function GalleryView() {
   const [chip, setChip] = useState<Chip>("all");
   // ids the backfill queue just upgraded — briefly highlighted
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  const { bind: bindPeek, layer: peekLayer } = usePeek();
 
   useEffect(() => {
     let cancelled = false;
@@ -154,14 +156,22 @@ export default function GalleryView() {
     <Screen
       title="Gallery"
       actions={
-        <button
-          className="icon-btn"
-          style={{ marginLeft: "auto" }}
-          onClick={() => navigate("/gallery/map")}
-          aria-label="Photo map"
-        >
-          <MapIcon size={20} />
-        </button>
+        <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          <button
+            className="icon-btn"
+            onClick={() => navigate("/gallery/collage")}
+            aria-label="Make a collage"
+          >
+            <LayoutGrid size={20} />
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => navigate("/gallery/map")}
+            aria-label="Photo map"
+          >
+            <MapIcon size={20} />
+          </button>
+        </span>
       }
     >
       <div className="gal-search">
@@ -237,6 +247,7 @@ export default function GalleryView() {
             <button
               key={rec.id}
               className={`gallery-cell${flashIds.has(rec.id) ? " updated" : ""}`}
+              {...bindPeek(rec)}
               onClick={() =>
                 navigate(
                   rec.kind === "video" && frameCounts.has(rec.id)
@@ -278,6 +289,7 @@ export default function GalleryView() {
           );
         })}
       </div>
+      {peekLayer}
     </Screen>
   );
 }

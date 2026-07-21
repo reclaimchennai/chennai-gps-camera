@@ -25,6 +25,11 @@ const HEAT_MAX_ZOOM = 12;
 /** individual pins take over from clusters at this zoom */
 const PIN_ZOOM = 17;
 
+/** Last map view, surviving navigation away (module-level, session only):
+ *  open a photo from a pin, come back, and the map is exactly where it
+ *  was — fully zoomed in on the neighbouring pins, not reset to fit-all. */
+let savedView: { center: L.LatLngExpression; zoom: number } | null = null;
+
 export default function PhotoMapView() {
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -125,11 +130,16 @@ export default function PhotoMapView() {
       };
       map.on("zoomend", applyLayers);
 
-      if (points.length) {
+      if (savedView) {
+        map.setView(savedView.center, savedView.zoom, { animate: false });
+      } else if (points.length) {
         map.fitBounds(L.latLngBounds(points).pad(0.25), { maxZoom: 15 });
       } else {
         map.setView([13.0827, 80.2707], 11); // Chennai, until captures exist
       }
+      map.on("moveend", () => {
+        if (map) savedView = { center: map.getCenter(), zoom: map.getZoom() };
+      });
       applyLayers();
     })();
 

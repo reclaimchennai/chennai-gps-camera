@@ -133,6 +133,9 @@ export interface PhotoRecord {
   /** EXPERIMENTAL on-device licence-plate OCR results. undefined = not
    *  scanned; [] = scanned, none found. */
   plates?: string[];
+  /** set when the last scan attempt failed (engine error) — cleared on a
+   *  successful scan; lets the UI say WHY there are no plates */
+  plateScanError?: string;
   /** set when this photo is a frame grabbed from a recorded video —
    *  groups it under that video in the gallery */
   sourceVideoId?: string;

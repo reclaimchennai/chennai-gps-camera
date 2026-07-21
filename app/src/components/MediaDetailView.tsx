@@ -928,6 +928,20 @@ export default function MediaDetailView({ id }: { id: string }) {
                   verify): {rec.plates!.join(", ")}
                 </>
               )}
+              {rec.kind === "photo" &&
+                useSettingsStore.getState().settings.plateOcr &&
+                (rec.plates?.length ?? 0) === 0 && (
+                  <>
+                    <br />
+                    <em>
+                      {rec.plateScanError
+                        ? `Plate reader failed on this device — run the test in Settings › Advanced. (${rec.plateScanError.slice(0, 80)})`
+                        : rec.plates
+                          ? "Plate scan: no plates found."
+                          : "Plate scan: pending…"}
+                    </em>
+                  </>
+                )}
               {rec.kind === "photo" && rec.backfill === "pending" && (
                 <>
                   <br />
