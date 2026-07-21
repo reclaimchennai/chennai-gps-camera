@@ -16,8 +16,10 @@ answer the Play Console's compliance forms truthfully. Files here are the
 
 - **Package / applicationId:** `city.reclaimchennai.cam`
 - **Signing:** release keystore `~/tools/android-keys/gpscam-release.jks`, alias
-  `gpscam`, cert SHA-256 `8e111f…4eb7`. **Never lose this** — it's the upload
-  key. Enroll in Play App Signing at first upload; keep this as the upload key.
+  `gpscam`. **Never lose this** — it's the Play upload key. Enroll in Play App
+  Signing at first upload; keep this keystore as the upload key. (Certificate
+  fingerprints are kept out of this public repo — see the owner's private
+  notes.)
 - **minSdk 24 / targetSdk 36 / compileSdk 36** (`android/variables.gradle`) —
   meets Play's current target-API requirement.
 - **Format:** Google Play requires an **AAB** (`app-release.aab` from
