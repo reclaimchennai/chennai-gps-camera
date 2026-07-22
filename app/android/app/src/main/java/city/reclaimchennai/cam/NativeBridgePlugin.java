@@ -90,9 +90,44 @@ public class NativeBridgePlugin extends Plugin {
         requestPermissionForAliases(aliases, call, "mediaPermsCallback");
     }
 
+    /**
+     * Step 1 of the split first-run flow: camera + microphone ONLY. The
+     * combined 3-permission request crashed some devices at its tail end
+     * — smaller atomic steps survive: even if the app dies between steps,
+     * the next launch's state check resumes exactly where it left off.
+     */
+    @PluginMethod
+    public void requestCameraPermissions(PluginCall call) {
+        if (getPermissionState("camera") == PermissionState.GRANTED
+                && getPermissionState("microphone") == PermissionState.GRANTED) {
+            resolvePermissionStates(call);
+            return;
+        }
+        String[] aliases = Build.VERSION.SDK_INT < 29
+            ? new String[] { "camera", "microphone", "storage" }
+            : new String[] { "camera", "microphone" };
+        requestPermissionForAliases(aliases, call, "mediaPermsCallback");
+    }
+
+    /** Step 2, requested solo once the camera is already up and stable. */
+    @PluginMethod
+    public void requestLocationPermission(PluginCall call) {
+        if (getPermissionState("location") == PermissionState.GRANTED) {
+            resolvePermissionStates(call);
+            return;
+        }
+        requestPermissionForAliases(
+            new String[] { "location" }, call, "mediaPermsCallback");
+    }
+
     @PermissionCallback
     private void mediaPermsCallback(PluginCall call) {
-        resolvePermissionStates(call);
+        try {
+            resolvePermissionStates(call);
+        } catch (Exception e) {
+            // never let a result-handling surprise take the process down
+            call.resolve(new JSObject());
+        }
     }
 
     private void resolvePermissionStates(PluginCall call) {

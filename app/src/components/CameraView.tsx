@@ -14,8 +14,9 @@ import { renderMiniMap } from "../lib/watermark/minimap";
 import { useLiveStore, useSettingsStore } from "../store";
 import {
   isNativeApp,
-  ensureNativePermissions,
   checkNativePermissions,
+  ensureCameraPermissions,
+  ensureLocationPermission,
 } from "../lib/native";
 import { navigate } from "../nav";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
@@ -107,14 +108,33 @@ export default function CameraView({ active }: { active: boolean }) {
     void checkNativePermissions().then((s) => {
       // old APK bridge (null) → behave as before rather than blocking
       setPermState(s === null || s.camera ? "granted" : "needed");
+      // resume an interrupted first-run flow: camera already granted but
+      // location missing (e.g. the app died between the split steps) →
+      // finish the solo location request once the camera is up
+      if (s && s.camera && !s.location) {
+        window.setTimeout(() => {
+          void ensureLocationPermission().then(() => {
+            window.dispatchEvent(new Event("gpscam:perms-granted"));
+          });
+        }, 1500);
+      }
     });
   }, []);
   const requestPermissions = useCallback(async () => {
-    const s = await ensureNativePermissions();
+    // SPLIT flow — the combined 3-permission request crashed some devices
+    // at its tail. Step 1: camera + mic only; the viewfinder comes alive
+    // immediately (visible success). Step 2: location, requested SOLO a
+    // beat later over the live camera. Each step is atomic and the boot
+    // check makes the whole flow resumable, so even an OS kill between
+    // steps just picks up where it left off on the next launch.
+    const s = await ensureCameraPermissions();
     if (s === null || s.camera) {
       setPermState("granted");
-      // location was granted in the same flow — geolocation can start now
-      window.dispatchEvent(new Event("gpscam:perms-granted"));
+      window.setTimeout(() => {
+        void ensureLocationPermission().then(() => {
+          window.dispatchEvent(new Event("gpscam:perms-granted"));
+        });
+      }, 1200);
     } else {
       setPermState("denied");
     }

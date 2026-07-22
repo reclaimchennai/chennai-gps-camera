@@ -51,6 +51,16 @@ interface NativeBridgePlugin {
     microphone: boolean;
     location: boolean;
   }>;
+  requestCameraPermissions(): Promise<{
+    camera: boolean;
+    microphone: boolean;
+    location: boolean;
+  }>;
+  requestLocationPermission(): Promise<{
+    camera: boolean;
+    microphone: boolean;
+    location: boolean;
+  }>;
 }
 
 export interface NativePermStates {
@@ -99,6 +109,28 @@ export async function ensureNativePermissions(): Promise<NativePermStates | null
   if (!b?.ensureMediaPermissions) return null;
   try {
     return await b.ensureMediaPermissions();
+  } catch {
+    return null;
+  }
+}
+
+/** Step 1 of the split first-run flow: camera + microphone only. */
+export async function ensureCameraPermissions(): Promise<NativePermStates | null> {
+  const b = bridge();
+  if (!b?.requestCameraPermissions) return ensureNativePermissions();
+  try {
+    return await b.requestCameraPermissions();
+  } catch {
+    return null;
+  }
+}
+
+/** Step 2, solo — fired after the camera is already up and stable. */
+export async function ensureLocationPermission(): Promise<NativePermStates | null> {
+  const b = bridge();
+  if (!b?.requestLocationPermission) return null;
+  try {
+    return await b.requestLocationPermission();
   } catch {
     return null;
   }

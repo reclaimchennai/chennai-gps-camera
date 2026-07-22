@@ -61,9 +61,20 @@ public class MainActivity extends BridgeActivity {
                 }
                 if (allHeld) {
                     final String[] resources = request.getResources();
-                    runOnUiThread(() -> request.grant(resources));
+                    runOnUiThread(() -> {
+                        try {
+                            request.grant(resources);
+                        } catch (Exception ignored) {
+                            // request already answered/cancelled by the
+                            // WebView (capacitor#6881 class) — never crash
+                        }
+                    });
                 } else {
-                    super.onPermissionRequest(request);
+                    try {
+                        super.onPermissionRequest(request);
+                    } catch (Exception ignored) {
+                        // same guard for Capacitor's own path
+                    }
                 }
             }
         });
