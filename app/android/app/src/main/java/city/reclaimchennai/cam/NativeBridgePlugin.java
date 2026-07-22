@@ -53,10 +53,20 @@ import java.util.UUID;
         @Permission(alias = "location", strings = {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
+        }),
+        @Permission(alias = "storage", strings = {
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
         })
     }
 )
 public class NativeBridgePlugin extends Plugin {
+
+    /** Permission states only — never prompts. The web layer uses this to
+     *  decide whether to show the first-run "Enable camera" gate. */
+    @PluginMethod
+    public void checkMediaPermissions(PluginCall call) {
+        resolvePermissionStates(call);
+    }
 
     /**
      * First-run fix: request the Android runtime permissions NATIVELY,
@@ -74,11 +84,10 @@ public class NativeBridgePlugin extends Plugin {
             resolvePermissionStates(call);
             return;
         }
-        requestPermissionForAliases(
-            new String[] { "camera", "microphone", "location" },
-            call,
-            "mediaPermsCallback"
-        );
+        String[] aliases = Build.VERSION.SDK_INT < 29
+            ? new String[] { "camera", "microphone", "location", "storage" }
+            : new String[] { "camera", "microphone", "location" };
+        requestPermissionForAliases(aliases, call, "mediaPermsCallback");
     }
 
     @PermissionCallback

@@ -73,8 +73,10 @@ function getPoseLandmarker(): Promise<PoseLandmarkerT | null> {
       return await PoseLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: "/models/pose_landmarker_lite.task" },
         runningMode: "IMAGE",
-        numPoses: 5,
-        minPoseDetectionConfidence: 0.4,
+        // 8 poses / 0.3: street scenes routinely hold more than five
+        // people, and distant or side-on figures score low
+        numPoses: 8,
+        minPoseDetectionConfidence: 0.3,
       });
     } catch {
       return null;
@@ -192,15 +194,17 @@ export async function detectFaces(
     // multi-scale tiling: the short-range model only sees faces that are
     // reasonably large in ITS input, so distant subjects need zoomed-in
     // passes. Two pyramid levels of overlapping tiles:
-    //   - 2×2 at 60% of each dimension  (~1.7× zoom)
-    //   - 3×3 at 40% of each dimension  (~2.5× zoom — catches the small,
-    //     several-metres-away faces the field reports flagged)
+    //   - 2×2 at 60% of each dimension   (~1.7× zoom)
+    //   - 3×3 at 40% of each dimension   (~2.5× zoom)
+    //   - 4×4 at 25% of each dimension   (~4× zoom — a face 5 m away in a
+    //     1080p frame is ~35 px; only at this zoom does it reach the
+    //     short-range model's working size)
     // Capture/editor only; the live viewfinder stays single-pass.
     if (thorough && Math.max(w, h) >= 512) {
       const tile = document.createElement("canvas");
       const tctx = tile.getContext("2d");
       if (tctx) {
-        const levels: number[] = [0.6, 0.4];
+        const levels: number[] = [0.6, 0.4, 0.25];
         for (const frac of levels) {
           const tw = Math.round(w * frac);
           const th = Math.round(h * frac);

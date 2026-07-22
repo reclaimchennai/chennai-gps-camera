@@ -12,7 +12,11 @@ import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { useLiveStore, useSettingsStore } from "../store";
-import { isNativeApp, ensureNativePermissions } from "../lib/native";
+import {
+  isNativeApp,
+  ensureNativePermissions,
+  checkNativePermissions,
+} from "../lib/native";
 import { navigate } from "../nav";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
@@ -20,7 +24,7 @@ import { detectFaces, type DetectedBox } from "../lib/detect/faces";
 import { pickRecordingMime, finalizeVideoBlob } from "../lib/video/postprocess";
 import { downloadBlob, suggestedName } from "../lib/share";
 import type { VideoRecord } from "../types";
-import { Zap, SwitchCamera, Settings, Images } from "lucide-react";
+import { Zap, SwitchCamera, Settings, Images, Camera } from "lucide-react";
 
 type Mode = "photo" | "video";
 
@@ -86,6 +90,36 @@ export default function CameraView({ active }: { active: boolean }) {
   // ---- camera lifecycle (pre-warm on mount, §2) ---------------------
   // One stream serves both modes — startCam only runs on mount, camera
   // flip, and visibility restore. Photo/video switching never touches it.
+  // First-run permission gate (native): NOTHING camera-related runs until
+  // the Android permissions are actually held. getUserMedia racing the OS
+  // dialogs is what poisoned the first launch (WebView caches the denial
+  // for the page's lifetime — black camera until restart, capacitor#6881),
+  // so the ONLY first-run prompt source is the explicit gate button below.
+  //   "unknown"  → still checking (native boot)
+  //   "needed"   → show the Enable-camera gate instead of a black box
+  //   "denied"   → user refused; point at system settings
+  //   "granted"  → normal camera lifecycle
+  const [permState, setPermState] = useState<
+    "unknown" | "needed" | "denied" | "granted"
+  >(() => (isNativeApp() ? "unknown" : "granted"));
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    void checkNativePermissions().then((s) => {
+      // old APK bridge (null) → behave as before rather than blocking
+      setPermState(s === null || s.camera ? "granted" : "needed");
+    });
+  }, []);
+  const requestPermissions = useCallback(async () => {
+    const s = await ensureNativePermissions();
+    if (s === null || s.camera) {
+      setPermState("granted");
+      // location was granted in the same flow — geolocation can start now
+      window.dispatchEvent(new Event("gpscam:perms-granted"));
+    } else {
+      setPermState("denied");
+    }
+  }, []);
+
   const camStarting = useRef(false);
   const startCam = useCallback(async (_m?: Mode) => {
     if (camStarting.current) return;
@@ -93,11 +127,6 @@ export default function CameraView({ active }: { active: boolean }) {
     setReady(false);
     setCamError(null);
     try {
-      // FIRST-RUN FIX: get the Android runtime grants natively BEFORE the
-      // first getUserMedia. A getUserMedia racing the OS dialog gets a
-      // denial the WebView caches for the whole page — black viewfinder
-      // until app restart. No-op on web / once granted.
-      await ensureNativePermissions();
       await camera.start();
       if (videoRef.current) camera.attach(videoRef.current);
       setReady(true);
@@ -111,38 +140,24 @@ export default function CameraView({ active }: { active: boolean }) {
     }
   }, []);
 
-  // Fresh-install self-heal: if the first start failed (the OS permission
-  // dialog was still up when the app booted), keep retrying quietly —
-  // the moment the grant lands, the viewfinder comes alive without the
-  // user having to find a Retry button or restart the app.
+  // Self-heal: transient start failures (camera busy after a phone call,
+  // slow HAL) retry quietly. Only runs once permissions are held, so it
+  // can no longer race a permission dialog.
   useEffect(() => {
-    if (!active || ready) return;
+    if (!active || ready || permState !== "granted") return;
     let tries = 0;
     const t = window.setInterval(() => {
-      tries++;
-      if (tries >= 10) {
+      if (tries++ >= 10) {
         window.clearInterval(t);
-        return;
-      }
-      // Last resort (native only): if repeated starts still fail, the
-      // WebView has almost certainly cached a permission denial from the
-      // first-run race — reload the page ONCE this session, which is
-      // exactly what "restart the app" used to fix by hand.
-      if (
-        tries === 4 &&
-        isNativeApp() &&
-        !sessionStorage.getItem("gpscam-cam-reloaded")
-      ) {
-        sessionStorage.setItem("gpscam-cam-reloaded", "1");
-        location.reload();
         return;
       }
       if (!camStarting.current) void startCam(modeRef.current);
     }, 3000);
     return () => window.clearInterval(t);
-  }, [active, ready, startCam]);
+  }, [active, ready, permState, startCam]);
 
   useEffect(() => {
+    if (permState !== "granted") return;
     void startCam(modeRef.current);
     const onVis = () => {
       if (document.hidden) {
@@ -158,7 +173,7 @@ export default function CameraView({ active }: { active: boolean }) {
       document.removeEventListener("visibilitychange", onVis);
       camera.stop();
     };
-  }, [startCam]);
+  }, [permState, startCam]);
 
   // ---- live sound meter (watermark "Sound level" field) ---------------
   const soundOn = useSettingsStore((s) => s.watermark.fields.soundLevel);
@@ -793,7 +808,31 @@ export default function CameraView({ active }: { active: boolean }) {
           <canvas ref={overlayRef} className="cam-overlay" />
         </div>
 
-        {camError && (
+        {(permState === "needed" || permState === "denied") && (
+          <div className="empty-note" style={{ position: "absolute", inset: "26% 24px auto" }}>
+            <Camera size={34} style={{ opacity: 0.8 }} />
+            <div style={{ marginTop: 10, fontWeight: 600 }}>
+              Camera &amp; location access
+            </div>
+            <div style={{ marginTop: 8, fontSize: 13, lineHeight: 1.5 }}>
+              Photos are stamped with your location entirely on this phone —
+              nothing is uploaded anywhere.
+            </div>
+            {permState === "denied" && (
+              <div style={{ marginTop: 8, fontSize: 13, color: "var(--danger, #f87171)" }}>
+                Permission was declined. Enable Camera and Microphone for
+                this app in your phone&apos;s Settings, then try again.
+              </div>
+            )}
+            <div style={{ marginTop: 16 }}>
+              <button className="primary-btn" onClick={() => void requestPermissions()}>
+                {permState === "denied" ? "Try again" : "Enable camera"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {camError && permState === "granted" && (
           <div className="empty-note" style={{ position: "absolute", inset: "30% 20px auto" }}>
             {camError}
             <div style={{ marginTop: 16 }}>

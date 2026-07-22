@@ -46,6 +46,17 @@ interface NativeBridgePlugin {
     microphone: boolean;
     location: boolean;
   }>;
+  checkMediaPermissions(): Promise<{
+    camera: boolean;
+    microphone: boolean;
+    location: boolean;
+  }>;
+}
+
+export interface NativePermStates {
+  camera: boolean;
+  microphone: boolean;
+  location: boolean;
 }
 
 interface CapacitorGlobal {
@@ -65,20 +76,31 @@ function bridge(): NativeBridgePlugin | undefined {
   return cap()?.Plugins?.NativeBridge;
 }
 
-/**
- * First-run fix: request Android runtime permissions NATIVELY before any
- * getUserMedia call. A getUserMedia that races the OS permission dialog
- * gets a denial the WebView caches for the page's lifetime — the camera
- * then stays black until an app restart. No-op (fast resolve) on the web
- * and once permissions are granted.
- */
-export async function ensureNativePermissions(): Promise<void> {
+/** Permission STATES, never prompting. null on web / old APKs. */
+export async function checkNativePermissions(): Promise<NativePermStates | null> {
   const b = bridge();
-  if (!b?.ensureMediaPermissions) return;
+  if (!b?.checkMediaPermissions) return null;
   try {
-    await b.ensureMediaPermissions();
+    return await b.checkMediaPermissions();
   } catch {
-    // best effort — getUserMedia will surface any real denial
+    return null;
+  }
+}
+
+/**
+ * Request Android runtime permissions NATIVELY — the ONLY prompt source
+ * on first run, fired from the explicit "Enable camera" gate so nothing
+ * races: getUserMedia is never called until this reports camera=true,
+ * and MainActivity then answers the WebView's permission relay
+ * deterministically. Returns null on web / old APKs.
+ */
+export async function ensureNativePermissions(): Promise<NativePermStates | null> {
+  const b = bridge();
+  if (!b?.ensureMediaPermissions) return null;
+  try {
+    return await b.ensureMediaPermissions();
+  } catch {
+    return null;
   }
 }
 

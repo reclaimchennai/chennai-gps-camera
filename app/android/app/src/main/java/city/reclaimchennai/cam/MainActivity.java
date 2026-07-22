@@ -2,18 +2,15 @@ package city.reclaimchennai.cam;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
-import android.os.Build;
 import android.os.Bundle;
+import android.webkit.PermissionRequest;
 import android.webkit.WebView;
 
 import androidx.activity.OnBackPressedCallback;
-import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.getcapacitor.BridgeActivity;
-
-import java.util.ArrayList;
-import java.util.List;
+import com.getcapacitor.BridgeWebChromeClient;
 
 public class MainActivity extends BridgeActivity {
 
@@ -22,7 +19,54 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NativeBridgePlugin.class);
         super.onCreate(savedInstanceState);
         setupBackNavigation();
-        requestCorePermissions();
+        setupDeterministicPermissionGrants();
+        // NOTE: deliberately NO permission request here. First-run
+        // permissions are requested by the web layer's explicit
+        // "Enable camera" gate (single, user-initiated flow). Boot-time
+        // requests used to race the WebView's own getUserMedia prompt
+        // relay and Capacitor's plugin launcher (capacitor#6881), leaving
+        // the WebView with a cached denial → black camera until restart.
+    }
+
+    /**
+     * Deterministic WebView permission grants: when the app already HOLDS
+     * the Android camera/mic permissions, answer the WebView's
+     * getUserMedia permission request immediately and affirmatively —
+     * never re-entering Capacitor's async request flow, whose race
+     * (grant()/deny() double-call, capacitor#6881) is what poisoned
+     * first-run sessions. When permissions are NOT yet held, defer to
+     * Capacitor's default handling (the web layer's gate ensures this
+     * path is never hit in practice).
+     */
+    private void setupDeterministicPermissionGrants() {
+        WebView wv = bridge.getWebView();
+        if (wv == null) return;
+        wv.setWebChromeClient(new BridgeWebChromeClient(bridge) {
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {
+                boolean allHeld = true;
+                for (String res : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(res)
+                        && ContextCompat.checkSelfPermission(
+                                MainActivity.this, Manifest.permission.CAMERA)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        allHeld = false;
+                    }
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res)
+                        && ContextCompat.checkSelfPermission(
+                                MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        allHeld = false;
+                    }
+                }
+                if (allHeld) {
+                    final String[] resources = request.getResources();
+                    runOnUiThread(() -> request.grant(resources));
+                } else {
+                    super.onPermissionRequest(request);
+                }
+            }
+        });
     }
 
     /**
@@ -46,54 +90,5 @@ public class MainActivity extends BridgeActivity {
                 }
             }
         });
-    }
-
-    /**
-     * Fresh-install race: the web app boots (and starts camera + GPS)
-     * while the permission dialog is still up, so its first attempts
-     * fail. Once the user answers, reload the WebView so everything
-     * starts cleanly with the permissions in hand. Upgrades never hit
-     * this because their grants carry over.
-     */
-    @Override
-    public void onRequestPermissionsResult(
-        int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == 9001) {
-            boolean anyGranted = false;
-            for (int r : grantResults) {
-                if (r == PackageManager.PERMISSION_GRANTED) anyGranted = true;
-            }
-            if (anyGranted && bridge != null && bridge.getWebView() != null) {
-                bridge.getWebView().post(() -> bridge.getWebView().reload());
-            }
-        }
-    }
-
-    /**
-     * A camera app is useless without these — ask up front instead of
-     * relying on the WebView to relay each getUserMedia / geolocation
-     * prompt mid-capture.
-     */
-    private void requestCorePermissions() {
-        String[] wanted = new String[] {
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-        };
-        List<String> missing = new ArrayList<>();
-        for (String p : wanted) {
-            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) {
-                missing.add(p);
-            }
-        }
-        if (Build.VERSION.SDK_INT < 29
-            && ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                != PackageManager.PERMISSION_GRANTED) {
-            missing.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-        }
-        if (!missing.isEmpty()) {
-            ActivityCompat.requestPermissions(this, missing.toArray(new String[0]), 9001);
-        }
     }
 }

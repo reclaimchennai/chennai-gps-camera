@@ -167,13 +167,6 @@ export default function MediaDetailView({ id }: { id: string }) {
         return;
       }
       setRec(r);
-      // plate scans live in an in-memory queue — one that was pending when
-      // the app closed is lost. plates===undefined means "never scanned",
-      // so opening the photo re-queues it (no-op when the setting is off
-      // or it was already scanned; [] marks a completed empty scan).
-      if (r.kind === "photo" && r.plates === undefined) {
-        queuePlateScan(r.id);
-      }
       let all = await listMedia();
       // group-scoped swiping: inside a video's stack, the carousel walks
       // ONLY that group (video first, frames in capture order); in the
@@ -558,7 +551,6 @@ export default function MediaDetailView({ id }: { id: string }) {
     await putBlob(frameRec.id, "thumb", thumb);
     await putMedia(frameRec);
     scheduleDownloads();
-    queuePlateScan(frameRec.id);
   }, [rec]);
 
   if (!rec) return null;
@@ -760,7 +752,19 @@ export default function MediaDetailView({ id }: { id: string }) {
             timeStyle: "short",
           })}
         </h1>
-        <button className="icon-btn" onClick={() => setInfo(true)} aria-label="Info">
+        <button
+          className="icon-btn"
+          onClick={() => {
+            setInfo(true);
+            // user-initiated plate OCR: the ⓘ button is the ONLY trigger —
+            // scans run on demand, never automatically (no-op when the
+            // Advanced toggle is off or this photo was already scanned)
+            if (rec.kind === "photo" && rec.plates === undefined) {
+              queuePlateScan(curId);
+            }
+          }}
+          aria-label="Info"
+        >
           <Info size={20} />
         </button>
       </header>
@@ -938,7 +942,7 @@ export default function MediaDetailView({ id }: { id: string }) {
                         ? `Plate reader failed on this device — run the test in Settings › Advanced. (${rec.plateScanError.slice(0, 80)})`
                         : rec.plates
                           ? "Plate scan: no plates found."
-                          : "Plate scan: pending…"}
+                          : "Scanning for licence plates…"}
                     </em>
                   </>
                 )}

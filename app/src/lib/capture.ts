@@ -20,7 +20,6 @@ import { scheduleDownloads } from "./downloadQueue";
 import { latLngToDigipin } from "./geo/digipin";
 import { detectFaces } from "./detect/faces";
 import { makeMosaic, blocksFor } from "./editor/shapes";
-import { queuePlateScan } from "./detect/plateQueue";
 
 /** Live address is only baked in if it was resolved near the capture point. */
 const ADDRESS_REUSE_METERS = 150;
@@ -294,8 +293,8 @@ export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
   if (needsBackfill) scheduleBackfill();
   // photos with complete info download right away (still one by one)
   if (wantsDeviceCopy) scheduleDownloads();
-  // EXPERIMENTAL plate OCR — queued after the save; no-ops when disabled
-  queuePlateScan(record.id);
+  // NOTE: plate OCR is user-initiated only (the Details ⓘ button) — no
+  // automatic scanning of every capture.
   return { record, thumb };
 }
 
