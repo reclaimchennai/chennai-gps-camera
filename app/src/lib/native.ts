@@ -61,6 +61,7 @@ interface NativeBridgePlugin {
     microphone: boolean;
     location: boolean;
   }>;
+  requestLocationNative(): Promise<{ requested: boolean }>;
 }
 
 export interface NativePermStates {
@@ -125,14 +126,25 @@ export async function ensureCameraPermissions(): Promise<NativePermStates | null
   }
 }
 
-/** Step 2, solo — fired after the camera is already up and stable. */
-export async function ensureLocationPermission(): Promise<NativePermStates | null> {
+/**
+ * Step 2, solo — fired after the camera is already up and stable. Uses
+ * the CLASSIC ActivityCompat path (nothing held across the dialog; the
+ * grant arrives as a "gpscamLocationGranted" window event), because both
+ * the Capacitor launcher path and the WebView geolocation relay crashed
+ * devices at the moment of the location grant.
+ */
+export async function requestLocationPermissionNative(): Promise<void> {
   const b = bridge();
-  if (!b?.requestLocationPermission) return null;
   try {
-    return await b.requestLocationPermission();
+    if (b?.requestLocationNative) {
+      await b.requestLocationNative();
+    } else if (b?.requestLocationPermission) {
+      // older APK bridge fallback
+      await b.requestLocationPermission();
+      window.dispatchEvent(new Event("gpscamLocationGranted"));
+    }
   } catch {
-    return null;
+    // state re-checked on next boot
   }
 }
 

@@ -3,6 +3,7 @@ package city.reclaimchennai.cam;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.webkit.GeolocationPermissions;
 import android.webkit.PermissionRequest;
 import android.webkit.WebView;
 
@@ -13,6 +14,9 @@ import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
 
 public class MainActivity extends BridgeActivity {
+
+    /** Classic ActivityCompat request code for the solo location step. */
+    public static final int REQ_LOCATION = 9107;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -77,7 +81,60 @@ public class MainActivity extends BridgeActivity {
                     }
                 }
             }
+
+            /**
+             * Geolocation relay, made DETERMINISTIC: answer from the
+             * currently-held permission state, immediately, exactly once —
+             * and never launch a native request from here. Capacitor's
+             * default relay requests permissions and can invoke this
+             * callback twice / after teardown, which is a hard WebView
+             * crash — the "app quits the moment location is granted"
+             * field report. All location granting goes through the
+             * ActivityCompat flow below instead.
+             */
+            @Override
+            public void onGeolocationPermissionsShowPrompt(
+                String origin, GeolocationPermissions.Callback callback) {
+                try {
+                    boolean held =
+                        ContextCompat.checkSelfPermission(
+                                MainActivity.this,
+                                Manifest.permission.ACCESS_FINE_LOCATION)
+                            == PackageManager.PERMISSION_GRANTED
+                        || ContextCompat.checkSelfPermission(
+                                MainActivity.this,
+                                Manifest.permission.ACCESS_COARSE_LOCATION)
+                            == PackageManager.PERMISSION_GRANTED;
+                    callback.invoke(origin, held, false);
+                } catch (Exception ignored) {
+                    // never let the relay take the process down
+                }
+            }
         });
+    }
+
+    /**
+     * Result of the classic location request (fired by the plugin's
+     * requestLocationNative). No Capacitor launcher, no held PluginCall,
+     * no WebView callback — just a window event the web layer listens
+     * for. Nothing here can double-fire into WebView internals.
+     */
+    @Override
+    public void onRequestPermissionsResult(
+        int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_LOCATION) return;
+        try {
+            boolean granted = false;
+            for (int r : grantResults) {
+                if (r == PackageManager.PERMISSION_GRANTED) granted = true;
+            }
+            if (granted && bridge != null) {
+                bridge.triggerWindowJSEvent("gpscamLocationGranted", "{}");
+            }
+        } catch (Exception ignored) {
+            // web layer re-checks state on next boot regardless
+        }
     }
 
     /**

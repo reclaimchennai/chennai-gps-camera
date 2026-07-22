@@ -46,21 +46,23 @@ initTheme(); // system theme immediately; re-applied once settings hydrate
 startOrientationWatch(); // in-place UI rotation for landscape shooting
 void hydrateSettings().then(() => {
   applyTheme();
-  // First-run (native): geolocation must not fire its own permission
-  // prompt while the camera gate flow runs — location starts after the
-  // gate's single combined grant. Web + already-granted boots: immediate.
+  // Native: geolocation NEVER starts before the location grant is
+  // confirmed — an ungranted watchPosition fires the WebView geolocation
+  // relay, whose grant callback was the first-run crash. FAIL-SAFE: an
+  // unknown state (null) also waits rather than risking the relay.
+  // Web: immediate as always (the browser prompt is fine there).
   void (async () => {
     const { isNativeApp, checkNativePermissions } = await import("./lib/native");
-    if (isNativeApp()) {
-      const s = await checkNativePermissions();
-      if (s && !s.location) {
-        window.addEventListener("gpscam:perms-granted", () => startLocation(), {
-          once: true,
-        });
-        return;
-      }
+    if (!isNativeApp()) {
+      startLocation();
+      return;
     }
-    startLocation();
+    // grant events from either the native ActivityCompat result or any
+    // legacy path; startLocation() is idempotent so both may fire
+    window.addEventListener("gpscamLocationGranted", () => startLocation());
+    window.addEventListener("gpscam:perms-granted", () => startLocation());
+    const s = await checkNativePermissions();
+    if (s?.location) startLocation();
   })();
   startCompass();
   startLiveAddress();

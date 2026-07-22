@@ -32,36 +32,78 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   ]);
 }
 
+/**
+ * Engine-start retry ladder: WebView environments differ in what they
+ * tolerate (blob-URL workers, wasm SIMD), and the field symptom was a
+ * clean 90 s start timeout — so instead of betting on one configuration,
+ * try each combination with a short timeout until one works, and cache
+ * the winner in localStorage so later launches start instantly with it.
+ */
+const ENGINE_CONFIGS = [
+  { workerBlobURL: false, core: "/ocr/tesseract-core-simd-lstm.wasm.js" },
+  { workerBlobURL: true, core: "/ocr/tesseract-core-simd-lstm.wasm.js" },
+  { workerBlobURL: false, core: "/ocr/tesseract-core-lstm.wasm.js" },
+  { workerBlobURL: true, core: "/ocr/tesseract-core-lstm.wasm.js" },
+];
+const CONFIG_KEY = "gpscam-ocr-config";
+
 function getWorker(): Promise<import("tesseract.js").Worker | null> {
   workerPromise ??= (async () => {
+    const { createWorker } = await import("tesseract.js");
+    // known-good config first (from a previous successful start)
+    let configs = ENGINE_CONFIGS;
     try {
-      const { createWorker } = await import("tesseract.js");
-      const worker = await withTimeout(createWorker("eng", 1, {
-        workerPath: "/ocr/worker.min.js",
-        corePath: "/ocr/tesseract-core-simd-lstm.wasm.js",
-        langPath: "/ocr", // fetches /ocr/eng.traineddata.gz
-        // load the worker script DIRECTLY (same-origin) instead of the
-        // default blob-URL wrapper — blob workers are unreliable in some
-        // Android WebViews and were the likely cause of the reader doing
-        // nothing at all on device
-        workerBlobURL: false,
-        errorHandler: (e: unknown) => {
-          engineError = String(e).slice(0, 300);
-        },
-      }), 90_000, "OCR engine start");
-      await worker.setParameters({
-        tessedit_char_whitelist:
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -.",
-      });
-      engineError = null;
-      return worker;
-    } catch (e) {
-      engineError = String(e).slice(0, 300);
-      // allow a later retry (a transient fetch failure shouldn't wedge
-      // the engine for the whole session)
-      workerPromise = null;
-      return null;
+      const saved = localStorage.getItem(CONFIG_KEY);
+      if (saved != null) {
+        const i = Number(saved);
+        if (ENGINE_CONFIGS[i]) {
+          configs = [
+            ENGINE_CONFIGS[i],
+            ...ENGINE_CONFIGS.filter((_, k) => k !== i),
+          ];
+        }
+      }
+    } catch {
+      // localStorage unavailable — full ladder
     }
+    const errors: string[] = [];
+    for (const cfg of configs) {
+      try {
+        const worker = await withTimeout(
+          createWorker("eng", 1, {
+            workerPath: "/ocr/worker.min.js",
+            corePath: cfg.core,
+            langPath: "/ocr", // fetches /ocr/eng.traineddata.gz
+            workerBlobURL: cfg.workerBlobURL,
+            errorHandler: (e: unknown) => {
+              engineError = String(e).slice(0, 300);
+            },
+          }),
+          45_000,
+          `OCR engine start (${cfg.core.includes("simd") ? "simd" : "plain"}/${cfg.workerBlobURL ? "blob" : "direct"})`
+        );
+        await worker.setParameters({
+          tessedit_char_whitelist:
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -.",
+        });
+        engineError = null;
+        try {
+          localStorage.setItem(
+            CONFIG_KEY,
+            String(ENGINE_CONFIGS.indexOf(cfg))
+          );
+        } catch {
+          // fine — ladder just runs again next session
+        }
+        return worker;
+      } catch (e) {
+        errors.push(String(e).slice(0, 120));
+      }
+    }
+    engineError = errors.join(" | ").slice(0, 300);
+    // allow a later retry (a transient failure shouldn't wedge the session)
+    workerPromise = null;
+    return null;
   })();
   return workerPromise;
 }

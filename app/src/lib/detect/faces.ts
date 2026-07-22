@@ -54,9 +54,9 @@ function getFaceDetector(): Promise<FaceDetectorT | null> {
           modelAssetPath: "/models/blaze_face_short_range.tflite",
         },
         runningMode: "IMAGE",
-        // 0.3: the short-range model scores distant faces low — the IoU
-        // dedupe + pose cross-check keep false positives in hand
-        minDetectionConfidence: 0.3,
+        // 0.4 — lowering this (tried at 0.3) made the deep tile passes
+        // blur random textures; precision beats marginal extra recall
+        minDetectionConfidence: 0.4,
       });
     } catch {
       return null;
@@ -73,10 +73,10 @@ function getPoseLandmarker(): Promise<PoseLandmarkerT | null> {
       return await PoseLandmarker.createFromOptions(fileset, {
         baseOptions: { modelAssetPath: "/models/pose_landmarker_lite.task" },
         runningMode: "IMAGE",
-        // 8 poses / 0.3: street scenes routinely hold more than five
-        // people, and distant or side-on figures score low
-        numPoses: 8,
-        minPoseDetectionConfidence: 0.3,
+        // 0.4 confidence — 0.3 flagged random objects as heads; 6 poses
+        // keeps a margin over the old 5 without the noise
+        numPoses: 6,
+        minPoseDetectionConfidence: 0.4,
       });
     } catch {
       return null;
@@ -196,15 +196,16 @@ export async function detectFaces(
     // passes. Two pyramid levels of overlapping tiles:
     //   - 2×2 at 60% of each dimension   (~1.7× zoom)
     //   - 3×3 at 40% of each dimension   (~2.5× zoom)
-    //   - 4×4 at 25% of each dimension   (~4× zoom — a face 5 m away in a
-    //     1080p frame is ~35 px; only at this zoom does it reach the
-    //     short-range model's working size)
+    // (a deeper 4×4/25% level was tried and REMOVED: its tiny crops made
+    // the detector hallucinate faces in textures — random objects got
+    // blurred. Truly distant faces need a full-range model, not more
+    // zoom on the short-range one.)
     // Capture/editor only; the live viewfinder stays single-pass.
     if (thorough && Math.max(w, h) >= 512) {
       const tile = document.createElement("canvas");
       const tctx = tile.getContext("2d");
       if (tctx) {
-        const levels: number[] = [0.6, 0.4, 0.25];
+        const levels: number[] = [0.6, 0.4];
         for (const frac of levels) {
           const tw = Math.round(w * frac);
           const th = Math.round(h * frac);

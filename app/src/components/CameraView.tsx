@@ -16,7 +16,7 @@ import {
   isNativeApp,
   checkNativePermissions,
   ensureCameraPermissions,
-  ensureLocationPermission,
+  requestLocationPermissionNative,
 } from "../lib/native";
 import { navigate } from "../nav";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
@@ -112,11 +112,7 @@ export default function CameraView({ active }: { active: boolean }) {
       // location missing (e.g. the app died between the split steps) →
       // finish the solo location request once the camera is up
       if (s && s.camera && !s.location) {
-        window.setTimeout(() => {
-          void ensureLocationPermission().then(() => {
-            window.dispatchEvent(new Event("gpscam:perms-granted"));
-          });
-        }, 1500);
+        window.setTimeout(() => void requestLocationPermissionNative(), 1500);
       }
     });
   }, []);
@@ -130,11 +126,7 @@ export default function CameraView({ active }: { active: boolean }) {
     const s = await ensureCameraPermissions();
     if (s === null || s.camera) {
       setPermState("granted");
-      window.setTimeout(() => {
-        void ensureLocationPermission().then(() => {
-          window.dispatchEvent(new Event("gpscam:perms-granted"));
-        });
-      }, 1200);
+      window.setTimeout(() => void requestLocationPermissionNative(), 1200);
     } else {
       setPermState("denied");
     }

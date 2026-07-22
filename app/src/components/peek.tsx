@@ -19,9 +19,16 @@ export function usePeek() {
   const suppressClickRef = useRef(false);
   const urlRef = useRef<string | null>(null);
 
+  const openedAtRef = useRef(0);
+
   const close = useCallback(() => {
     window.clearTimeout(timerRef.current);
     startRef.current = null;
+    // a swallowed-click flag must never outlive the peek by more than a
+    // beat, or the NEXT tap gets eaten ("gallery taps randomly dead")
+    window.setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 350);
     setPeek((p) => {
       if (p) {
         // give the browser a beat to stop using the blob URL
@@ -33,15 +40,26 @@ export function usePeek() {
     });
   }, []);
 
-  // release anywhere (finger may have drifted off the cell) ends the peek
+  // Release ends the peek — but long-press makes browsers fire a
+  // pointercancel the instant the gesture is recognised, which used to
+  // slam the peek shut as soon as it opened. So: pointercancel NEVER
+  // closes; the real end signals are pointerup/touchend (touchend still
+  // fires on lift even after a pointercancel), with a minimum display
+  // time so a racing lift can't blink the preview.
   useEffect(() => {
     if (!peek) return;
-    const end = () => close();
+    const end = () => {
+      if (Date.now() - openedAtRef.current < 300) return;
+      close();
+    };
+    const tapAway = () => close(); // any new touch dismisses immediately
     window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
+    window.addEventListener("touchend", end);
+    window.addEventListener("pointerdown", tapAway);
     return () => {
       window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("touchend", end);
+      window.removeEventListener("pointerdown", tapAway);
     };
   }, [peek, close]);
 
@@ -59,6 +77,7 @@ export function usePeek() {
           const url = URL.createObjectURL(blob);
           urlRef.current = url;
           suppressClickRef.current = true;
+          openedAtRef.current = Date.now();
           setPeek({ rec, url });
         })();
       }, HOLD_MS);
@@ -78,6 +97,8 @@ export function usePeek() {
       startRef.current = null;
     },
     onPointerCancel: () => {
+      // cancel only the PENDING timer — an already-open peek stays open
+      // (browsers fire pointercancel the moment a long-press registers)
       window.clearTimeout(timerRef.current);
       startRef.current = null;
     },

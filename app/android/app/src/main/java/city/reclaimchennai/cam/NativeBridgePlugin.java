@@ -120,6 +120,33 @@ public class NativeBridgePlugin extends Plugin {
             new String[] { "location" }, call, "mediaPermsCallback");
     }
 
+    /**
+     * Location via CLASSIC ActivityCompat — no Capacitor launcher, no
+     * PluginCall held across the dialog, no WebView geolocation callback.
+     * Resolves immediately; the grant lands as a "gpscamLocationGranted"
+     * window event from MainActivity.onRequestPermissionsResult. This
+     * replaced the launcher-based path after field crashes the moment
+     * location was granted.
+     */
+    @PluginMethod
+    public void requestLocationNative(PluginCall call) {
+        try {
+            androidx.core.app.ActivityCompat.requestPermissions(
+                getActivity(),
+                new String[] {
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                },
+                MainActivity.REQ_LOCATION
+            );
+        } catch (Exception ignored) {
+            // state re-checked on next boot regardless
+        }
+        JSObject out = new JSObject();
+        out.put("requested", true);
+        call.resolve(out);
+    }
+
     @PermissionCallback
     private void mediaPermsCallback(PluginCall call) {
         try {
