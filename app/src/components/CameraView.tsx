@@ -116,19 +116,50 @@ export default function CameraView({ active }: { active: boolean }) {
       }
     });
   }, []);
+  const permRequesting = useRef(false);
+  const [permBusy, setPermBusy] = useState(false);
   const requestPermissions = useCallback(async () => {
-    // SPLIT flow — the combined 3-permission request crashed some devices
-    // at its tail. Step 1: camera + mic only; the viewfinder comes alive
-    // immediately (visible success). Step 2: location, requested SOLO a
-    // beat later over the live camera. Each step is atomic and the boot
-    // check makes the whole flow resumable, so even an OS kill between
-    // steps just picks up where it left off on the next launch.
-    const s = await ensureCameraPermissions();
-    if (s === null || s.camera) {
-      setPermState("granted");
-      window.setTimeout(() => void requestLocationPermissionNative(), 1200);
-    } else {
-      setPermState("denied");
+    // SPLIT flow — camera + mic first (viewfinder comes alive), location
+    // solo afterwards. Two hard-won rules encoded here:
+    //  1. NEVER trust the request promise alone: fast grants can lose the
+    //     plugin callback (field report: gate reappeared, needed a second
+    //     tap). A state POLL runs alongside, so the UI converges on the
+    //     truth no matter what happened to the callback.
+    //  2. NEVER start the camera inside the result-dispatch window: fast
+    //     grants crashed there. A settle delay lets the activity finish
+    //     resuming before getUserMedia runs.
+    if (permRequesting.current) return;
+    permRequesting.current = true;
+    setPermBusy(true);
+    try {
+      const req = ensureCameraPermissions().then(
+        (s) => s === null || s.camera
+      );
+      const poll = (async () => {
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => window.setTimeout(r, 1000));
+          const s = await checkNativePermissions();
+          if (s?.camera) return true;
+        }
+        return false;
+      })();
+      let granted = await Promise.race([req, poll]);
+      if (!granted) {
+        // request path said no (or timed out) — trust a fresh state check
+        granted = (await checkNativePermissions())?.camera ?? false;
+      }
+      if (granted) {
+        // settle: let the permission dialogs fully dismiss and the
+        // activity resume before the first getUserMedia
+        await new Promise((r) => window.setTimeout(r, 700));
+        setPermState("granted");
+        window.setTimeout(() => void requestLocationPermissionNative(), 2000);
+      } else {
+        setPermState("denied");
+      }
+    } finally {
+      permRequesting.current = false;
+      setPermBusy(false);
     }
   }, []);
 
@@ -837,8 +868,16 @@ export default function CameraView({ active }: { active: boolean }) {
               </div>
             )}
             <div style={{ marginTop: 16 }}>
-              <button className="primary-btn" onClick={() => void requestPermissions()}>
-                {permState === "denied" ? "Try again" : "Enable camera"}
+              <button
+                className="primary-btn"
+                disabled={permBusy}
+                onClick={() => void requestPermissions()}
+              >
+                {permBusy
+                  ? "Waiting for permission…"
+                  : permState === "denied"
+                    ? "Try again"
+                    : "Enable camera"}
               </button>
             </div>
           </div>
