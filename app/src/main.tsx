@@ -19,26 +19,43 @@ import { initDownloadQueue } from "./lib/downloadQueue";
 import { warmGeodata } from "./lib/geo/geodata";
 import { initTheme, applyTheme } from "./lib/theme";
 import { startOrientationWatch } from "./lib/orientation";
+import { isNativeApp } from "./lib/native";
 
 // Auto-update for installed PWAs: the service worker is registered in
 // autoUpdate mode (new versions skipWaiting + claim + reload the page).
 // Update checks run on launch, every 15 minutes, whenever the app comes
 // back to the foreground, and when connectivity returns — installed users
 // pick up deploys without any manual cache clearing.
+//
+// NATIVE APP: NO service worker, ever. The APK bundles all assets locally
+// (offline is inherent, updates ship as APKs), so a SW adds nothing — and
+// its first-install activate+claim RELOADED the WebView a few seconds
+// after boot (the "flicker"): grants arriving into that mid-teardown page
+// were the last first-run crash, and the post-reload boot was the gate
+// screen appearing twice. Also unregister any SW left by older versions.
 console.info(`Chennai GPS Camera build ${__BUILD_TS__}`);
-registerSW({
-  immediate: true,
-  onRegisteredSW(_url, registration) {
-    if (!registration) return;
-    const check = () => void registration.update().catch(() => {});
-    check();
-    window.setInterval(check, 15 * 60 * 1000);
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) check();
-    });
-    window.addEventListener("online", check);
-  },
-});
+if (isNativeApp()) {
+  void navigator.serviceWorker
+    ?.getRegistrations?.()
+    .then((rs) => {
+      for (const r of rs) void r.unregister();
+    })
+    .catch(() => {});
+} else {
+  registerSW({
+    immediate: true,
+    onRegisteredSW(_url, registration) {
+      if (!registration) return;
+      const check = () => void registration.update().catch(() => {});
+      check();
+      window.setInterval(check, 15 * 60 * 1000);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) check();
+      });
+      window.addEventListener("online", check);
+    },
+  });
+}
 
 // Kick off everything the first shutter tap depends on, in parallel with
 // the first render — camera pre-warm happens in CameraView's mount effect.
