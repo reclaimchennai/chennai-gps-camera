@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Backup rules (Android 12+): KEEP the user's data — the in-app gallery
+  (IndexedDB) restoring after a reinstall is a feature — but EXCLUDE the
+  WebView's service-worker registrations and caches. A restored
+  service worker from an older version controls the very first page load
+  and reloads the WebView mid-permission-flow (the fresh-install
+  "flicker" + crash). The native app never uses a service worker; only
+  stale restored ones ever existed.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="app_webview/Default/Service Worker/" />
+        <exclude domain="root" path="app_webview/Default/Cache/" />
+        <exclude domain="root" path="app_webview/Default/Code Cache/" />
+        <exclude domain="root" path="cache/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="app_webview/Default/Service Worker/" />
+        <exclude domain="root" path="app_webview/Default/Cache/" />
+        <exclude domain="root" path="app_webview/Default/Code Cache/" />
+        <exclude domain="root" path="cache/" />
+    </device-transfer>
+</data-extraction-rules>

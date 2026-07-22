@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and below variant of data_extraction_rules.xml — same
+     intent: restore user data, never restore service-worker state. -->
+<full-backup-content>
+    <exclude domain="root" path="app_webview/Default/Service Worker/" />
+    <exclude domain="root" path="app_webview/Default/Cache/" />
+    <exclude domain="root" path="app_webview/Default/Code Cache/" />
+    <exclude domain="root" path="cache/" />
+</full-backup-content>

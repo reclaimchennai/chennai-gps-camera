@@ -18,8 +18,41 @@ public class MainActivity extends BridgeActivity {
     /** Classic ActivityCompat request code for the solo location step. */
     public static final int REQ_LOCATION = 9107;
 
+    private void wipeRestoredServiceWorkers() {
+        try {
+            java.io.File webviewData =
+                new java.io.File(getApplicationInfo().dataDir, "app_webview");
+            java.io.File[] profiles = webviewData.listFiles();
+            if (profiles == null) return;
+            for (java.io.File profile : profiles) {
+                deleteRecursively(new java.io.File(profile, "Service Worker"));
+            }
+        } catch (Exception ignored) {
+            // best effort — the web layer also unregisters on boot
+        }
+    }
+
+    private static void deleteRecursively(java.io.File f) {
+        if (f == null || !f.exists()) return;
+        java.io.File[] children = f.listFiles();
+        if (children != null) {
+            for (java.io.File c : children) deleteRecursively(c);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // BEFORE the WebView exists: wipe any service-worker state that
+        // Android Auto-Backup restored from an older version. A restored
+        // SW controls the very first page load and reloads the WebView
+        // seconds into a fresh install (the "flicker") — crashing any
+        // permission flow in flight. The native app never registers a SW;
+        // only restored ones ever existed. Deleting the directory while
+        // the WebView is not yet running is safe and Chromium treats the
+        // absence as "no registrations".
+        wipeRestoredServiceWorkers();
         registerPlugin(NativeBridgePlugin.class);
         super.onCreate(savedInstanceState);
         setupBackNavigation();
