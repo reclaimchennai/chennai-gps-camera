@@ -54,7 +54,9 @@ function getFaceDetector(): Promise<FaceDetectorT | null> {
           modelAssetPath: "/models/blaze_face_short_range.tflite",
         },
         runningMode: "IMAGE",
-        minDetectionConfidence: 0.4,
+        // 0.3: the short-range model scores distant faces low — the IoU
+        // dedupe + pose cross-check keep false positives in hand
+        minDetectionConfidence: 0.3,
       });
     } catch {
       return null;
@@ -187,28 +189,40 @@ export async function detectFaces(
     anyDetectorRan = true;
     boxes.push(...runDetector(detector, source));
 
-    // multi-scale: 2×2 overlapping tiles (60% of each dimension) —
-    // effectively a 1.7× zoom per tile, so faces too small for the
-    // full-frame pass become detectable
+    // multi-scale tiling: the short-range model only sees faces that are
+    // reasonably large in ITS input, so distant subjects need zoomed-in
+    // passes. Two pyramid levels of overlapping tiles:
+    //   - 2×2 at 60% of each dimension  (~1.7× zoom)
+    //   - 3×3 at 40% of each dimension  (~2.5× zoom — catches the small,
+    //     several-metres-away faces the field reports flagged)
+    // Capture/editor only; the live viewfinder stays single-pass.
     if (thorough && Math.max(w, h) >= 512) {
-      const tw = Math.round(w * 0.6);
-      const th = Math.round(h * 0.6);
       const tile = document.createElement("canvas");
-      tile.width = tw;
-      tile.height = th;
       const tctx = tile.getContext("2d");
       if (tctx) {
-        const origins: [number, number][] = [
-          [0, 0],
-          [w - tw, 0],
-          [0, h - th],
-          [w - tw, h - th],
-        ];
-        for (const [ox, oy] of origins) {
-          tctx.clearRect(0, 0, tw, th);
-          tctx.drawImage(source, ox, oy, tw, th, 0, 0, tw, th);
-          for (const b of runDetector(detector, tile, ox, oy)) {
-            if (!boxes.some((k) => iou(k, b) > 0.35)) boxes.push(b);
+        const levels: number[] = [0.6, 0.4];
+        for (const frac of levels) {
+          const tw = Math.round(w * frac);
+          const th = Math.round(h * frac);
+          if (tw < 64 || th < 64) continue;
+          tile.width = tw;
+          tile.height = th;
+          // evenly spaced origins covering the frame with overlap
+          const steps = Math.ceil(1 / frac);
+          const origins: [number, number][] = [];
+          for (let iy = 0; iy < steps; iy++) {
+            for (let ix = 0; ix < steps; ix++) {
+              const ox = steps === 1 ? 0 : Math.round((ix * (w - tw)) / (steps - 1));
+              const oy = steps === 1 ? 0 : Math.round((iy * (h - th)) / (steps - 1));
+              origins.push([ox, oy]);
+            }
+          }
+          for (const [ox, oy] of origins) {
+            tctx.clearRect(0, 0, tw, th);
+            tctx.drawImage(source, ox, oy, tw, th, 0, 0, tw, th);
+            for (const b of runDetector(detector, tile, ox, oy)) {
+              if (!boxes.some((k) => iou(k, b) > 0.35)) boxes.push(b);
+            }
           }
         }
       }

@@ -14,11 +14,16 @@ import android.util.Base64;
 
 import androidx.core.content.FileProvider;
 
+import android.Manifest;
+
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -40,8 +45,54 @@ import java.util.UUID;
  *    full-sensor photo took seconds to cross the JS bridge, and a long
  *    video could OOM it. Chunks bound both memory and latency.
  */
-@CapacitorPlugin(name = "NativeBridge")
+@CapacitorPlugin(
+    name = "NativeBridge",
+    permissions = {
+        @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
+        @Permission(alias = "microphone", strings = { Manifest.permission.RECORD_AUDIO }),
+        @Permission(alias = "location", strings = {
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        })
+    }
+)
 public class NativeBridgePlugin extends Plugin {
+
+    /**
+     * First-run fix: request the Android runtime permissions NATIVELY,
+     * before the WebView ever calls getUserMedia. When getUserMedia fires
+     * while the OS permission dialog is still pending, the WebView caches
+     * a denial for the page's lifetime — the camera then stays black until
+     * the app restarts, no matter how often JS retries. Granting first
+     * makes the WebView's own permission check pass immediately.
+     */
+    @PluginMethod
+    public void ensureMediaPermissions(PluginCall call) {
+        if (getPermissionState("camera") == PermissionState.GRANTED
+                && getPermissionState("microphone") == PermissionState.GRANTED
+                && getPermissionState("location") == PermissionState.GRANTED) {
+            resolvePermissionStates(call);
+            return;
+        }
+        requestPermissionForAliases(
+            new String[] { "camera", "microphone", "location" },
+            call,
+            "mediaPermsCallback"
+        );
+    }
+
+    @PermissionCallback
+    private void mediaPermsCallback(PluginCall call) {
+        resolvePermissionStates(call);
+    }
+
+    private void resolvePermissionStates(PluginCall call) {
+        JSObject out = new JSObject();
+        out.put("camera", getPermissionState("camera") == PermissionState.GRANTED);
+        out.put("microphone", getPermissionState("microphone") == PermissionState.GRANTED);
+        out.put("location", getPermissionState("location") == PermissionState.GRANTED);
+        call.resolve(out);
+    }
 
     @PluginMethod
     public void reverseGeocode(PluginCall call) {

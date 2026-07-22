@@ -18,11 +18,25 @@ let workerPromise: Promise<import("tesseract.js").Worker | null> | null = null;
 /** why the engine failed to start, for the Settings self-test / details */
 let engineError: string | null = null;
 
+/** Turn silent hangs into reportable errors — a stalled wasm fetch or a
+ *  worker that never answers used to leave scans "pending" forever. */
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      window.setTimeout(
+        () => reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`)),
+        ms
+      )
+    ),
+  ]);
+}
+
 function getWorker(): Promise<import("tesseract.js").Worker | null> {
   workerPromise ??= (async () => {
     try {
       const { createWorker } = await import("tesseract.js");
-      const worker = await createWorker("eng", 1, {
+      const worker = await withTimeout(createWorker("eng", 1, {
         workerPath: "/ocr/worker.min.js",
         corePath: "/ocr/tesseract-core-simd-lstm.wasm.js",
         langPath: "/ocr", // fetches /ocr/eng.traineddata.gz
@@ -34,7 +48,7 @@ function getWorker(): Promise<import("tesseract.js").Worker | null> {
         errorHandler: (e: unknown) => {
           engineError = String(e).slice(0, 300);
         },
-      });
+      }), 90_000, "OCR engine start");
       await worker.setParameters({
         tessedit_char_whitelist:
           "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -.",
@@ -73,6 +87,28 @@ export function extractPlates(text: string): string[] {
 /** OCR an image and return any licence plates found (may be several).
  *  THROWS when the engine itself is unavailable/broken, so callers can
  *  record the failure instead of mistaking it for "no plates found". */
+/** Downscale big inputs before OCR: recognising a full-resolution photo
+ *  in a phone WebView can take minutes and looks exactly like a hang.
+ *  ~1600px keeps plate glyphs comfortably readable at a fraction of the
+ *  cost and memory. */
+async function ocrSource(
+  image: Blob | HTMLCanvasElement
+): Promise<HTMLCanvasElement> {
+  const MAX = 1600;
+  const bmp =
+    image instanceof Blob ? await createImageBitmap(image) : null;
+  const sw = bmp ? bmp.width : (image as HTMLCanvasElement).width;
+  const sh = bmp ? bmp.height : (image as HTMLCanvasElement).height;
+  const scale = Math.min(1, MAX / Math.max(sw, sh));
+  if (!bmp && scale === 1) return image as HTMLCanvasElement;
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(sw * scale));
+  c.height = Math.max(1, Math.round(sh * scale));
+  c.getContext("2d")?.drawImage(bmp ?? (image as HTMLCanvasElement), 0, 0, c.width, c.height);
+  bmp?.close();
+  return c;
+}
+
 export async function detectPlates(
   image: Blob | HTMLCanvasElement
 ): Promise<string[]> {
@@ -80,13 +116,19 @@ export async function detectPlates(
   if (!worker) {
     throw new Error(engineError ?? "OCR engine failed to start");
   }
-  const src = image instanceof Blob ? URL.createObjectURL(image) : image;
-  try {
-    const { data } = await worker.recognize(src as string | HTMLCanvasElement);
-    return extractPlates(data.text ?? "");
-  } finally {
-    if (typeof src === "string") URL.revokeObjectURL(src);
-  }
+  const src = await ocrSource(image);
+  const { data } = await withTimeout(
+    worker.recognize(src),
+    90_000,
+    "OCR recognition"
+  );
+  return extractPlates(data.text ?? "");
+}
+
+/** Warm the engine in the background (called when the setting turns on)
+ *  so the first real scan isn't also the multi-MB engine download. */
+export function warmPlateReader(): void {
+  void getWorker();
 }
 
 /** Settings self-test: OCR a synthetic plate and report exactly what

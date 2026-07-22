@@ -41,6 +41,11 @@ interface NativeBridgePlugin {
     versionName?: string;
     versionCode?: number;
   }>;
+  ensureMediaPermissions(): Promise<{
+    camera: boolean;
+    microphone: boolean;
+    location: boolean;
+  }>;
 }
 
 interface CapacitorGlobal {
@@ -58,6 +63,23 @@ export function isNativeApp(): boolean {
 
 function bridge(): NativeBridgePlugin | undefined {
   return cap()?.Plugins?.NativeBridge;
+}
+
+/**
+ * First-run fix: request Android runtime permissions NATIVELY before any
+ * getUserMedia call. A getUserMedia that races the OS permission dialog
+ * gets a denial the WebView caches for the page's lifetime — the camera
+ * then stays black until an app restart. No-op (fast resolve) on the web
+ * and once permissions are granted.
+ */
+export async function ensureNativePermissions(): Promise<void> {
+  const b = bridge();
+  if (!b?.ensureMediaPermissions) return;
+  try {
+    await b.ensureMediaPermissions();
+  } catch {
+    // best effort — getUserMedia will surface any real denial
+  }
 }
 
 /** Installed APK version, or null in the browser. */

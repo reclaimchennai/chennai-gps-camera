@@ -5,7 +5,7 @@ import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
 import { isNativeApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
-import { testPlateReader } from "../lib/detect/plates";
+import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -209,7 +209,12 @@ export default function SettingsView() {
             >
               <Toggle
                 on={settings.plateOcr}
-                onChange={(v) => setSettings({ plateOcr: v })}
+                onChange={(v) => {
+                  setSettings({ plateOcr: v });
+                  // pre-download/compile the engine now, so the first real
+                  // scan isn't also the slow warm-up
+                  if (v) warmPlateReader();
+                }}
               />
             </Row>
             {settings.plateOcr && (

@@ -12,7 +12,7 @@ import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { useLiveStore, useSettingsStore } from "../store";
-import { isNativeApp } from "../lib/native";
+import { isNativeApp, ensureNativePermissions } from "../lib/native";
 import { navigate } from "../nav";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
@@ -93,6 +93,11 @@ export default function CameraView({ active }: { active: boolean }) {
     setReady(false);
     setCamError(null);
     try {
+      // FIRST-RUN FIX: get the Android runtime grants natively BEFORE the
+      // first getUserMedia. A getUserMedia racing the OS dialog gets a
+      // denial the WebView caches for the whole page — black viewfinder
+      // until app restart. No-op on web / once granted.
+      await ensureNativePermissions();
       await camera.start();
       if (videoRef.current) camera.attach(videoRef.current);
       setReady(true);
@@ -114,8 +119,22 @@ export default function CameraView({ active }: { active: boolean }) {
     if (!active || ready) return;
     let tries = 0;
     const t = window.setInterval(() => {
-      if (tries++ >= 10) {
+      tries++;
+      if (tries >= 10) {
         window.clearInterval(t);
+        return;
+      }
+      // Last resort (native only): if repeated starts still fail, the
+      // WebView has almost certainly cached a permission denial from the
+      // first-run race — reload the page ONCE this session, which is
+      // exactly what "restart the app" used to fix by hand.
+      if (
+        tries === 4 &&
+        isNativeApp() &&
+        !sessionStorage.getItem("gpscam-cam-reloaded")
+      ) {
+        sessionStorage.setItem("gpscam-cam-reloaded", "1");
+        location.reload();
         return;
       }
       if (!camStarting.current) void startCam(modeRef.current);
@@ -293,7 +312,9 @@ export default function CameraView({ active }: { active: boolean }) {
       }
       if (detectBusyRef.current || !video || video.videoWidth === 0) return;
       detectBusyRef.current = true;
-      const scale = 384 / Math.max(video.videoWidth, video.videoHeight);
+      // 512 (was 384): distant faces need more pixels to register in the
+      // live preview too; still cheap enough for the 300 ms cadence
+      const scale = 512 / Math.max(video.videoWidth, video.videoHeight);
       const dc = (detectCanvasRef.current ??= document.createElement("canvas"));
       dc.width = Math.max(1, Math.round(video.videoWidth * scale));
       dc.height = Math.max(1, Math.round(video.videoHeight * scale));
