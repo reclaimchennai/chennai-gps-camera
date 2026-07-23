@@ -138,7 +138,7 @@ function buildLines(
   theme: Theme,
   bodyPx: number,
   maxWidth: number,
-  detailed: boolean
+  _detailed: boolean
 ): Line[] {
   const f = config.fields;
   const j = data.jurisdiction;
@@ -178,7 +178,9 @@ function buildLines(
         maxWidth * 0.5
       )
     );
-    for (const seg of wrapText(ctx, data.address, body, addrCap, detailed ? 3 : 1)) {
+    // up to 2 lines at the capped width, then ellipsize (wrapText trims
+    // the last line with "…" when it still overflows)
+    for (const seg of wrapText(ctx, data.address, body, addrCap, 2)) {
       lines.push({ text: seg, font: body, color: theme.dim });
     }
   }

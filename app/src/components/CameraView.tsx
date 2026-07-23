@@ -592,15 +592,29 @@ export default function CameraView({ active }: { active: boolean }) {
             renderWm();
           }
           cctx.drawImage(wmCanvas, 0, 0);
-          schedule();
         };
-        const rvfc = (liveVideo as HTMLVideoElement & {
-          requestVideoFrameCallback?: (cb: () => void) => number;
-        }).requestVideoFrameCallback?.bind(liveVideo);
-        const schedule = () => {
-          rafId = rvfc ? rvfc(paint) : requestAnimationFrame(paint);
+        // Drive compositing on a steady requestAnimationFrame clock, NOT
+        // the video's requestVideoFrameCallback. rVFC stops firing the
+        // moment the source <video> briefly stops *presenting* frames
+        // (which happens even while the camera is still delivering them,
+        // notably in desktop/mobile web near the end of a clip) — the
+        // canvas then froze and captureStream kept emitting that frozen
+        // frame, so the recording's last seconds were a freeze-frame over
+        // live audio. rAF keeps pulling the current live frame every tick,
+        // throttled to ~30 fps to match the capture rate, so the tail
+        // never freezes. (The Android WebView didn't hit the rVFC stall,
+        // which is why it looked fine there.)
+        let lastPaintTs = 0;
+        const loop = (ts: number) => {
+          if (compositeDone) return;
+          if (ts - lastPaintTs >= 1000 / 30 - 1) {
+            lastPaintTs = ts;
+            paint();
+          }
+          rafId = requestAnimationFrame(loop);
         };
         paint();
+        rafId = requestAnimationFrame(loop);
         const tracks = [
           ...cc.captureStream(30).getVideoTracks(),
           ...stream.getAudioTracks(),
@@ -608,7 +622,7 @@ export default function CameraView({ active }: { active: boolean }) {
         recStream = new MediaStream(tracks);
         stopComposite = () => {
           compositeDone = true;
-          if (!rvfc) cancelAnimationFrame(rafId);
+          cancelAnimationFrame(rafId);
         };
         burned = liveBlurOn;
         watermarked = true;

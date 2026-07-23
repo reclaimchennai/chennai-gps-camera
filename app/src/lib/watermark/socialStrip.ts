@@ -16,6 +16,76 @@ const ICON_PATHS: Record<string, string> = {
   reddit: siReddit.path,
 };
 
+/** Per-platform username domains, for stripping a pasted profile URL. */
+const URL_HINT = /https?:\/\/|(?:^|\.)(?:instagram|twitter|x|youtube|youtu\.be|reddit|facebook|fb|linkedin)\.[a-z]/i;
+
+/** Pull the username out of a pasted profile URL, per platform. */
+function fromUrl(key: string, raw: string): string {
+  const clean = raw
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .replace(/[?#].*$/, "") // drop query (?igsh=…) and hash
+    .replace(/\/+$/, "");
+  const parts = clean.split("/").filter(Boolean);
+  const path = parts.slice(1); // drop the domain
+  if (!path.length) return "";
+  const seg = (s?: string) => (s ?? "").replace(/^@/, "");
+  switch (key) {
+    case "linkedin": {
+      const i = path.findIndex((p) => p === "in" || p === "company");
+      return seg(i >= 0 ? path[i + 1] : path[path.length - 1]);
+    }
+    case "reddit": {
+      const i = path.findIndex((p) => p === "u" || p === "user");
+      return seg(i >= 0 ? path[i + 1] : path[path.length - 1]);
+    }
+    case "youtube": {
+      const at = path.find((p) => p.startsWith("@"));
+      if (at) return seg(at);
+      const i = path.findIndex((p) => p === "c" || p === "user" || p === "channel");
+      return seg(i >= 0 ? path[i + 1] : path[0]);
+    }
+    case "facebook":
+      return path[0] === "profile.php" ? "" : seg(path[0]);
+    default: // instagram, x/twitter, other
+      return seg(path[0]);
+  }
+}
+
+/**
+ * Format a stored handle for display: strip a pasted URL down to the bare
+ * username, drop any prefix the user typed, then apply the platform's
+ * canonical prefix.
+ *   Instagram / X / YouTube → @user
+ *   Reddit                  → /u/user
+ *   Facebook / LinkedIn     → user (URL stripped to the handle)
+ *   Other                   → the text exactly as entered
+ */
+export function formatHandle(platform: string, rawHandle: string): string {
+  const key = platform.trim().toLowerCase();
+  let h = rawHandle.trim();
+  if (URL_HINT.test(h)) h = fromUrl(key, h);
+  // strip prefixes the user may have typed (@, /u/, u/, /in/, in/)
+  h = h
+    .replace(/^\/+/, "")
+    .replace(/^(?:u|user|in)\//i, "")
+    .replace(/^@+/, "")
+    .replace(/\/+$/, "")
+    .trim();
+  if (!h) return "";
+  switch (key) {
+    case "instagram":
+    case "x":
+    case "twitter":
+    case "youtube":
+      return `@${h}`;
+    case "reddit":
+      return `/u/${h}`;
+    default: // facebook, linkedin, other — no prefix
+      return h;
+  }
+}
+
 /** LinkedIn withdrew from simple-icons — draw its rounded-square "in". */
 function drawLinkedIn(ctx: CanvasRenderingContext2D, size: number): void {
   const r = size * 0.22;
@@ -145,7 +215,8 @@ export function renderSocialStrip(
   }
 
   for (const h of handles) {
-    const text = `@${h.handle.replace(/^@/, "")}`;
+    const text = formatHandle(h.platform, h.handle);
+    if (!text) continue;
     const colLen = iconPx + iconTextGap + ctx.measureText(text).width;
     // rotate -90°: local +x points UP the screen, so the line reads
     // bottom-to-top; anchor the segment's near-card end at `cursor`
@@ -187,10 +258,12 @@ function renderRow(
   ctx.font = `500 ${fontPx}px system-ui, sans-serif`;
   ctx.textBaseline = "middle";
 
-  const items = handles.map((h) => {
-    const text = `@${h.handle.replace(/^@/, "")}`;
-    return { h, text, w: iconPx + iconTextGap + ctx.measureText(text).width };
-  });
+  const items = handles
+    .map((h) => {
+      const text = formatHandle(h.platform, h.handle);
+      return { h, text, w: iconPx + iconTextGap + ctx.measureText(text).width };
+    })
+    .filter((it) => it.text);
   const photoD = photo ? Math.round(fontPx * 2) : 0;
   const photoGap = photo && items.length ? itemGap : 0;
   const totalW =
