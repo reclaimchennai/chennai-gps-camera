@@ -172,3 +172,50 @@ console.log(
   `tamilnadu.json: ulb=${ulbFeatures.length} villages=${villageFeatures.length} ` +
     `size=${(out.length / 1048576).toFixed(1)}MB version=${pack.version}`
 );
+
+// ---- chennai pack: cantonments must override GCC wards ---------------
+// The chennai pack outranks tamilnadu inside its bbox, and its ward
+// polygons (older source) wrongly COVER the cantonment areas — TNGIS's
+// mosaic has genuine holes there, this dataset doesn't. Cantonment
+// Boards are Ministry of Defence territory, not GCC, so both polygons
+// are PREPENDED to the chennai ulb layer: lookup returns the first
+// containing feature, so the cantonment claims the point before any
+// overlapping GCC/Tambaram ward can.
+const chennai = JSON.parse(
+  readFileSync(join(PACKS, "chennai.json"), "utf8")
+);
+chennai.layers.ulb.features = chennai.layers.ulb.features.filter(
+  (f) => f.properties?.kind !== "cantonment" // idempotent re-runs
+);
+const cantFeatures = cantSrc.features.map((f) => {
+  const p = f.properties;
+  return withBbox(f, {
+    corp: p.name,
+    city: String(p.name).replace(/\s*Cantonment$/i, ""),
+    district: p.board,
+    kind: "cantonment",
+  });
+});
+chennai.layers.ulb.features = [
+  ...cantFeatures,
+  ...chennai.layers.ulb.features,
+];
+if (!/OpenStreetMap/.test(chennai.attribution ?? "")) {
+  chennai.attribution =
+    `${chennai.attribution ?? ""}; cantonments © OpenStreetMap contributors (ODbL)`
+      .replace(/^; /, "");
+}
+const cBody = JSON.stringify(chennai);
+chennai.version = createHash("sha256").update(cBody).digest("hex").slice(0, 12);
+writeFileSync(join(PACKS, "chennai.json"), JSON.stringify(chennai));
+const cEntry = index.packs.find((p) => p.id === "chennai");
+cEntry.version = chennai.version;
+cEntry.attribution = chennai.attribution;
+index.version = createHash("sha256")
+  .update(index.packs.map((p) => p.version).join("|"))
+  .digest("hex")
+  .slice(0, 12);
+writeFileSync(join(PACKS, "index.json"), JSON.stringify(index, null, 1));
+console.log(
+  `chennai.json: ulb=${chennai.layers.ulb.features.length} (+${cantFeatures.length} cantonments, prepended) version=${chennai.version}`
+);
