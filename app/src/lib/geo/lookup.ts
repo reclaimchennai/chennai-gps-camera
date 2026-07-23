@@ -16,9 +16,30 @@ import { point as turfPoint } from "@turf/helpers";
 import type { Feature } from "geojson";
 import type { FeatureCollection } from "geojson";
 import type { Jurisdiction } from "../../types";
-import type { GeoPack } from "./geodata";
+import type { GeoPack, GridIndex } from "./geodata";
 
 type Pt = ReturnType<typeof turfPoint>;
+
+/** Grid-index candidate list for a point: the point's cell plus (for the
+ *  nearest-fallback's tolerance) the 3×3 neighbourhood. Falls back to
+ *  "all features" when the layer ships no grid. */
+function gridCandidates(
+  features: Feature[],
+  grid: GridIndex | undefined,
+  [x, y]: number[],
+  neighbourhood = 0
+): Feature[] {
+  if (!grid) return features;
+  const c = Math.floor((x - grid.minX) / grid.cell);
+  const r = Math.floor((y - grid.minY) / grid.cell);
+  const idx = new Set<number>();
+  for (let dc = -neighbourhood; dc <= neighbourhood; dc++) {
+    for (let dr = -neighbourhood; dr <= neighbourhood; dr++) {
+      for (const i of grid.cells[`${c + dc}_${r + dr}`] ?? []) idx.add(i);
+    }
+  }
+  return [...idx].map((i) => features[i]).filter(Boolean);
+}
 
 function pointInBbox(
   [x, y]: number[],
@@ -106,8 +127,32 @@ export function lookup(
   lng: number
 ): LookupResult {
   const pt = turfPoint([lng, lat]);
+  const coords = pt.geometry.coordinates;
 
-  const ulbF = findContainingFeature(pack.layers.ulb.features as Feature[], pt);
+  // ULBs first (grid-accelerated where the pack ships an index), then
+  // village panchayats — statewide TN packs carry every local body, so
+  // rural points resolve to their gram panchayat the same way urban ones
+  // resolve to their corporation/municipality/town panchayat. A point
+  // missing both exactly gets the 400 m nearest-edge fallback across
+  // both layers (simplification can open hairline gaps).
+  const ulbAll = pack.layers.ulb.features as Feature[];
+  const vilAll = (pack.layers.villages?.features ?? []) as Feature[];
+  let ulbF = findContainingFeature(
+    gridCandidates(ulbAll, pack.grids?.ulb, coords),
+    pt
+  );
+  if (!ulbF && vilAll.length) {
+    ulbF =
+      findContainingFeature(
+        gridCandidates(vilAll, pack.grids?.villages, coords),
+        pt
+      ) ??
+      nearestPolygon(gridCandidates(ulbAll, pack.grids?.ulb, coords, 1), pt) ??
+      nearestPolygon(
+        gridCandidates(vilAll, pack.grids?.villages, coords, 1),
+        pt
+      );
+  }
   const loF = lookupPolygon(pack.layers.lo.features as Feature[], pt);
   const trF = lookupPolygon(pack.layers.traffic.features as Feature[], pt);
 
@@ -122,6 +167,9 @@ export function lookup(
     jurisdiction.ward = up.ward;
     jurisdiction.wardName = up.wardName;
     jurisdiction.zone = up.zone;
+    // village panchayats + cantonments carry these instead of ward/zone
+    jurisdiction.block = up.block;
+    jurisdiction.district = up.district;
   } else if (lp.avadi === true) {
     // Avadi Corporation has no published ward polygons — the only
     // geometry covering it is the L&O commissionerate layer. Claim it

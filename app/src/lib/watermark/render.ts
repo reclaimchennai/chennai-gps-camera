@@ -262,6 +262,17 @@ function buildLines(
       if (f.ward && j.ward)
         zw.push(`Ward ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}`);
       if (zw.length) pushJur(zw.join(" · "));
+      // village panchayats & cantonments: no ward/zone — their locating
+      // line is "Block · District" (or the cantonment's board name),
+      // occupying the same slot in the same style
+      if (!zw.length && (f.ward || f.zone) && (j.block || j.district)) {
+        const bd: string[] = [];
+        if (j.block) bd.push(`${j.block} Block`);
+        if (j.district) {
+          bd.push(/board$/i.test(j.district) ? j.district : `${j.district} District`);
+        }
+        pushJur(bd.join(" · "));
+      }
     }
 
     const lo = f.loStation ? j.loStation : undefined;

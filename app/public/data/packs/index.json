@@ -1,5 +1,5 @@
 {
- "version": "3a7bf826e86e",
+ "version": "2c6fda2ce424",
  "packs": [
   {
    "id": "chennai",
@@ -123,9 +123,9 @@
     80.34882,
     13.56284
    ],
-   "version": "fa0a3d2982ca",
+   "version": "6fdc9259c49e",
    "bytes": 8945884,
-   "attribution": "Boundary data from public Tamil Nadu government datasets, processed by the Reclaim Chennai project"
+   "attribution": "TNGIS / Tamil Nadu Government (local bodies, village panchayats); cantonments © OpenStreetMap contributors (ODbL); police boundaries: Reclaim Chennai"
   }
  ]
 }

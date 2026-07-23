@@ -26,6 +26,11 @@ export interface Jurisdiction {
   ward?: string;
   wardName?: string; // e.g. "Sampangirama Nagar" where the data names wards
   zone?: string;
+  /** village panchayats: the development block (renders where a ULB's
+   *  "Zone · Ward" line would) */
+  block?: string;
+  /** district (village panchayats) or board name (cantonments) */
+  district?: string;
   /** corporation known but ward boundaries not yet published (Avadi) */
   wardPending?: boolean;
   loStation?: string;

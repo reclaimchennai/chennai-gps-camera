@@ -19,6 +19,20 @@ export interface PackLayers {
   lo: FeatureCollection;
   traffic: FeatureCollection;
   stations: FeatureCollection;
+  /** village panchayats — statewide packs only (TN as of now) */
+  villages?: FeatureCollection;
+}
+
+/** Fixed-cell spatial index built at pack-build time (gazetteer-style):
+ *  ~5.5 km cells → candidate feature indices, so a statewide lookup
+ *  tests a handful of polygons instead of scanning all ~15k. */
+export interface GridIndex {
+  cell: number;
+  minX: number;
+  minY: number;
+  cols: number;
+  rows: number;
+  cells: Record<string, number[]>;
 }
 
 export interface GeoPack {
@@ -28,6 +42,7 @@ export interface GeoPack {
   version: string;
   bbox: number[];
   layers: PackLayers;
+  grids?: Record<string, GridIndex>;
 }
 
 interface PackIndexEntry {

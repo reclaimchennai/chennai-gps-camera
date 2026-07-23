@@ -577,6 +577,13 @@ export default function MediaDetailView({ id }: { id: string }) {
           `Ward ${fmtWard(jd.ward)}${jd.wardName ? ` (${jd.wardName})` : ""}`
         );
       if (jd.zone && !pending) parts.push(fmtZone(jd.zone));
+      if (!jd.ward && !jd.zone) {
+        if (jd.block) parts.push(`${jd.block} Block`);
+        if (jd.district)
+          parts.push(
+            /board$/i.test(jd.district) ? jd.district : `${jd.district} District`
+          );
+      }
       lines.push(parts.filter(Boolean).join(" · "));
       if (jd.loStation) lines.push(`Police (L&O): ${jd.loStation}`);
       if (jd.trafficStation) lines.push(`Traffic: ${jd.trafficStation}`);

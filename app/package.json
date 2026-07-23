@@ -55,6 +55,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "mapshaper": "^0.7.47",
     "oxlint": "^1.71.0",
     "playwright": "^1.61.1",
     "sharp": "^0.35.3",

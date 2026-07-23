@@ -6,6 +6,7 @@
 # precached privacy policy). The service worker MUST be uncacheable.
 :8080 {
 	root * /srv/current
+	encode zstd gzip
 	file_server
 
 	# hashed build assets + data bundle: content-addressed, cache forever
