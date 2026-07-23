@@ -1180,6 +1180,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
               className="text-edit-box"
               autoFocus
               placeholder="Add text"
+              enterKeyHint="done"
               value={editingShape.text}
               rows={Math.max(1, editingShape.text.split("\n").length)}
               style={{

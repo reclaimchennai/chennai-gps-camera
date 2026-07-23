@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { Screen, Row, Toggle } from "./ui";
+import { Screen, Row, Toggle, blurOnEnter } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
 import { isNativeApp } from "../lib/native";
@@ -323,6 +323,8 @@ export default function SettingsView() {
                 style={{ width: 170 }}
                 type="password"
                 placeholder="Not set"
+                enterKeyHint="done"
+                onKeyDown={blurOnEnter}
                 value={settings.googleApiKey}
                 onChange={(e) =>
                   setSettings({ googleApiKey: e.target.value.trim() })
@@ -337,6 +339,8 @@ export default function SettingsView() {
                 style={{ width: 170 }}
                 type="password"
                 placeholder="Not set"
+                enterKeyHint="done"
+                onKeyDown={blurOnEnter}
                 value={settings.mapplsApiKey}
                 onChange={(e) =>
                   setSettings({ mapplsApiKey: e.target.value.trim() })

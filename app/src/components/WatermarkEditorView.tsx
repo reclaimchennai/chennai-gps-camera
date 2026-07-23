@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Screen, Row, Toggle } from "./ui";
+import { Screen, Row, Toggle, blurOnEnter } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
@@ -273,6 +273,8 @@ export default function WatermarkEditorView() {
                 <input
                   placeholder="Custom label text"
                   value={config.customLabelText}
+                  enterKeyHint="done"
+                  onKeyDown={blurOnEnter}
                   onChange={(e) => set({ customLabelText: e.target.value })}
                 />
               </div>

@@ -2,6 +2,18 @@ import type { ReactNode } from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { goBack } from "../nav";
 
+/**
+ * Enter commits + dismisses the keyboard on single-line inputs (the tags
+ * field's behaviour, app-wide). Values already save on change; blur is
+ * what releases the user — without it they had to gesture back out of
+ * the screen to continue.
+ */
+export function blurOnEnter(
+  e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>
+): void {
+  if (e.key === "Enter") (e.target as HTMLElement).blur();
+}
+
 export function Screen({
   title,
   children,

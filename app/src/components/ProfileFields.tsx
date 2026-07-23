@@ -61,7 +61,7 @@ const Reddit = ({ size = 15 }: { size?: number }) => (
     <path d={siReddit.path} />
   </svg>
 );
-import { Toggle } from "./ui";
+import { Toggle, blurOnEnter } from "./ui";
 import { useSettingsStore } from "../store";
 import { circleCrop } from "../lib/img";
 import { getBlob, putBlob, deleteBlob, newId } from "../lib/db";
@@ -292,6 +292,8 @@ export default function ProfileFields() {
             autoCorrect="off"
             autoComplete="off"
             spellCheck={false}
+            enterKeyHint="done"
+            onKeyDown={blurOnEnter}
             onChange={(e) => onHandleInput(h, e.target.value)}
           />
           <Toggle on={h.show} onChange={(v) => setHandle(h.id, { show: v })} />

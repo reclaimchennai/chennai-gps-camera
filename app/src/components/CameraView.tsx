@@ -91,6 +91,24 @@ export default function CameraView({ active }: { active: boolean }) {
   // ---- camera lifecycle (pre-warm on mount, §2) ---------------------
   // One stream serves both modes — startCam only runs on mount, camera
   // flip, and visibility restore. Photo/video switching never touches it.
+  // iOS browser-tab sessions cannot persist camera/mic/location grants
+  // across reloads (WebKit policy — Firefox/Chrome on iOS inherit it), so
+  // those users get re-prompted every visit. Installing to the Home
+  // Screen fixes it (standalone apps keep grants) — surface that once.
+  const [iosHint, setIosHint] = useState(false);
+  useEffect(() => {
+    if (isNativeApp()) return;
+    const standalone =
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      (navigator as { standalone?: boolean }).standalone === true;
+    const isIos =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (isIos && !standalone && !localStorage.getItem("gpscam-ios-a2hs")) {
+      setIosHint(true);
+    }
+  }, []);
+
   // First-run permission gate (native): NOTHING camera-related runs until
   // the Android permissions are actually held. getUserMedia racing the OS
   // dialogs is what poisoned the first launch (WebView caches the denial
@@ -917,6 +935,25 @@ export default function CameraView({ active }: { active: boolean }) {
             </button>
           </div>
         </div>
+
+        {iosHint && (
+          <div className="ios-a2hs-hint">
+            <span>
+              Tired of re-granting permissions each visit? Add this app to
+              your Home Screen (Share&nbsp;→&nbsp;Add to Home Screen) — the
+              installed app remembers them.
+            </span>
+            <button
+              aria-label="Dismiss"
+              onClick={() => {
+                localStorage.setItem("gpscam-ios-a2hs", "1");
+                setIosHint(false);
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {zoomLabel && (
           <div className="cam-toast" style={{ bottom: "auto", top: "20%" }}>
