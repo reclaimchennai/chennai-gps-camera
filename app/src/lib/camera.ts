@@ -240,6 +240,79 @@ export class CameraController {
     }
   }
 
+  /** Exposure-compensation range/value, when the camera exposes it
+   *  (most Android Chromium camera pipelines do). null = hide the slider. */
+  exposureInfo(): { min: number; max: number; step: number; value: number } | null {
+    const caps = (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+    const ec = caps.exposureCompensation as
+      | { min: number; max: number; step: number }
+      | undefined;
+    if (!ec || typeof ec.min !== "number" || ec.min === ec.max) return null;
+    const settings = (this.track?.getSettings?.() ?? {}) as Record<string, unknown>;
+    return {
+      min: ec.min,
+      max: ec.max,
+      step: ec.step || 0.1,
+      value:
+        typeof settings.exposureCompensation === "number"
+          ? (settings.exposureCompensation as number)
+          : 0,
+    };
+  }
+
+  /** Samsung-style brightness slider under the focus ring. */
+  async setExposure(value: number): Promise<boolean> {
+    if (!this.track) return false;
+    try {
+      await this.track.applyConstraints({
+        advanced: [
+          { exposureCompensation: value } as unknown as MediaTrackConstraintSet,
+        ],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** AF lock: freeze the lens at its current position (focusMode manual +
+   *  the current focusDistance). Returns false when the device/browser
+   *  doesn't support it, so the UI can skip the lock chip honestly. */
+  async lockFocus(): Promise<boolean> {
+    if (!this.track) return false;
+    try {
+      const caps = (this.track.getCapabilities?.() ?? {}) as Record<string, unknown>;
+      const modes = caps.focusMode as string[] | undefined;
+      if (!modes?.includes("manual")) return false;
+      const settings = (this.track.getSettings?.() ?? {}) as Record<string, unknown>;
+      const fd = settings.focusDistance as number | undefined;
+      await this.track.applyConstraints({
+        advanced: [
+          (fd != null
+            ? { focusMode: "manual", focusDistance: fd }
+            : { focusMode: "manual" }) as unknown as MediaTrackConstraintSet,
+        ],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Back to continuous autofocus (unlock). */
+  async unlockFocus(): Promise<void> {
+    if (!this.track) return;
+    try {
+      await this.track.applyConstraints({
+        advanced: [
+          { focusMode: "continuous" } as unknown as MediaTrackConstraintSet,
+        ],
+      });
+    } catch {
+      // ignore — a camera restart resets focus anyway
+    }
+  }
+
   /**
    * Grab a full-resolution frame. Returns an ImageBitmap (fast path for
    * canvas compositing) — never downscaled below the stream resolution.

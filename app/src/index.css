@@ -544,6 +544,70 @@ textarea {
   z-index: 6;
 }
 
+/* Samsung-style persistent focus UI: ring stays up with the exposure
+   slider below it; locked state turns the ring solid white */
+.focus-ui {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+}
+.focus-ui .focus-ring.hold {
+  left: 0;
+  top: 0;
+  animation: focusring-in 0.25s ease-out forwards;
+}
+.focus-ui .focus-ring.hold.locked {
+  border-color: #fff;
+  border-width: 2.5px;
+}
+.focus-lock-icon {
+  position: absolute;
+  left: 0;
+  top: -46px;
+  transform: translate(-50%, 0);
+  color: #fff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
+@keyframes focusring-in {
+  0% { opacity: 0; scale: 1.25; }
+  100% { opacity: 1; scale: 1; }
+}
+.ev-slider {
+  position: absolute;
+  left: 0;
+  top: 46px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  color: #fbbf24;
+  pointer-events: auto; /* the wrapper is pointer-events:none */
+}
+.ev-slider input[type="range"] {
+  width: 150px;
+  accent-color: #fbbf24;
+}
+.af-chip {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 15px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: 12.5px;
+}
+
 @keyframes focusring {
   0% { opacity: 1; scale: 1.3; }
   80% { opacity: 1; scale: 1; }

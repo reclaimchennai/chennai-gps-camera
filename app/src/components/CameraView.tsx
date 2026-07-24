@@ -25,7 +25,7 @@ import { detectFaces, type DetectedBox } from "../lib/detect/faces";
 import { pickRecordingMime, finalizeVideoBlob } from "../lib/video/postprocess";
 import { downloadBlob, suggestedName } from "../lib/share";
 import type { VideoRecord } from "../types";
-import { Zap, SwitchCamera, Settings, Images, Camera } from "lucide-react";
+import { Zap, SwitchCamera, Settings, Images, Camera, Sun, Lock } from "lucide-react";
 
 type Mode = "photo" | "video";
 
@@ -64,6 +64,23 @@ export default function CameraView({ active }: { active: boolean }) {
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [flashFx, setFlashFx] = useState(0);
   const [focusPos, setFocusPos] = useState<{ x: number; y: number; key: number } | null>(null);
+  // Samsung-style focus UI: exposure slider under the ring + AF lock
+  const [evInfo, setEvInfo] = useState<{ min: number; max: number; step: number } | null>(null);
+  const [evVal, setEvVal] = useState(0);
+  const [afLocked, setAfLocked] = useState(false);
+  const focusHideTimer = useRef(0);
+  const longPressTimer = useRef(0);
+  const longPressAt = useRef<{ x: number; y: number } | null>(null);
+  const lockJustFired = useRef(false);
+
+  const showFocusUi = useCallback((x: number, y: number) => {
+    setFocusPos({ x, y, key: Date.now() });
+    const info = camera.exposureInfo();
+    setEvInfo(info ? { min: info.min, max: info.max, step: info.step } : null);
+    if (info) setEvVal(info.value);
+    window.clearTimeout(focusHideTimer.current);
+    focusHideTimer.current = window.setTimeout(() => setFocusPos(null), 3200);
+  }, []);
   const [toast, setToast] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recSeconds, setRecSeconds] = useState(0);
@@ -192,6 +209,9 @@ export default function CameraView({ active }: { active: boolean }) {
       if (videoRef.current) camera.attach(videoRef.current);
       setReady(true);
       setTorch(false);
+      // fresh stream = fresh AF/exposure state
+      setAfLocked(false);
+      setFocusPos(null);
     } catch {
       setCamError(
         "Camera unavailable. Check that permission is granted and no other app is using it."
@@ -764,6 +784,22 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [active, onShutter]);
 
+  // Android app: volume buttons fire the shutter (MainActivity intercepts
+  // the key events and relays them as this window event). Debounced so
+  // key auto-repeat can't machine-gun the camera.
+  useEffect(() => {
+    if (!active) return;
+    let last = 0;
+    const onVolumeShutter = () => {
+      const now = Date.now();
+      if (now - last < 350) return;
+      last = now;
+      onShutter();
+    };
+    window.addEventListener("gpscamShutterKey", onVolumeShutter);
+    return () => window.removeEventListener("gpscamShutterKey", onVolumeShutter);
+  }, [active, onShutter]);
+
   // ---- gestures: tap-to-focus + pinch-to-zoom -----------------------------
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchBase = useRef<{ dist: number; zoom: number } | null>(null);
@@ -787,11 +823,38 @@ export default function CameraView({ active }: { active: boolean }) {
         zoom: camera.zoom,
       };
     }
-  }, []);
+    // long-press = AF lock (Samsung style): 550 ms hold, single finger,
+    // no movement — freezes the lens until tapped again / camera restart
+    window.clearTimeout(longPressTimer.current);
+    if (pointers.current.size === 1) {
+      const { clientX, clientY } = e;
+      longPressAt.current = { x: clientX, y: clientY };
+      longPressTimer.current = window.setTimeout(() => {
+        if (pointers.current.size !== 1 || !longPressAt.current) return;
+        lockJustFired.current = true; // the release must NOT count as a tap
+        void camera.lockFocus().then((ok) => {
+          if (ok) {
+            setAfLocked(true);
+            showFocusUi(clientX, clientY);
+          } else {
+            showToast("Focus lock not supported on this camera");
+          }
+        });
+      }, 550);
+    } else {
+      longPressAt.current = null;
+    }
+  }, [showFocusUi, showToast]);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // any real movement cancels a pending AF-lock long-press
+    const lp = longPressAt.current;
+    if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) {
+      window.clearTimeout(longPressTimer.current);
+      longPressAt.current = null;
+    }
     if (pointers.current.size === 2 && pinchBase.current) {
       const [a, b] = [...pointers.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
@@ -804,20 +867,35 @@ export default function CameraView({ active }: { active: boolean }) {
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
+      window.clearTimeout(longPressTimer.current);
+      longPressAt.current = null;
       const start = pointers.current.get(e.pointerId);
       pointers.current.delete(e.pointerId);
       if (pointers.current.size < 2) pinchBase.current = null;
+      if (lockJustFired.current) {
+        // this release ENDS the long-press that just locked focus —
+        // it must not read as a tap and instantly unlock again
+        lockJustFired.current = false;
+        window.setTimeout(() => setZoomLabel(null), 1200);
+        return;
+      }
       if (pointers.current.size === 0 && start) {
         const dx = e.clientX - start.x;
         const dy = e.clientY - start.y;
         if (Math.hypot(dx, dy) < 8) {
-          setFocusPos({ x: e.clientX, y: e.clientY, key: Date.now() });
+          // a tap while AF-locked unlocks first (Samsung behaviour),
+          // then refocuses at the tapped point
+          if (afLocked) {
+            setAfLocked(false);
+            void camera.unlockFocus();
+          }
+          showFocusUi(e.clientX, e.clientY);
           void camera.focusAt();
         }
       }
       window.setTimeout(() => setZoomLabel(null), 1200);
     },
-    []
+    [afLocked, showFocusUi]
   );
 
   const toggleTorch = useCallback(async () => {
@@ -991,10 +1069,55 @@ export default function CameraView({ active }: { active: boolean }) {
       )}
       {focusPos && (
         <div
-          key={focusPos.key}
-          className="focus-ring"
+          className="focus-ui"
           style={{ left: focusPos.x, top: focusPos.y }}
-        />
+        >
+          <div
+            key={focusPos.key}
+            className={`focus-ring hold${afLocked ? " locked" : ""}`}
+          />
+          {afLocked && <Lock size={13} className="focus-lock-icon" />}
+          {evInfo && (
+            <div
+              className="ev-slider"
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerMove={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+            >
+              <Sun size={14} />
+              <input
+                type="range"
+                min={evInfo.min}
+                max={evInfo.max}
+                step={evInfo.step}
+                value={evVal}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setEvVal(v);
+                  void camera.setExposure(v);
+                  // keep the UI up while the user is adjusting
+                  window.clearTimeout(focusHideTimer.current);
+                  focusHideTimer.current = window.setTimeout(
+                    () => setFocusPos(null),
+                    3200
+                  );
+                }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {afLocked && !focusPos && (
+        <button
+          className="af-chip"
+          onClick={() => {
+            setAfLocked(false);
+            void camera.unlockFocus();
+          }}
+        >
+          <Lock size={12} /> AF locked — tap to unlock
+        </button>
       )}
 
       {/* Opaque controls bar — below the viewfinder, never over it. */}

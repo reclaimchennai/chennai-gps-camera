@@ -123,13 +123,16 @@ function drawIcon(
   } else if (ICON_PATHS[key]) {
     ctx.scale(size / 24, size / 24); // simple-icons use a 24×24 viewBox
     ctx.fill(new Path2D(ICON_PATHS[key]));
-  } else {
-    // unknown platform — generic @ badge
-    ctx.font = `700 ${size}px system-ui, sans-serif`;
-    ctx.textBaseline = "top";
-    ctx.fillText("@", 0, 0);
   }
+  // unknown ("Other") platforms draw NO glyph — the text stands alone,
+  // exactly as the user typed it (hasGlyph() keeps spacing consistent)
   ctx.restore();
+}
+
+/** Platforms with a drawable logo; "Other" renders text-only. */
+function hasGlyph(platform: string): boolean {
+  const key = platform.trim().toLowerCase();
+  return key === "linkedin" || Boolean(ICON_PATHS[key]);
 }
 
 /**
@@ -217,16 +220,19 @@ export function renderSocialStrip(
   for (const h of handles) {
     const text = formatHandle(h.platform, h.handle);
     if (!text) continue;
-    const colLen = iconPx + iconTextGap + ctx.measureText(text).width;
+    const iconW = hasGlyph(h.platform) ? iconPx + iconTextGap : 0;
+    const colLen = iconW + ctx.measureText(text).width;
     // rotate -90°: local +x points UP the screen, so the line reads
     // bottom-to-top; anchor the segment's near-card end at `cursor`
     const originY = top ? cursor + colLen : cursor;
     ctx.save();
     ctx.translate(colCenter, originY);
     ctx.rotate(-Math.PI / 2);
-    drawIcon(ctx, h.platform, 0, -iconPx / 2, iconPx, "rgba(255,255,255,0.95)");
+    if (iconW) {
+      drawIcon(ctx, h.platform, 0, -iconPx / 2, iconPx, "rgba(255,255,255,0.95)");
+    }
     ctx.fillStyle = "rgba(255,255,255,0.95)";
-    ctx.fillText(text, iconPx + iconTextGap, 0);
+    ctx.fillText(text, iconW, 0);
     ctx.restore();
     // advance along the SAME column to stack the next handle end-to-end
     cursor = top ? cursor + colLen + stackGap : cursor - colLen - stackGap;
@@ -261,7 +267,8 @@ function renderRow(
   const items = handles
     .map((h) => {
       const text = formatHandle(h.platform, h.handle);
-      return { h, text, w: iconPx + iconTextGap + ctx.measureText(text).width };
+      const iconW = hasGlyph(h.platform) ? iconPx + iconTextGap : 0;
+      return { h, text, iconW, w: iconW + ctx.measureText(text).width };
     })
     .filter((it) => it.text);
   const photoD = photo ? Math.round(fontPx * 2) : 0;
@@ -304,11 +311,13 @@ function renderRow(
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    drawIcon(ctx, it.h.platform, x, centerY - iconPx / 2, iconPx, "rgba(255,255,255,0.95)");
+    if (it.iconW) {
+      drawIcon(ctx, it.h.platform, x, centerY - iconPx / 2, iconPx, "rgba(255,255,255,0.95)");
+    }
     ctx.fillStyle = "rgba(255,255,255,0.95)";
     ctx.font = `500 ${fontPx}px system-ui, sans-serif`;
     ctx.textBaseline = "middle";
-    ctx.fillText(it.text, x + iconPx + iconTextGap, centerY);
+    ctx.fillText(it.text, x + it.iconW, centerY);
     x += it.w + (i < items.length - 1 ? itemGap : 0);
   }
 

@@ -3,6 +3,7 @@ package city.reclaimchennai.cam;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.webkit.GeolocationPermissions;
 import android.webkit.PermissionRequest;
 import android.webkit.WebView;
@@ -17,6 +18,41 @@ public class MainActivity extends BridgeActivity {
 
     /** Classic ActivityCompat request code for the solo location step. */
     public static final int REQ_LOCATION = 9107;
+
+    /**
+     * Volume buttons as the shutter, like every camera app. Both keys are
+     * consumed while the app is foreground (a camera app doesn't play
+     * media, so hijacking volume is the expected trade); only the first
+     * press of a hold fires — auto-repeat is swallowed. The web layer
+     * decides what "shutter" means (photo vs start/stop recording).
+     * NOTE: the power button cannot be used — Android reserves it for the
+     * system (screen off / device-wide double-press camera shortcut) and
+     * never delivers it to apps.
+     */
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+                || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            if (event.getRepeatCount() == 0 && bridge != null) {
+                try {
+                    bridge.triggerWindowJSEvent("gpscamShutterKey", "{}");
+                } catch (Exception ignored) {
+                    // never let the relay crash a key press
+                }
+            }
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+                || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+            return true; // consumed on the way down
+        }
+        return super.onKeyUp(keyCode, event);
+    }
 
     private void wipeRestoredServiceWorkers() {
         try {
