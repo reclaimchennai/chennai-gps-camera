@@ -16,7 +16,7 @@ export default function AboutView() {
           A location-stamped camera born in Chennai, covering all of Tamil
           Nadu and major Indian cities. Every photo carries GPS coordinates,
           ward, zone, and police-jurisdiction details resolved on your
-          device — no internet needed to shoot.
+          device, with no internet needed to shoot.
         </p>
       </div>
 
@@ -27,26 +27,30 @@ export default function AboutView() {
           confirm with local authorities.</strong>
           <br />
           <br />
-          Ward, zone and (where published) police-jurisdiction data currently
-          covers: <strong>all of Tamil Nadu</strong> (every corporation,
-          municipality and town panchayat, statewide L&amp;O and Traffic
-          police), <strong>Bengaluru</strong> (GBA wards + city &amp; traffic
-          police), <strong>Hyderabad</strong> (GHMC + police),{" "}
+          Local-body and (where published) police-jurisdiction data currently
+          covers: <strong>all of Tamil Nadu</strong>, now down to
+          village level. That means every urban local body ward
+          (642 corporations, municipalities and town panchayats, 3,271 wards),
+          all 12,525 <strong>village panchayats</strong> with their block and
+          district, the St. Thomas Mount and Pallavaram Cantonment Board
+          areas, plus statewide L&amp;O and Traffic police boundaries. Also
+          covered: <strong>Bengaluru</strong> (GBA wards plus city and traffic
+          police), <strong>Hyderabad</strong> (GHMC plus police),{" "}
           <strong>Delhi</strong> (MCD wards), <strong>Kolkata</strong> (KMC
-          wards + police stations), <strong>Mumbai</strong> (BMC wards +
+          wards plus police stations), <strong>Mumbai</strong> (BMC wards plus
           police), <strong>Pune</strong> (PMC wards) and{" "}
           <strong>Visakhapatnam</strong> (GVMC wards). Region data downloads
           automatically for wherever you are and updates over the air.
           <br />
           <br />
           <strong>Avadi Corporation</strong> ward boundaries are not yet
-          published — photos there show the corporation with ward marked “not
-          yet available”. Chennai-area coverage is the validated pilot; other
-          regions carry the same “indicative” caveat.
+          published, so photos there show the corporation with ward marked
+          "not yet available". Chennai-area coverage is the validated pilot;
+          other regions carry the same "indicative" caveat.
           <br />
           <br />
           Outside covered regions the app shows only what is always accurate:
-          raw GPS coordinates, DIGIPIN and the street address — jurisdiction
+          raw GPS coordinates, DIGIPIN and the street address. Jurisdiction
           fields are hidden rather than risking wrong data.
         </p>
       </div>
@@ -60,8 +64,8 @@ export default function AboutView() {
           thumbnail fetch.
           <br />
           <br />
-          Automatic face / licence-plate blurring is best-effort and can miss
-          things — always review blur regions yourself before sharing. It is
+          Automatic face and licence-plate detection is best-effort and can miss
+          things, so always review blur regions yourself before sharing. It is
           not a guarantee of anonymisation. The experimental live face blur
           burns into photos at capture and into video files as they record.
         </p>
@@ -70,8 +74,13 @@ export default function AboutView() {
       <div className="card" style={{ padding: 16 }}>
         <h2 style={{ margin: "0 0 8px", fontSize: 15 }}>Data sources</h2>
         <p className="hint" style={{ fontSize: 13, lineHeight: 1.7 }}>
-          Tamil Nadu jurisdiction boundaries derived from public government
-          data, processed by the Reclaim Chennai project. Bengaluru, Delhi,
+          Tamil Nadu local-body and village-panchayat boundaries from the
+          Tamil Nadu Government's GIS portal (TNGIS), with Cantonment Board
+          areas derived from{" "}
+          <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">
+            OpenStreetMap
+          </a>{" "}
+          (ODbL); police boundaries processed by the Reclaim Chennai project. Bengaluru, Delhi,
           Hyderabad, Kolkata, Mumbai, Pune and Visakhapatnam boundaries from{" "}
           <a
             href="https://github.com/Vonter/city-officials"
@@ -95,7 +104,7 @@ export default function AboutView() {
             © OpenStreetMap contributors
           </a>{" "}
           (or Google, if configured). Map thumbnails on photos are the app's
-          own rendering of boundary data unless labelled “Google”.
+          own rendering of boundary data unless labelled "Google".
         </p>
       </div>
 
@@ -107,7 +116,7 @@ export default function AboutView() {
         civic-tech family
         <br />
         <span style={{ fontSize: 11 }}>
-          Build {__BUILD_TS__.slice(0, 16).replace("T", " ")} UTC — updates
+          Build {__BUILD_TS__.slice(0, 16).replace("T", " ")} UTC, updates
           install automatically
           {apkVersion && (
             <>

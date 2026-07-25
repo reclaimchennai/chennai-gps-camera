@@ -366,7 +366,7 @@ export default function SettingsView() {
         )}
         <Row
           label="Report an issue"
-          hint="Send feedback or a bug — with an optional annotated screenshot"
+          hint="Send feedback or a bug"
           onClick={() => navigate("/report")}
         />
         <Row

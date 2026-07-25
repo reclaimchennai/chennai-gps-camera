@@ -27,6 +27,8 @@ interface LiveState {
   dbStats: { avg: number; min: number; max: number } | null;
   /** physical device rotation for in-place UI rotation (lib/orientation) */
   uiRotation: 0 | 90 | -90;
+  /** true when the current fix is a mock/spoofed location (disclosed, not blocked) */
+  mockLocation: boolean;
   setFix(fix: Fix): void;
   setLookupResult(r: LookupResult): void;
   setBearing(b: number): void;
@@ -39,6 +41,7 @@ interface LiveState {
   setDb(db: number | null): void;
   setDbStats(stats: { avg: number; min: number; max: number } | null): void;
   setUiRotation(r: 0 | 90 | -90): void;
+  setMockLocation(m: boolean): void;
 }
 
 export const useLiveStore = create<LiveState>((set) => ({
@@ -52,6 +55,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   db: null,
   dbStats: null,
   uiRotation: 0,
+  mockLocation: false,
   setFix: (fix) => set({ fix }),
   setLookupResult: (lookupResult) => set({ lookupResult }),
   setBearing: (bearing) => set({ bearing }),
@@ -61,6 +65,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   setDb: (db) => set({ db }),
   setDbStats: (dbStats) => set({ dbStats }),
   setUiRotation: (uiRotation) => set({ uiRotation }),
+  setMockLocation: (mockLocation) => set({ mockLocation }),
 }));
 
 // ---- Persistent settings ----------------------------------------------

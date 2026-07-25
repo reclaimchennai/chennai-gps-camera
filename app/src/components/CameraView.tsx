@@ -25,7 +25,16 @@ import { detectFaces, type DetectedBox } from "../lib/detect/faces";
 import { pickRecordingMime, finalizeVideoBlob } from "../lib/video/postprocess";
 import { downloadBlob, suggestedName } from "../lib/share";
 import type { VideoRecord } from "../types";
-import { Zap, SwitchCamera, Settings, Images, Camera, Sun, Lock } from "lucide-react";
+import {
+  Zap,
+  SwitchCamera,
+  Settings,
+  Images,
+  Camera,
+  Sun,
+  Lock,
+  LockOpen,
+} from "lucide-react";
 
 type Mode = "photo" | "video";
 
@@ -69,18 +78,26 @@ export default function CameraView({ active }: { active: boolean }) {
   const [evVal, setEvVal] = useState(0);
   const [afLocked, setAfLocked] = useState(false);
   const focusHideTimer = useRef(0);
-  const longPressTimer = useRef(0);
-  const longPressAt = useRef<{ x: number; y: number } | null>(null);
-  const lockJustFired = useRef(false);
+  const pinching = useRef(false);
+  const tapCandidate = useRef<{ x: number; y: number } | null>(null);
+  const lastZoomApply = useRef(0);
 
-  const showFocusUi = useCallback((x: number, y: number) => {
-    setFocusPos({ x, y, key: Date.now() });
-    const info = camera.exposureInfo();
-    setEvInfo(info ? { min: info.min, max: info.max, step: info.step } : null);
-    if (info) setEvVal(info.value);
+  /** Restart the auto-hide timer (any interaction keeps the UI alive). */
+  const keepFocusUi = useCallback(() => {
     window.clearTimeout(focusHideTimer.current);
-    focusHideTimer.current = window.setTimeout(() => setFocusPos(null), 3200);
+    focusHideTimer.current = window.setTimeout(() => setFocusPos(null), 4000);
   }, []);
+
+  const showFocusUi = useCallback(
+    (x: number, y: number) => {
+      setFocusPos({ x, y, key: Date.now() });
+      const info = camera.exposureInfo();
+      setEvInfo(info ? { min: info.min, max: info.max, step: info.step } : null);
+      if (info) setEvVal(info.value);
+      keepFocusUi();
+    },
+    [keepFocusUi]
+  );
   const [toast, setToast] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recSeconds, setRecSeconds] = useState(0);
@@ -317,6 +334,11 @@ export default function CameraView({ active }: { active: boolean }) {
     let lastSig: unknown[] = [];
     const draw = () => {
       if (stop) return;
+      // Pinching: the card can't change meaningfully mid-gesture, and a
+      // full-canvas watermark re-render per zoom step is what made the
+      // overlay stutter in the Android WebView. Skip redraws entirely
+      // while two fingers are down; the gesture end triggers a fresh one.
+      if (pinching.current) return;
       const canvas = overlayRef.current;
       const video = videoRef.current;
       if (!canvas || !video || video.videoWidth === 0) return;
@@ -461,6 +483,8 @@ export default function CameraView({ active }: { active: boolean }) {
       draw();
     }, 300);
     const unsubLive = useLiveStore.subscribe(draw);
+    const onRedraw = () => draw();
+    window.addEventListener("gpscam:redraw-overlay", onRedraw);
     const unsubSettings = useSettingsStore.subscribe(() => {
       void getProfilePhoto().then((p) => {
         assetsRef.current.profilePhoto = p;
@@ -470,6 +494,7 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => {
       stop = true;
       window.clearInterval(interval);
+      window.removeEventListener("gpscam:redraw-overlay", onRedraw);
       unsubLive();
       unsubSettings();
     };
@@ -531,8 +556,17 @@ export default function CameraView({ active }: { active: boolean }) {
         // for the whole clip (standard camera-app behaviour): held
         // landscape → a true landscape recording, frame + card upright
         const recRot = useLiveStore.getState().uiRotation;
-        const vw = Math.floor(liveVideo.videoWidth / 2) * 2;
-        const vh = Math.floor(liveVideo.videoHeight / 2) * 2;
+        // Cap the RECORDING composite at 1080p on the long edge. The
+        // preview stream is requested at up to 4K (photos want that detail
+        // for digital zoom), but compositing 8 MP frames at 30 fps would
+        // melt a budget Android phone — 1080p is the sweet spot that keeps
+        // recording smooth on the low-RAM devices most users have.
+        const REC_LONG_EDGE = 1920;
+        const srcW = liveVideo.videoWidth;
+        const srcH = liveVideo.videoHeight;
+        const recScale = Math.min(1, REC_LONG_EDGE / Math.max(srcW, srcH));
+        const vw = Math.floor((srcW * recScale) / 2) * 2;
+        const vh = Math.floor((srcH * recScale) / 2) * 2;
         burnW = recRot === 0 ? vw : vh;
         burnH = recRot === 0 ? vh : vw;
         const cc = document.createElement("canvas");
@@ -599,9 +633,17 @@ export default function CameraView({ active }: { active: boolean }) {
               const cells = 9;
               tiny.width = cells;
               tiny.height = cells;
+              // sample from the FULL-res video, paint into the (possibly
+              // downscaled) composite space — recScale keeps the mosaic
+              // aligned with the face when the two differ
               tctx.drawImage(liveVideo, b.x, b.y, b.width, b.height, 0, 0, cells, cells);
               cctx.imageSmoothingEnabled = false;
-              cctx.drawImage(tiny, 0, 0, cells, cells, b.x, b.y, b.width, b.height);
+              cctx.drawImage(
+                tiny,
+                0, 0, cells, cells,
+                b.x * recScale, b.y * recScale,
+                b.width * recScale, b.height * recScale
+              );
               cctx.imageSmoothingEnabled = true;
             }
           }
@@ -823,42 +865,38 @@ export default function CameraView({ active }: { active: boolean }) {
         zoom: camera.zoom,
       };
     }
-    // long-press = AF lock (Samsung style): 550 ms hold, single finger,
-    // no movement — freezes the lens until tapped again / camera restart
-    window.clearTimeout(longPressTimer.current);
-    if (pointers.current.size === 1) {
-      const { clientX, clientY } = e;
-      longPressAt.current = { x: clientX, y: clientY };
-      longPressTimer.current = window.setTimeout(() => {
-        if (pointers.current.size !== 1 || !longPressAt.current) return;
-        lockJustFired.current = true; // the release must NOT count as a tap
-        void camera.lockFocus().then((ok) => {
-          if (ok) {
-            setAfLocked(true);
-            showFocusUi(clientX, clientY);
-          } else {
-            showToast("Focus lock not supported on this camera");
-          }
-        });
-      }, 550);
+    // a second finger = pinch, never a focus tap: hide any focus UI that
+    // a first-finger tap may have just shown (it must not appear during
+    // zooming) and cancel the pending tap
+    if (pointers.current.size >= 2) {
+      pinching.current = true;
+      tapCandidate.current = null;
+      window.clearTimeout(focusHideTimer.current);
+      setFocusPos(null);
     } else {
-      longPressAt.current = null;
+      tapCandidate.current = { x: e.clientX, y: e.clientY };
     }
-  }, [showFocusUi, showToast]);
+  }, []);
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     if (!pointers.current.has(e.pointerId)) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    // any real movement cancels a pending AF-lock long-press
-    const lp = longPressAt.current;
-    if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) {
-      window.clearTimeout(longPressTimer.current);
-      longPressAt.current = null;
+    // real movement means a drag/pinch, not a tap
+    const tc = tapCandidate.current;
+    if (tc && Math.hypot(e.clientX - tc.x, e.clientY - tc.y) > 10) {
+      tapCandidate.current = null;
     }
     if (pointers.current.size === 2 && pinchBase.current) {
       const [a, b] = [...pointers.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
       const target = pinchBase.current.zoom * (dist / pinchBase.current.dist);
+      // Throttle the zoom applications themselves: every setZoom triggers
+      // a constraint apply (and a store write via the label), and in the
+      // Android WebView that firehose is what made the watermark overlay
+      // stutter during a pinch. ~60 ms is imperceptible to the gesture.
+      const now = performance.now();
+      if (now - lastZoomApply.current < 60) return;
+      lastZoomApply.current = now;
       void camera.setZoom(target).then((z) => {
         setZoomLabel(`${z.toFixed(1)}×`);
       });
@@ -867,31 +905,34 @@ export default function CameraView({ active }: { active: boolean }) {
 
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
-      window.clearTimeout(longPressTimer.current);
-      longPressAt.current = null;
       const start = pointers.current.get(e.pointerId);
       pointers.current.delete(e.pointerId);
       if (pointers.current.size < 2) pinchBase.current = null;
-      if (lockJustFired.current) {
-        // this release ENDS the long-press that just locked focus —
-        // it must not read as a tap and instantly unlock again
-        lockJustFired.current = false;
-        window.setTimeout(() => setZoomLabel(null), 1200);
-        return;
-      }
-      if (pointers.current.size === 0 && start) {
-        const dx = e.clientX - start.x;
-        const dy = e.clientY - start.y;
-        if (Math.hypot(dx, dy) < 8) {
-          // a tap while AF-locked unlocks first (Samsung behaviour),
-          // then refocuses at the tapped point
-          if (afLocked) {
-            setAfLocked(false);
-            void camera.unlockFocus();
-          }
-          showFocusUi(e.clientX, e.clientY);
-          void camera.focusAt();
+      if (pointers.current.size === 0) {
+        // a pinch just ended: swallow this release entirely so no focus
+        // ring/slider pops up after zooming
+        if (pinching.current) {
+          pinching.current = false;
+          tapCandidate.current = null;
+          // repaint the overlay now that redraws are unblocked
+          window.dispatchEvent(new Event("gpscam:redraw-overlay"));
+          window.setTimeout(() => setZoomLabel(null), 1200);
+          return;
         }
+        if (start && tapCandidate.current) {
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          if (Math.hypot(dx, dy) < 8) {
+            // single tap = focus here (and drop any existing AF lock)
+            if (afLocked) {
+              setAfLocked(false);
+              void camera.unlockFocus();
+            }
+            showFocusUi(e.clientX, e.clientY);
+            void camera.focusAt();
+          }
+        }
+        tapCandidate.current = null;
       }
       window.setTimeout(() => setZoomLabel(null), 1200);
     },
@@ -935,7 +976,13 @@ export default function CameraView({ active }: { active: boolean }) {
         onPointerCancel={onPointerUp}
         style={{ touchAction: "none" }}
       >
-        <div ref={boxRef} className={`cam-video-box${mirrored ? " mirrored" : ""}`}>
+        <div
+          ref={boxRef}
+          className={`cam-video-box${mirrored ? " mirrored" : ""}`}
+          // long-pressing a live preview must not open the WebView's media
+          // context menu (downloadfile.bin / Copy video frame / PiP)
+          onContextMenu={(e) => e.preventDefault()}
+        >
           {/* Black poster: a paused WebView <video> shows the play-button
               overlay only when it has NO poster. With one, the pre-stream
               gap and every mode switch render as a black frame instead. */}
@@ -1067,6 +1114,9 @@ export default function CameraView({ active }: { active: boolean }) {
           onAnimationEnd={() => setFlyImg(null)}
         />
       )}
+      {/* Samsung-style focus UI: compact square-ish ring, a tappable
+          padlock above it (tap to lock/unlock — the icon closes when
+          locked), and a thin exposure slider beside it. */}
       {focusPos && (
         <div
           className="focus-ui"
@@ -1076,7 +1126,27 @@ export default function CameraView({ active }: { active: boolean }) {
             key={focusPos.key}
             className={`focus-ring hold${afLocked ? " locked" : ""}`}
           />
-          {afLocked && <Lock size={13} className="focus-lock-icon" />}
+          <button
+            className={`focus-lock-btn${afLocked ? " on" : ""}`}
+            aria-label={afLocked ? "Unlock focus" : "Lock focus"}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              keepFocusUi();
+              if (afLocked) {
+                setAfLocked(false);
+                void camera.unlockFocus();
+              } else {
+                void camera.lockFocus().then((ok) => {
+                  if (ok) setAfLocked(true);
+                  else showToast("Focus lock not supported on this camera");
+                });
+              }
+            }}
+          >
+            {afLocked ? <Lock size={12} /> : <LockOpen size={12} />}
+          </button>
           {evInfo && (
             <div
               className="ev-slider"
@@ -1084,7 +1154,7 @@ export default function CameraView({ active }: { active: boolean }) {
               onPointerMove={(e) => e.stopPropagation()}
               onPointerUp={(e) => e.stopPropagation()}
             >
-              <Sun size={14} />
+              <Sun size={12} />
               <input
                 type="range"
                 min={evInfo.min}
@@ -1095,12 +1165,7 @@ export default function CameraView({ active }: { active: boolean }) {
                   const v = Number(e.target.value);
                   setEvVal(v);
                   void camera.setExposure(v);
-                  // keep the UI up while the user is adjusting
-                  window.clearTimeout(focusHideTimer.current);
-                  focusHideTimer.current = window.setTimeout(
-                    () => setFocusPos(null),
-                    3200
-                  );
+                  keepFocusUi();
                 }}
               />
             </div>
@@ -1116,7 +1181,7 @@ export default function CameraView({ active }: { active: boolean }) {
             void camera.unlockFocus();
           }}
         >
-          <Lock size={12} /> AF locked — tap to unlock
+          <Lock size={12} /> AF locked
         </button>
       )}
 

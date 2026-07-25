@@ -99,6 +99,9 @@ export interface WatermarkData {
   dbStats?: { avg: number; min: number; max: number };
   timestamp: number;
   tzOffsetMinutes: number;
+  /** The fix came from a mock/spoofed location provider. Disclosed on the
+   *  card, in the details sheet and in shares — never blocked. */
+  mockLocation?: boolean;
 }
 
 // ---- Profile --------------------------------------------------------

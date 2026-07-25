@@ -3,6 +3,7 @@ package city.reclaimchennai.cam;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.location.Address;
 import android.location.Geocoder;
 import android.media.MediaScannerConnection;
@@ -66,6 +67,54 @@ public class NativeBridgePlugin extends Plugin {
     @PluginMethod
     public void checkMediaPermissions(PluginCall call) {
         resolvePermissionStates(call);
+    }
+
+    /**
+     * Mock-location disclosure (NOT a restriction — spoofing stays
+     * allowed, it just gets labelled). Reads the last known fix from both
+     * providers and reports Android's own isMock()/isFromMockProvider()
+     * flag, so a photo taken while a fake-GPS app is feeding the system
+     * can be stamped honestly instead of silently passing as genuine.
+     */
+    @PluginMethod
+    public void checkMockLocation(PluginCall call) {
+        JSObject out = new JSObject();
+        boolean mock = false;
+        try {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    getContext(), Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+                android.location.LocationManager lm =
+                    (android.location.LocationManager)
+                        getContext().getSystemService(Context.LOCATION_SERVICE);
+                if (lm != null) {
+                    String[] providers = {
+                        android.location.LocationManager.GPS_PROVIDER,
+                        android.location.LocationManager.NETWORK_PROVIDER,
+                        android.location.LocationManager.FUSED_PROVIDER
+                    };
+                    for (String p : providers) {
+                        try {
+                            android.location.Location loc = lm.getLastKnownLocation(p);
+                            if (loc == null) continue;
+                            boolean isMock = Build.VERSION.SDK_INT >= 31
+                                ? loc.isMock()
+                                : loc.isFromMockProvider();
+                            if (isMock) {
+                                mock = true;
+                                break;
+                            }
+                        } catch (SecurityException | IllegalArgumentException ignored) {
+                            // provider unavailable on this device
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // treat failures as "unknown" (not mock) — never block a capture
+        }
+        out.put("mock", mock);
+        call.resolve(out);
     }
 
     /**

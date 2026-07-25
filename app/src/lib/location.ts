@@ -9,6 +9,7 @@
 import { loadGeodataFor } from "./geo/geodata";
 import { lookup, type LookupResult } from "./geo/lookup";
 import { useLiveStore } from "../store";
+import { isNativeApp, nativeMockLocation } from "./native";
 import type { Fix } from "../types";
 
 const RELOOKUP_MIN_METERS = 8;
@@ -66,6 +67,52 @@ async function onFix(pos: GeolocationPosition): Promise<void> {
   }
 }
 
+/**
+ * Mock/spoofed-GPS disclosure. Never a restriction: spoofing stays
+ * possible, it only gets LABELLED so a fake-located capture can't pass as
+ * genuine. Android is authoritative (the OS's own isMock() flag, via the
+ * native bridge).
+ *
+ * The web has no such API, and a false accusation on a civic photo is a
+ * real harm, so the browser check is deliberately conservative: ONLY a
+ * physically impossible jump (faster than an airliner) between two
+ * *high-accuracy* fixes counts. Requiring good accuracy on both ends is
+ * what keeps a wildly-off network/IP fix followed by a real GPS lock —
+ * routine on the web — from being called spoofing. Anything less certain
+ * stays unlabelled.
+ */
+let lastFixForMock: { lat: number; lng: number; t: number } | null = null;
+const IMPLAUSIBLE_KMH = 1500;
+const TRUST_ACC_M = 50;
+
+async function assessMock(pos: GeolocationPosition): Promise<void> {
+  const c = pos.coords;
+  let mock = false;
+  if (isNativeApp()) {
+    mock = (await nativeMockLocation()) === true;
+  } else if (c.accuracy != null && c.accuracy <= TRUST_ACC_M) {
+    const prev = lastFixForMock;
+    if (prev) {
+      const dtH = (pos.timestamp - prev.t) / 3600_000;
+      if (dtH > 0) {
+        const dLat = (c.latitude - prev.lat) * 111.32;
+        const dLng =
+          (c.longitude - prev.lng) *
+          111.32 *
+          Math.cos((c.latitude * Math.PI) / 180);
+        if (Math.hypot(dLat, dLng) / dtH > IMPLAUSIBLE_KMH) mock = true;
+      }
+    }
+  }
+  // only remember trustworthy fixes as the baseline for the jump test
+  if (c.accuracy != null && c.accuracy <= TRUST_ACC_M) {
+    lastFixForMock = { lat: c.latitude, lng: c.longitude, t: pos.timestamp };
+  }
+  // sticky within a session: once a spoof is seen, keep disclosing it
+  // (fake-GPS apps are usually toggled on for a whole shooting session)
+  if (mock || isNativeApp()) useLiveStore.getState().setMockLocation(mock);
+}
+
 export function startLocation(): void {
   if (watchId != null || !("geolocation" in navigator)) return;
   useLiveStore.getState().setGpsStatus("waiting");
@@ -74,6 +121,7 @@ export function startLocation(): void {
       retries = 0;
       lastFineAt = Date.now();
       useLiveStore.getState().setGpsStatus("ok");
+      void assessMock(pos);
       void onFix(pos);
     },
     (err) => {

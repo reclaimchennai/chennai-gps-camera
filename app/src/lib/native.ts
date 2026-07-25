@@ -62,6 +62,7 @@ interface NativeBridgePlugin {
     location: boolean;
   }>;
   requestLocationNative(): Promise<{ requested: boolean }>;
+  checkMockLocation(): Promise<{ mock: boolean }>;
 }
 
 export interface NativePermStates {
@@ -145,6 +146,21 @@ export async function requestLocationPermissionNative(): Promise<void> {
     }
   } catch {
     // state re-checked on next boot
+  }
+}
+
+/**
+ * Mock-location disclosure: Android reports its own isMock() flag for the
+ * last known fix, so a capture made while a fake-GPS app is running can
+ * be LABELLED (never blocked). null = unknown (web, or old APK bridge).
+ */
+export async function nativeMockLocation(): Promise<boolean | null> {
+  const b = bridge();
+  if (!b?.checkMockLocation) return null;
+  try {
+    return (await b.checkMockLocation()).mock;
+  } catch {
+    return null;
   }
 }
 

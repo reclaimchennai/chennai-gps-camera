@@ -289,6 +289,18 @@ function buildLines(
     }
   }
 
+  // Mock-location disclosure — always shown when detected, regardless of
+  // which fields are enabled: a spoofed capture must not look genuine.
+  // Amber, in the same style as the jurisdiction rows.
+  if (data.mockLocation) {
+    lines.push({
+      text: "⚠ Mock location — GPS may be spoofed",
+      font: `600 ${Math.round(bodyPx * 0.92)}px ${FONT_STACK}`,
+      color: "#fbbf24",
+      gapBefore: 0.35,
+    });
+  }
+
   if (f.customLabel && config.customLabelText.trim()) {
     lines.push({
       text: config.customLabelText.trim(),

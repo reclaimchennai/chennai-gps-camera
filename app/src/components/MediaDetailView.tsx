@@ -15,6 +15,8 @@ import {
   Maximize,
   Camera,
   Car,
+  Copy,
+  Check,
 } from "lucide-react";
 import {
   getMedia,
@@ -44,6 +46,9 @@ export default function MediaDetailView({ id }: { id: string }) {
   const [curId, setCurId] = useState(id);
   useEffect(() => setCurId(id), [id]);
   const [rec, setRec] = useState<MediaRecord | null>(null);
+  // live handle on the record for callbacks defined above the null-guard
+  const recRef = useRef<MediaRecord | null>(null);
+  recRef.current = rec;
   const [url, setUrl] = useState<string | null>(null);
   const [poster, setPoster] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -504,6 +509,83 @@ export default function MediaDetailView({ id }: { id: string }) {
   // the background so scrubbing + grabbing stays instant.
   // (Hooks live ABOVE the null-guard — see React error #310.)
   const [showPlates, setShowPlates] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  /** Every detail as tidy "Label: value" lines — one per line, ready to
+   *  paste into a complaint, an email or a spreadsheet. */
+  const copyDetails = useCallback(async () => {
+    const r = recRef.current;
+    if (!r) return;
+    const d = r.data;
+    const jd = d.jurisdiction;
+    const L: string[] = [];
+    const add = (label: string, value?: string | number | null) => {
+      if (value === undefined || value === null || value === "") return;
+      L.push(`${label}: ${value}`);
+    };
+    add(r.kind === "video" ? "Video" : "Photo", fmtDateLine(d.timestamp, d.tzOffsetMinutes));
+    add("Locality", d.locality);
+    add("Address", d.address);
+    if (d.fix) {
+      add("Latitude", d.fix.lat.toFixed(6));
+      add("Longitude", d.fix.lng.toFixed(6));
+      if (d.fix.accuracy != null) add("Accuracy", `${Math.round(d.fix.accuracy)} m`);
+      if (d.fix.altitude != null) add("Altitude", `${Math.round(d.fix.altitude)} m`);
+    } else {
+      add("Location", "No GPS fix at capture");
+    }
+    add("DIGIPIN", d.digipin);
+    if (jd && jd.scope !== "out") {
+      add("Local body", jd.corporation);
+      if (jd.wardPending || jd.scope === "avadi") add("Ward", "Not yet available");
+      else if (jd.ward)
+        add("Ward", `${fmtWard(jd.ward)}${jd.wardName ? ` (${jd.wardName})` : ""}`);
+      if (jd.zone) add("Zone", fmtZone(jd.zone));
+      add("Block", jd.block);
+      add("District", jd.district);
+      add("Police (L&O)", jd.loStation ? `${jd.loStation}${jd.loMeta ? ` (${jd.loMeta})` : ""}` : undefined);
+      add("Traffic police", jd.trafficStation ? `${jd.trafficStation}${jd.trafficMeta ? ` (${jd.trafficMeta})` : ""}` : undefined);
+    }
+    if (d.dbStats) {
+      add("Noise", `Avg ${d.dbStats.avg} dB, Min ${d.dbStats.min} dB, Max ${d.dbStats.max} dB`);
+    } else if (d.db != null) {
+      add("Noise", `${Math.round(d.db)} dB`);
+    }
+    if (r.kind === "photo" && r.plates?.length) {
+      add("Licence plates (OCR, verify)", r.plates.join(", "));
+    }
+    if (r.kind === "photo" && r.tags?.length) add("Tags", r.tags.join(", "));
+    add("Size", `${r.width} x ${r.height}`);
+    if (r.kind === "video") add("Duration", `${Math.round(r.duration)} s`);
+    if (d.mockLocation) add("Warning", "Mock location detected - GPS may be spoofed");
+    if (d.fix) {
+      add(
+        "Map",
+        `https://maps.google.com/?q=${d.fix.lat.toFixed(6)},${d.fix.lng.toFixed(6)}`
+      );
+    }
+    const text = L.join("\n");
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // clipboard blocked (insecure context / permission) — fall back to
+      // a hidden textarea + execCommand, which WebViews still honour
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        return;
+      }
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }, []);
   const [frameFx, setFrameFx] = useState(0);
   const [frameFly, setFrameFly] = useState<{ src: string; key: number } | null>(null);
   const grabVideoFrame = useCallback(async () => {
@@ -592,6 +674,9 @@ export default function MediaDetailView({ id }: { id: string }) {
       lines.push(
         `Licence plate${rec.plates.length > 1 ? "s" : ""} (OCR, verify): ${rec.plates.join(", ")}`
       );
+    }
+    if (d.mockLocation) {
+      lines.push("Warning: mock location detected - GPS may be spoofed");
     }
     if (d.fix) {
       lines.push(
@@ -894,7 +979,16 @@ export default function MediaDetailView({ id }: { id: string }) {
       {info && (
         <div className="modal-scrim" onClick={() => setInfo(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Details</h2>
+            <div className="modal-head">
+              <h2 style={{ margin: 0 }}>Details</h2>
+              <button
+                className="icon-btn"
+                aria-label="Copy all details"
+                onClick={() => void copyDetails()}
+              >
+                {copied ? <Check size={17} /> : <Copy size={17} />}
+              </button>
+            </div>
             <p style={{ userSelect: "text" }}>
               {rec.data.fix
                 ? fmtCoordsLine(rec.data.fix.lat, rec.data.fix.lng)
@@ -953,6 +1047,15 @@ export default function MediaDetailView({ id }: { id: string }) {
                     </em>
                   </>
                 )}
+              {rec.data.mockLocation && (
+                <>
+                  <br />
+                  <strong style={{ color: "#d97706" }}>
+                    ⚠ Mock location detected — this device was reporting a
+                    spoofed GPS position when this was captured.
+                  </strong>
+                </>
+              )}
               {rec.kind === "photo" && rec.backfill === "pending" && (
                 <>
                   <br />

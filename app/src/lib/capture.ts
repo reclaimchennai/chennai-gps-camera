@@ -56,6 +56,9 @@ export function collectWatermarkData(): WatermarkData {
     dbStats: watermark.fields.soundLevel ? (live.dbStats ?? undefined) : undefined,
     timestamp: now,
     tzOffsetMinutes: new Date(now).getTimezoneOffset(),
+    // disclosure only — spoofing is allowed, but a photo made with a mock
+    // location must never pass as a genuinely located one
+    mockLocation: live.mockLocation || undefined,
   };
 }
 
