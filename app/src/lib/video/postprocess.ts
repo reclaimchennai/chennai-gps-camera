@@ -12,6 +12,7 @@
  *    file corrupted — patch it in with the measured duration.
  */
 import fixWebmDuration from "fix-webm-duration";
+import { remuxFragmentedMp4 } from "./remux";
 import type { Fix } from "../../types";
 
 /** Recording formats in preference order: MP4 first for compatibility. */
@@ -312,7 +313,17 @@ export async function finalizeVideoBlob(
   if (blob.type.includes("mp4")) {
     let out = blob;
     if (durationMs > 0) out = await patchMp4Duration(out, durationMs);
+    // GPS atom BEFORE the remux: the remuxer carries udta across into the
+    // rebuilt moov. Injecting afterwards would grow moov and shift mdat,
+    // invalidating every chunk offset the remux just wrote.
     if (fix) out = await injectMp4Location(out, fix.lat, fix.lng);
+    // Fragmented → progressive. MediaRecorder writes fMP4, whose moov has
+    // no sample tables, so editors and social-media trimmers cannot index
+    // it: "trim and upload" posted the whole clip with a corrupted tail
+    // and Google Photos refused to edit at all. Rebuilding the index (no
+    // re-encode) makes the file behave like any camera recording.
+    const progressive = await remuxFragmentedMp4(out);
+    if (progressive) out = progressive;
     return out;
   }
   if (blob.type.includes("webm") && durationMs > 0) {
