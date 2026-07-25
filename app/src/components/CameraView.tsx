@@ -5,6 +5,7 @@ import {
   useState,
 } from "react";
 import { camera } from "../lib/camera";
+import { qualityPlan } from "../lib/quality";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { scheduleBackfill } from "../lib/backfill";
 import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture";
@@ -31,7 +32,6 @@ import {
   Settings,
   Images,
   Camera,
-  Sun,
   Lock,
   LockOpen,
 } from "lucide-react";
@@ -267,8 +267,13 @@ export default function CameraView({ active }: { active: boolean }) {
       }
     };
     document.addEventListener("visibilitychange", onVis);
+    // capture-quality change in Settings: restart so the new preview size
+    // takes effect without the user having to leave and come back
+    const onRestart = () => void startCam(modeRef.current);
+    window.addEventListener("gpscam:restart-camera", onRestart);
     return () => {
       document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("gpscam:restart-camera", onRestart);
       camera.stop();
     };
   }, [permState, startCam]);
@@ -556,12 +561,11 @@ export default function CameraView({ active }: { active: boolean }) {
         // for the whole clip (standard camera-app behaviour): held
         // landscape → a true landscape recording, frame + card upright
         const recRot = useLiveStore.getState().uiRotation;
-        // Cap the RECORDING composite at 1080p on the long edge. The
-        // preview stream is requested at up to 4K (photos want that detail
-        // for digital zoom), but compositing 8 MP frames at 30 fps would
-        // melt a budget Android phone — 1080p is the sweet spot that keeps
-        // recording smooth on the low-RAM devices most users have.
-        const REC_LONG_EDGE = 1920;
+        // Recording resolution comes from the device-tier plan (Settings →
+        // Advanced can override): compositing full-size frames at 30 fps
+        // is what stutters on low-RAM phones, so entry devices record 720p
+        // while high-end ones go to 1080p+.
+        const REC_LONG_EDGE = qualityPlan().recordLongEdge;
         const srcW = liveVideo.videoWidth;
         const srcH = liveVideo.videoHeight;
         const recScale = Math.min(1, REC_LONG_EDGE / Math.max(srcW, srcH));
@@ -703,7 +707,9 @@ export default function CameraView({ active }: { active: boolean }) {
     let rec: MediaRecorder;
     // canvas captureStream defaults to a low bitrate — keep the
     // composited recording at camera-like quality
-    const recOpts = watermarked ? { videoBitsPerSecond: 8_000_000 } : {};
+    const recOpts = watermarked
+      ? { videoBitsPerSecond: qualityPlan().videoBitsPerSecond }
+      : {};
     try {
       rec = new MediaRecorder(
         recStream,
@@ -1154,7 +1160,6 @@ export default function CameraView({ active }: { active: boolean }) {
               onPointerMove={(e) => e.stopPropagation()}
               onPointerUp={(e) => e.stopPropagation()}
             >
-              <Sun size={12} />
               <input
                 type="range"
                 min={evInfo.min}

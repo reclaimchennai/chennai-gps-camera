@@ -9,6 +9,7 @@
 
 import { isNativeApp } from "./native";
 import { preferredAudioConstraints } from "./audio/source";
+import { qualityPlan } from "./quality";
 
 export type FacingMode = "environment" | "user";
 
@@ -41,6 +42,8 @@ const MAX_DIGITAL_ZOOM = 4;
 /** Effective zoom factor an ultra-wide lens represents (~0.6× on most
  *  Android phones — matches the ".6" chip Samsung/Pixel cameras show). */
 const ULTRA_WIDE_FACTOR = 0.6;
+/** remembered ultra-wide deviceId, so the probe runs once per device */
+const UW_KEY = "gpscam-ultrawide-id";
 
 export class CameraController {
   stream: MediaStream | null = null;
@@ -69,14 +72,17 @@ export class CameraController {
     // Prefer a connected external mic; failing that, pin the built-in one so
     // mic-less headphones can't silence the recording (see audio/source.ts).
     const audio = await preferredAudioConstraints(baseAudio);
-    // Ask for the highest preview the device will give (ideal 4K, falling
-    // back on its own to whatever it supports). A bigger preview is what
-    // digital-crop zoom and video recording both draw from, so this is
-    // the single biggest lever on zoomed image quality.
+    // Preview size comes from the device-tier plan, NOT "as big as
+    // possible": a 4K preview made digital zoom stutter badly (the video
+    // element is CSS-scaled by the zoom factor, so a 4× zoom on 4K is an
+    // enormous composite every frame). Zoomed photo quality no longer
+    // depends on preview size — those captures take the full-sensor
+    // ImageCapture path — so this is purely a smoothness dial.
+    const plan = qualityPlan();
     const video: MediaTrackConstraints = {
       facingMode: facing,
-      width: { ideal: 3840 },
-      height: { ideal: 2160 },
+      width: { ideal: plan.previewLongEdge },
+      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
     };
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio, video });
@@ -197,11 +203,68 @@ export class CameraController {
     try {
       if (this.facing !== "environment") return; // front cams: no UW pair
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter((d) => d.kind === "videoinput" && d.label);
-      const uw = cams.find((d) =>
-        /ultra[- ]?wide|wide[- ]?angle|0\.[5-6]|超广角/i.test(d.label)
+      const cams = devices.filter((d) => d.kind === "videoinput");
+      if (cams.length < 2) return;
+
+      // 1) Label match — works on desktop and the few Android builds that
+      //    give real names.
+      const byLabel = cams.find(
+        (d) =>
+          d.deviceId !== this.mainDeviceId &&
+          /ultra[- ]?wide|wide[- ]?angle|0\.[56]x|超广角/i.test(d.label ?? "")
       );
-      if (uw && uw.deviceId !== this.mainDeviceId) this.ultraWideId = uw.deviceId;
+      if (byLabel) {
+        this.ultraWideId = byLabel.deviceId;
+        return;
+      }
+
+      // 2) Android reality: labels are "camera2 0, facing back" — useless.
+      //    Probe instead. A remembered choice short-circuits the probe.
+      const cached = localStorage.getItem(UW_KEY);
+      if (cached && cams.some((d) => d.deviceId === cached)) {
+        this.ultraWideId = cached;
+        return;
+      }
+      const backs = cams.filter(
+        (d) =>
+          d.deviceId !== this.mainDeviceId &&
+          !/front|facing front|user/i.test(d.label ?? "")
+      );
+      if (!backs.length) return;
+
+      // Open each candidate briefly at low resolution and keep the one
+      // with the largest sensor output. On a multi-lens phone the extra
+      // back cameras are ultra-wide (typically 12 MP) versus depth/macro
+      // helpers (VGA–2 MP), so "biggest" reliably avoids those, and any
+      // telephoto is a strictly better fallback than no wide option.
+      let best: { id: string; px: number } | null = null;
+      for (const d of backs.slice(0, 4)) {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { deviceId: { exact: d.deviceId }, width: { ideal: 320 } },
+          });
+          const t = s.getVideoTracks()[0];
+          const caps = (t?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+          const w = (caps.width as { max?: number } | undefined)?.max ?? 0;
+          const h = (caps.height as { max?: number } | undefined)?.max ?? 0;
+          for (const tr of s.getTracks()) tr.stop();
+          const px = w * h;
+          if (px > 2_000_000 && (!best || px > best.px)) {
+            best = { id: d.deviceId, px };
+          }
+        } catch {
+          // camera busy or not openable — skip this candidate
+        }
+      }
+      if (best) {
+        this.ultraWideId = best.id;
+        try {
+          localStorage.setItem(UW_KEY, best.id);
+        } catch {
+          // storage unavailable — probe again next launch
+        }
+      }
     } catch {
       // enumeration blocked — stay at a 1× floor
     }
@@ -216,13 +279,11 @@ export class CameraController {
         video: deviceId
           ? {
               deviceId: { exact: deviceId },
-              width: { ideal: 3840 },
-              height: { ideal: 2160 },
+              width: { ideal: qualityPlan().previewLongEdge },
             }
           : {
               facingMode: this.facing,
-              width: { ideal: 3840 },
-              height: { ideal: 2160 },
+              width: { ideal: qualityPlan().previewLongEdge },
             },
       });
       // swap only the video track, keeping the mic (and the dB meter) alive

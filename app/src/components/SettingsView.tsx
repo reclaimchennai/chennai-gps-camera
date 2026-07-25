@@ -6,6 +6,7 @@ import { navigate } from "../nav";
 import { isNativeApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
+import { qualitySummary } from "../lib/quality";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -190,6 +191,36 @@ export default function SettingsView() {
                 onChange={(v) => setSettings({ liveFaceBlur: v })}
               />
             </Row>
+
+            <div className="row" style={{ display: "block" }}>
+              <div className="label">Capture quality</div>
+              <div className="hint" style={{ margin: "2px 0 8px" }}>
+                {qualitySummary()} Higher settings look better but can stutter
+                on phones with less memory.
+              </div>
+              <div className="seg" style={{ width: "100%" }}>
+                {(
+                  [
+                    ["auto", "Auto"],
+                    ["720p", "720p"],
+                    ["1080p", "1080p"],
+                    ["max", "Max"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    data-active={settings.captureQuality === key}
+                    onClick={() => {
+                      setSettings({ captureQuality: key });
+                      // restart the stream so the new preview size applies
+                      window.dispatchEvent(new Event("gpscam:restart-camera"));
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <Row
               label={

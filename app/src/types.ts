@@ -188,6 +188,8 @@ export interface AppSettings {
   gridLines: boolean;
   /** EXPERIMENTAL: on-device licence-plate OCR on captured photos */
   plateOcr: boolean;
+  /** capture quality: "auto" adapts to the device tier */
+  captureQuality: "auto" | "720p" | "1080p" | "max";
   mirrorFrontPhoto: boolean;
   /** Auto-download each captured photo to the device (Downloads folder
    *  on the web build; gallery apps index it). */
