@@ -18,6 +18,27 @@
 
 const SAMPLE_W = 96;
 const SAMPLE_H = 72;
+/** Android releases a camera asynchronously after stop(); opening the next
+ *  one immediately fails, which made every measurement come back empty in
+ *  the APK even on a perfectly detailed scene. */
+const RELEASE_MS = 200;
+
+const settle = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+
+/** getUserMedia with retries, for the one-camera-at-a-time constraint. */
+async function openCamera(deviceId: string): Promise<MediaStream | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { deviceId: { exact: deviceId }, width: { ideal: 640 } },
+      });
+    } catch {
+      await settle(RELEASE_MS * (attempt + 2));
+    }
+  }
+  return null;
+}
 
 /** Common factors phones actually print on their own zoom chips. */
 const CONVENTIONAL = [0.5, 0.6, 2, 3, 3.5, 5, 10];
@@ -41,10 +62,8 @@ async function grabGray(deviceId: string): Promise<Float32Array | null> {
   let stream: MediaStream | null = null;
   const video = document.createElement("video");
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { deviceId: { exact: deviceId }, width: { ideal: 640 } },
-    });
+    stream = await openCamera(deviceId);
+    if (!stream) return null;
     video.srcObject = stream;
     video.muted = true;
     video.playsInline = true;
@@ -69,6 +88,7 @@ async function grabGray(deviceId: string): Promise<Float32Array | null> {
   } finally {
     for (const t of stream?.getTracks() ?? []) t.stop();
     video.srcObject = null;
+    await settle(RELEASE_MS);
   }
 }
 
@@ -80,10 +100,8 @@ async function grabGrayCropped(
   let stream: MediaStream | null = null;
   const video = document.createElement("video");
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { deviceId: { exact: deviceId }, width: { ideal: 640 } },
-    });
+    stream = await openCamera(deviceId);
+    if (!stream) return null;
     video.srcObject = stream;
     video.muted = true;
     video.playsInline = true;
@@ -125,6 +143,7 @@ async function grabGrayCropped(
   } finally {
     for (const t of stream?.getTracks() ?? []) t.stop();
     video.srcObject = null;
+    await settle(RELEASE_MS);
   }
 }
 

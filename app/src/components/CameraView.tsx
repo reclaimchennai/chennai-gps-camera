@@ -574,9 +574,16 @@ export default function CameraView({ active }: { active: boolean }) {
     recorderRef.current?.stop();
   }, []);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback(async () => {
     const stream = camera.stream;
     if (!stream) return;
+    // A MediaStream can hold an ENDED microphone track — Android can kill it
+    // when a camera session is torn down — and that records flawless video
+    // with no sound at all. Nothing is recoverable afterwards, so make sure
+    // the mic is live before the recorder starts.
+    if (!(await camera.ensureAudio())) {
+      showToast("No microphone available — this recording will be silent");
+    }
     const liveVideo = videoRef.current;
     const liveBlurOn = useSettingsStore.getState().settings.liveFaceBlur;
 
@@ -836,7 +843,7 @@ export default function CameraView({ active }: { active: boolean }) {
     recorderRef.current = rec;
     setRecording(true);
     setRecSeconds(0);
-  }, [updateThumb]);
+  }, [updateThumb, showToast]);
 
   useEffect(() => {
     if (!recording) return;
@@ -850,7 +857,7 @@ export default function CameraView({ active }: { active: boolean }) {
   const onShutter = useCallback(() => {
     if (mode === "photo") void doCapture();
     else if (recording) stopRecording();
-    else startRecording();
+    else void startRecording();
   }, [mode, recording, doCapture, startRecording, stopRecording]);
 
   // Desktop convenience: space/enter as shutter.
@@ -911,6 +918,13 @@ export default function CameraView({ active }: { active: boolean }) {
     const onTrack = () => {
       setAfLocked(false);
       setTorch(false);
+      // the meter was listening to the previous stream's audio track
+      const wantsMeter =
+        useSettingsStore.getState().watermark.fields.soundLevel;
+      if (wantsMeter && camera.stream) {
+        stopMeter();
+        startMeter(camera.stream);
+      }
     };
     window.addEventListener("gpscam:track-changed", onTrack);
     return () => window.removeEventListener("gpscam:track-changed", onTrack);
@@ -1109,7 +1123,6 @@ export default function CameraView({ active }: { active: boolean }) {
             }}
             onEmptied={() => setVideoLive(false)}
           />
-          {!videoLive && <div className="cam-prefill" />}
           {/* Holds the last frame while a lens switch releases one camera
               and opens another, so crossing 0.6x→1x fades instead of
               flashing black. */}
@@ -1133,6 +1146,11 @@ export default function CameraView({ active }: { active: boolean }) {
                 they ride along underneath it instead (see below). */}
           {!focusPos && zoomBarEl}
         </div>
+
+        {/* Black fill over the whole viewfinder zone until the stream
+            paints. Must sit outside .cam-video-box: that box is sized by
+            the <video>, so it has no size to fill before the first frame. */}
+        {!videoLive && <div className="cam-prefill" />}
 
         {(permState === "needed" || permState === "denied") && (
           <div className="empty-note" style={{ position: "absolute", inset: "26% 24px auto" }}>

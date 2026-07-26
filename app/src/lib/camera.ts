@@ -40,6 +40,9 @@ export interface ZoomInfo {
 }
 
 const MAX_DIGITAL_ZOOM = 4;
+/** How long Android needs to actually release a camera after track.stop().
+ *  Opening the next lens sooner fails with NotReadableError. */
+const RELEASE_MS = 180;
 /** Effective zoom factor an ultra-wide lens represents (~0.6× on most
  *  Android phones — matches the ".6" chip Samsung/Pixel cameras show). */
 const ULTRA_WIDE_FACTOR = 0.6;
@@ -165,27 +168,37 @@ export function saveLensProfile(lenses: Lens[]): void {
   }
 }
 
-/** Sensor pixel count for a camera, or null when it can't be opened. */
+/** Sensor pixel count for a camera, or null when it can't be opened.
+ *  Retries: back-to-back opens race Android's async camera release. */
 async function probeSensorPixels(deviceId: string): Promise<number | null> {
-  try {
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { deviceId: { exact: deviceId }, width: { ideal: 320 } },
-    });
-    const caps = (s.getVideoTracks()[0]?.getCapabilities?.() ?? {}) as Record<
-      string,
-      unknown
-    >;
-    for (const t of s.getTracks()) t.stop();
-    const w = (caps.width as { max?: number } | undefined)?.max ?? 0;
-    const h = (caps.height as { max?: number } | undefined)?.max ?? 0;
-    return w && h ? w * h : null;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { deviceId: { exact: deviceId }, width: { ideal: 320 } },
+      });
+      const caps = (s.getVideoTracks()[0]?.getCapabilities?.() ?? {}) as Record<
+        string,
+        unknown
+      >;
+      for (const t of s.getTracks()) t.stop();
+      const w = (caps.width as { max?: number } | undefined)?.max ?? 0;
+      const h = (caps.height as { max?: number } | undefined)?.max ?? 0;
+      await new Promise((r) => window.setTimeout(r, RELEASE_MS));
+      return w && h ? w * h : null;
+    } catch {
+      await new Promise((r) => window.setTimeout(r, RELEASE_MS * (attempt + 2)));
+    }
   }
+  return null;
 }
 
 export class CameraController {
+  /** Give the camera hardware a moment (see RELEASE_MS). */
+  static settle(ms: number): Promise<void> {
+    return new Promise((r) => window.setTimeout(r, ms));
+  }
+
   stream: MediaStream | null = null;
   facing: FacingMode = "environment";
   private video: HTMLVideoElement | null = null;
@@ -685,17 +698,28 @@ export class CameraController {
     this.freeze();
     // free the camera before asking for another one
     for (const t of this.stream?.getVideoTracks() ?? []) t.stop();
+    // track.stop() returns immediately but Android releases the camera
+    // asynchronously, so opening the next lens straight away hits
+    // NotReadableError. That is why lens switching worked on the very first
+    // launch (discovery's probe sequence supplied natural gaps) and then
+    // failed on every launch afterwards, reporting that the phone would not
+    // allow the lens at all. Give the hardware a moment, then retry.
+    await CameraController.settle(RELEASE_MS);
 
     const open = async (id: string | null): Promise<MediaStreamTrack | null> => {
-      try {
-        const s = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: wanted(id),
-        });
-        return s.getVideoTracks()[0] ?? null;
-      } catch {
-        return null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: wanted(id),
+          });
+          return s.getVideoTracks()[0] ?? null;
+        } catch {
+          // busy, not unsupported: wait longer each time before giving up
+          await CameraController.settle(RELEASE_MS * (attempt + 2));
+        }
       }
+      return null;
     };
 
     let track = await open(deviceId);
@@ -709,10 +733,58 @@ export class CameraController {
         landedOn = null;
       }
       if (!track) return false;
-      this.attachStream(track, audio, landedOn);
+      this.attachStream(track, await this.liveAudio(audio), landedOn);
       return false; // restored, but the requested switch did not happen
     }
-    this.attachStream(track, audio, landedOn);
+    this.attachStream(track, await this.liveAudio(audio), landedOn);
+    return true;
+  }
+
+  /**
+   * A live audio track for the new stream.
+   *
+   * Carrying the old track across a lens switch is the intent, but Android
+   * can end it when the camera session is torn down — and a MediaStream
+   * holding an ENDED audio track records perfect video with no sound, which
+   * is exactly what happened in the APK while the web build was fine. So
+   * check, and re-acquire the mic if the track we were about to reuse is
+   * already dead.
+   */
+  private async liveAudio(
+    existing: MediaStreamTrack | null
+  ): Promise<MediaStreamTrack | null> {
+    if (existing && existing.readyState === "live") return existing;
+    const base: MediaTrackConstraints = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    };
+    for (const audio of [await preferredAudioConstraints(base), base]) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio });
+        const t = s.getAudioTracks()[0];
+        if (t) return t;
+      } catch {
+        // try the next, plainer constraint
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Guarantee the stream has a live microphone track, re-acquiring if not.
+   * Called immediately before recording starts, because a silent recording
+   * cannot be salvaged afterwards.
+   */
+  async ensureAudio(): Promise<boolean> {
+    const s = this.stream;
+    if (!s) return false;
+    const have = s.getAudioTracks()[0] ?? null;
+    if (have && have.readyState === "live") return true;
+    if (have) s.removeTrack(have);
+    const fresh = await this.liveAudio(null);
+    if (!fresh) return false;
+    s.addTrack(fresh);
     return true;
   }
 
@@ -809,9 +881,11 @@ export class CameraController {
     const rvfc = (v as WithRvfc).requestVideoFrameCallback;
     if (rvfc) rvfc.call(v, finish);
     else v.addEventListener("loadeddata", finish, { once: true });
-    // belt and braces: never leave a still frame standing in for a live
-    // camera, however the new track behaves
-    window.setTimeout(finish, 1200);
+    // Belt and braces: never leave a still frame standing in for a live
+    // camera, however the new track behaves. Generous, because a slow phone
+    // may need a retry or two to hand the lens over and dropping the cover
+    // early just exposes the black gap it exists to hide.
+    window.setTimeout(finish, 3000);
   }
 
   /** deviceId of the lens currently streaming (null = default/main). */
