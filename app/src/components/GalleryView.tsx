@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Play, RefreshCw, Search, X, MapPin, Layers, Map as MapIcon, LayoutGrid } from "lucide-react";
 import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
@@ -82,15 +82,24 @@ export default function GalleryView() {
 
   // Opening a photo unmounts this screen; keep the scroll offset so coming
   // back lands exactly where the user was, not at the top of the grid.
+  const restoredScroll = useRef(false);
   useEffect(() => {
     // the Screen body is the scroll container
     const body = document.querySelector<HTMLElement>(".screen-body");
     if (!body) return;
-    body.scrollTop = recallScroll();
     const onScroll = () => rememberScroll(body.scrollTop);
     body.addEventListener("scroll", onScroll, { passive: true });
     return () => body.removeEventListener("scroll", onScroll);
   }, []);
+  // restore only once the grid has real height — on a cold load the cells
+  // arrive async and an early scrollTop write just clamps to 0
+  useEffect(() => {
+    if (restoredScroll.current || !cells?.length) return;
+    const body = document.querySelector<HTMLElement>(".screen-body");
+    if (!body) return;
+    restoredScroll.current = true;
+    body.scrollTop = recallScroll();
+  }, [cells]);
 
   useEffect(() => {
     let cancelled = false;

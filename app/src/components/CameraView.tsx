@@ -993,31 +993,6 @@ export default function CameraView({ active }: { active: boolean }) {
     };
   }, [active, onShutter]);
 
-  // Free-floating zoom bar: sit ABOVE the watermark card in portrait
-  // rather than on top of it (the card anchors to the same bottom edge).
-  const [barBottom, setBarBottom] = useState<number | null>(null);
-  useEffect(() => {
-    if (!zoomBar || focusPos) return;
-    const tick = () => {
-      const info = cardInfoRef.current;
-      const box = boxRef.current;
-      if (!info || !box) return;
-      const { rect, rot, h } = info;
-      if (rot === 90 || rot === -90 || !rect) {
-        setBarBottom(null);
-        return;
-      }
-      const bh = box.getBoundingClientRect().height;
-      if (!bh || !info.h) return;
-      const cardTopCss = rect.y * (bh / h);
-      const b = Math.max(12, Math.round(bh - cardTopCss + 8));
-      setBarBottom((p) => (p !== null && Math.abs(p - b) < 3 ? p : b));
-    };
-    tick();
-    const t = window.setInterval(tick, 400);
-    return () => window.clearInterval(t);
-  }, [zoomBar, focusPos]);
-
   // the stream restarted (minimise/restore) and the controller put the zoom
   // back: follow it, so the chips and the indicator match the picture
   useEffect(() => {
@@ -1032,74 +1007,120 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
 
   /**
-   * Recording timer placement, off the live card so it never covers it:
-   * portrait, top-left on the flash/settings line (or just below the card
-   * when the user anchors the card at the top); landscape, directly below
-   * the card. Recomputed while recording so it follows rotation and card
-   * position live.
+   * Dynamic placement for the recording timer pill and the free-floating
+   * zoom chips, from the live card rect, in BOTH orientations:
+   * - portrait: pill top-left ON THE FLASH/SETTINGS LINE (not up against
+   *   the status bar); chips just above the card. Card anchored top-left
+   *   instead: pill drops below the card, chips below the pill.
+   * - landscape: pill directly below the card (above it when the card hugs
+   *   the rotated bottom edge); chips on the OPPOSITE side of the card, so
+   *   pill, chips and card can never cover each other.
    */
+  const [freeBar, setFreeBar] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
-    if (!recording) {
+    const wantBar = zoomBar && !focusPos;
+    if (!recording && !wantBar) {
       setRecPos(null);
+      setFreeBar(null);
       return;
     }
     const tick = () => {
       const info = cardInfoRef.current;
       const canvas = overlayRef.current;
-      const box = viewportRef.current; // the pill's containing block
-      if (!info || !canvas || !box) return;
+      const vp = viewportRef.current;
+      if (!info || !canvas || !vp) return;
       const cr = canvas.getBoundingClientRect();
-      const br = box.getBoundingClientRect();
+      const br = vp.getBoundingClientRect();
       if (!cr.width || !info.w) return;
-      const kx = cr.width / info.w; // canvas px -> css px
+      const kx = cr.width / info.w;
       const ky = cr.height / info.h;
-      const M = 12 / kx; // margins in canvas px
-      const gap = 8 / ky;
       const { rect, rot, w, h } = info;
-      const rotH = rot === 90 || rot === -90 ? w : h;
+      const landscape = rot === 90 || rot === -90;
+      const rotH = landscape ? w : h;
+      const gap = 8 / ky;
+      const M = 12 / kx;
+      const PILL_H = 34 / ky;
+      const BAR_H = 40 / ky;
+      const toScreen = (u: number, v: number) => {
+        let x = u;
+        let y = v;
+        if (rot === 90) {
+          x = w - v;
+          y = u;
+        } else if (rot === -90) {
+          x = v;
+          y = h - u;
+        }
+        return {
+          left: cr.left - br.left + x * kx,
+          top: cr.top - br.top + y * ky,
+        };
+      };
       const cardIsTop = !!rect && rect.y < rotH / 2;
-      // Portrait with the card anywhere but the top: plain top-left of the
-      // SCREEN, on the flash/settings line — not of the video box, which
-      // can sit centred with black bars around it.
-      if (!(rot === 90 || rot === -90) && !cardIsTop) {
+
+      // ---- recording pill ----
+      if (recording) {
+        let pill: { left: number; top: number };
+        // portrait home: ON the flash/settings line, left edge — used
+        // unless the card actually covers that spot
+        const icon = document.querySelector(".cam-top button");
+        const ir = icon?.getBoundingClientRect();
+        const homeTop = ir ? ir.top + ir.height / 2 - 17 - br.top : 12;
+        const cardCovers =
+          !!rect &&
+          !landscape &&
+          rect.y * ky + (cr.top - br.top) < homeTop + 34 &&
+          rect.x * kx + (cr.left - br.left) < 12 + 96;
+        if (!landscape && !cardCovers) {
+          pill = { left: 12, top: homeTop };
+        } else if (rect) {
+          // under the card (or over it at the rotated bottom edge)
+          let v = rect.y + rect.height + gap;
+          if (v + PILL_H > rotH - M) v = Math.max(M, rect.y - gap - PILL_H);
+          pill = toScreen(rect.x, v);
+        } else {
+          pill = { left: 12, top: 12 };
+        }
         setRecPos((p) =>
-          p && p.left === 12 && p.top === 12 ? p : { left: 12, top: 12 }
+          p && Math.abs(p.left - pill.left) < 2 && Math.abs(p.top - pill.top) < 2
+            ? p
+            : pill
         );
-        return;
       }
-      // Otherwise anchor below the card, in rotated drawing space — and
-      // when the card already hugs the bottom edge (its usual anchor),
-      // "below" would land off the picture, so sit just above it instead.
-      const pillH = 32 / ky; // pill box in canvas px, generous
-      let u = M;
-      let v = M;
-      if (rect) {
-        u = rect.x;
-        v = rect.y + rect.height + gap;
-        if (v + pillH > rotH - M) v = Math.max(M, rect.y - gap - pillH);
+
+      // ---- free zoom chips ----
+      if (wantBar && rect) {
+        let u = rect.x;
+        let v: number;
+        if (!landscape) {
+          // above a bottom card; below the card AND the pill otherwise
+          v = cardIsTop
+            ? rect.y + rect.height + gap + PILL_H + gap
+            : rect.y - gap - BAR_H;
+        } else {
+          // opposite side from the pill: pill goes below/over the card,
+          // the chips take the free side toward the picture centre
+          const below = rect.y + rect.height + gap;
+          const pillFlipped = below + PILL_H > rotH - M;
+          v = pillFlipped
+            ? Math.max(M, rect.y - gap - PILL_H - gap - BAR_H)
+            : rect.y - gap - BAR_H;
+        }
+        v = Math.max(M, v);
+        const b = toScreen(u, v);
+        setFreeBar((p) =>
+          p && Math.abs(p.left - b.left) < 3 && Math.abs(p.top - b.top) < 3
+            ? p
+            : b
+        );
+      } else if (wantBar) {
+        setFreeBar(null);
       }
-      // rotated point -> screen canvas px (must mirror the draw transform)
-      let x = u;
-      let y = v;
-      if (rot === 90) {
-        x = w - v;
-        y = u;
-      } else if (rot === -90) {
-        x = v;
-        y = h - u;
-      }
-      const left = (cr.left - br.left) + x * kx;
-      const top = (cr.top - br.top) + y * ky;
-      setRecPos((p) =>
-        p && Math.abs(p.left - left) < 2 && Math.abs(p.top - top) < 2
-          ? p
-          : { left, top }
-      );
     };
     tick();
     const t = window.setInterval(tick, 400);
     return () => window.clearInterval(t);
-  }, [recording, uiRot]);
+  }, [recording, zoomBar, focusPos, uiRot]);
 
   // an AF lock does not survive the track it was applied to (a lens switch
   // opens a new one), so drop the padlock rather than show a dead one
@@ -1237,40 +1258,58 @@ export default function CameraView({ active }: { active: boolean }) {
   // One definition, two homes: hanging under the focus group when there is
   // one (so the stops travel with the tap point), pinned over the bottom of
   // the picture when zooming without a focus tap.
+  const zoomChips = zoomStops.map((z) => (
+    <button
+      key={z}
+      data-active={Math.abs(z - zoomNow) < 0.05}
+      onClick={(e) => {
+        e.stopPropagation();
+        void camera.setZoom(z).then((got) => {
+          setZoomNow(got);
+          setZoomLabel(fmtZoom(got));
+          // asked for a lens the phone won't hand over: say so once
+          // instead of silently landing somewhere else
+          if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
+            showToast("This phone doesn't let apps use that lens directly");
+          }
+        });
+        showZoomBar();
+        keepFocusUi();
+      }}
+    >
+      {fmtZoom(z)}
+    </button>
+  ));
+  // Free-floating copy: dynamically anchored off the card in either
+  // orientation; falls back to the CSS default before the first card rect.
   const zoomBarEl = zoomBar && zoomStops.length > 1 && (
     <div
       className="cam-zoombar"
       style={
-        {
-          "--ui-rot": `${uiRot}deg`,
-          ...(barBottom !== null ? { bottom: barBottom } : {}),
-        } as React.CSSProperties
+        (freeBar
+          ? {
+              left: freeBar.left,
+              top: freeBar.top,
+              bottom: "auto",
+              transform: `rotate(${uiRot}deg)`,
+              transformOrigin: "top left",
+            }
+          : { "--ui-rot": `${uiRot}deg` }) as React.CSSProperties
       }
       onPointerDown={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}
     >
-      {zoomStops.map((z) => (
-        <button
-          key={z}
-          data-active={Math.abs(z - zoomNow) < 0.05}
-          onClick={(e) => {
-            e.stopPropagation();
-            void camera.setZoom(z).then((got) => {
-              setZoomNow(got);
-              setZoomLabel(fmtZoom(got));
-              // asked for a lens the phone won't hand over: say so once
-              // instead of silently landing somewhere else
-              if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
-                showToast("This phone doesn't let apps use that lens directly");
-              }
-            });
-            showZoomBar();
-            keepFocusUi();
-          }}
-        >
-          {fmtZoom(z)}
-        </button>
-      ))}
+      {zoomChips}
+    </div>
+  );
+  // Focus-group copy: plain, the parent cluster carries rotation.
+  const focusZoomBarEl = zoomBar && zoomStops.length > 1 && (
+    <div
+      className="cam-zoombar"
+      onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
+    >
+      {zoomChips}
     </div>
   );
 
@@ -1549,7 +1588,7 @@ export default function CameraView({ active }: { active: boolean }) {
           {/* Lens stops hang off the bottom of the group, so focus ring,
               brightness and zoom move together as one cluster. */}
           <div className={`focus-zoom${evInfo ? "" : " no-ev"}`}>
-            {zoomBarEl}
+            {focusZoomBarEl}
           </div>
         </div>
       )}
