@@ -10,6 +10,7 @@
 import { isNativeApp } from "./native";
 import { preferredAudioConstraints } from "./audio/source";
 import { qualityPlan } from "./quality";
+import { measureLensFactor } from "./lens-calibrate";
 
 export type FacingMode = "environment" | "user";
 
@@ -296,42 +297,97 @@ export class CameraController {
       };
 
       const saved = loadLensOverrides();
+
+      // Probe EVERY back camera's sensor first. Identifying the main lens
+      // by "whatever facingMode:environment gave us" was wrong: on this
+      // class of Samsung, Chrome hands out the ULTRA-WIDE as the default
+      // rear camera, so the app's 1x was already a wide shot and the lens
+      // it called 0.6x was the real main — exactly the swap reported from
+      // the field. The main camera is instead the one with the largest
+      // sensor (50 MP main vs 12 MP ultra-wide vs 10 MP tele), which is
+      // true across essentially every multi-lens phone.
+      const probed: { d: MediaDeviceInfo; px: number }[] = [];
+      for (const d of ordered.slice(0, 4)) {
+        const px = await probeSensorPixels(d.deviceId);
+        // cameras that refuse to open, or tiny depth/macro helpers, are
+        // not shooting lenses
+        if (px !== null && px < 2_000_000) continue;
+        probed.push({ d, px: px ?? 0 });
+      }
+      if (probed.length < 2) return;
+      const mainPx = Math.max(...probed.map((p) => p.px));
+      const mainEntry =
+        probed.find((p) => p.px === mainPx && mainPx > 0) ?? probed[0];
+
       const list: Lens[] = [];
-      for (let i = 0; i < ordered.length && i < 4; i++) {
-        const d = ordered[i];
-        const isMain =
-          d.deviceId === this.mainDeviceId || (i === 0 && !this.mainDeviceId);
-        // convention for extra back cameras: ultra-wide first, then tele
+      let assignedWide = false;
+      for (const { d } of probed) {
+        const isMain = d.deviceId === mainEntry.d.deviceId;
+        // the remaining lenses: ultra-wide first (Android orders it before
+        // the tele), then telephoto
         const conventional = isMain
           ? 1
-          : list.some((l) => l.factor < 1)
+          : assignedWide
             ? TELEPHOTO_FACTOR
             : ULTRA_WIDE_FACTOR;
-        const factor =
-          saved[d.deviceId] ?? fromLabel(d.label) ?? conventional;
+        if (!isMain && !assignedWide) assignedWide = true;
+        const factor = saved[d.deviceId] ?? fromLabel(d.label) ?? conventional;
         list.push({
           deviceId: d.deviceId,
-          label: d.label || `Camera ${i + 1}`,
+          label: d.label || "Camera",
           factor,
           isMain,
         });
       }
-      // a phone can report cameras that are not real shooting lenses
-      // (depth, macro): drop anything whose sensor is tiny
-      const keep: Lens[] = [];
-      for (const lens of list) {
-        if (lens.isMain) {
-          keep.push(lens);
-          continue;
-        }
-        const px = await probeSensorPixels(lens.deviceId);
-        if (px === null || px >= 2_000_000) keep.push(lens);
-      }
+      const keep = list;
       keep.sort((a, b) => a.factor - b.factor);
       this.lenses = keep.length > 1 ? keep : [];
+
+      // Calibrate: for any lens whose factor is still a GUESS (no user
+      // override, no informative label), measure it optically instead —
+      // brands disagree (0.5x vs 0.6x ultra-wide; 2x/3x/5x tele) and a
+      // convention table is wrong on some popular phone by definition.
+      // Runs once per device, in the background, and is remembered.
+      void this.calibrateGuesses(saved);
+
+      // The default stream may not be the main lens (see above). If it is
+      // not, switch now so a fresh viewfinder at 1x really shows 1x.
+      const main = this.lenses.find((l) => l.isMain);
+      if (main && this.zoomValue === 1 && !this.lensSwapping) {
+        const streaming = this.stream?.getVideoTracks()[0]?.getSettings?.().deviceId;
+        if (streaming && streaming !== main.deviceId) {
+          this.lensSwapping = true;
+          await this.useDevice(main.deviceId);
+          this.lensSwapping = false;
+          this.digitalZoom = 1;
+          this.applyDigitalTransform();
+          this.zoomValue = 1;
+        }
+      }
     } catch {
       this.lenses = [];
     }
+  }
+
+  /**
+   * Optically measure every lens we only guessed at, then remember the
+   * result so this never runs again on this phone. Deliberately quiet:
+   * a failure (flat scene, camera busy) just leaves the guess in place.
+   */
+  private async calibrateGuesses(saved: Record<string, number>): Promise<void> {
+    const main = this.lenses.find((l) => l.isMain);
+    if (!main) return;
+    for (const lens of this.lenses) {
+      if (lens.isMain || saved[lens.deviceId] != null) continue;
+      if (this.lensSwapping) return; // user is actively zooming; don't fight
+      const measured = await measureLensFactor(main.deviceId, lens.deviceId);
+      if (measured == null) continue;
+      lens.factor = measured;
+      saveLensOverride(lens.deviceId, measured);
+    }
+    this.lenses.sort((a, b) => a.factor - b.factor);
+    // the viewfinder may be showing a stop that just got renamed
+    window.dispatchEvent(new Event("gpscam:lenses-updated"));
   }
 
   /** Zoom stops the UI can offer (one per real lens, plus 2× digital). */
@@ -339,9 +395,12 @@ export class CameraController {
     const info = this.zoomInfo();
     const stops = new Set<number>();
     for (const l of this.lenses) stops.add(l.factor);
-    stops.add(1);
-    if (info.max >= 2) stops.add(2);
-    return [...stops].filter((z) => z >= info.min && z <= info.max).sort((a, b) => a - b);
+    // standard steps so there is always something to tap, even on phones
+    // that expose a single camera
+    for (const z of [1, 2, 3]) stops.add(z);
+    return [...stops]
+      .filter((z) => z >= info.min - 1e-6 && z <= info.max + 1e-6)
+      .sort((a, b) => a - b);
   }
 
   /** The lens that natively covers a target zoom factor. */
@@ -456,7 +515,9 @@ export class CameraController {
       const want = this.lensFor(clamped);
       if (want && want.deviceId !== (this.activeLensId ?? this.mainDeviceId)) {
         this.lensSwapping = true;
-        const ok = await this.useDevice(want.isMain ? null : want.deviceId);
+        // always switch by explicit deviceId — plain facingMode can hand
+        // back a different lens entirely on some phones
+        const ok = await this.useDevice(want.deviceId);
         this.lensSwapping = false;
         if (ok) {
           this.digitalZoom = Math.max(1, clamped / want.factor);

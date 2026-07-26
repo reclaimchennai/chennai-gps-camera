@@ -86,7 +86,7 @@ export default function CameraView({ active }: { active: boolean }) {
     setZoomStops(camera.zoomStops());
     setZoomBar(true);
     window.clearTimeout(zoomBarTimer.current);
-    zoomBarTimer.current = window.setTimeout(() => setZoomBar(false), 2600);
+    zoomBarTimer.current = window.setTimeout(() => setZoomBar(false), 4000);
   }, []);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [flashFx, setFlashFx] = useState(0);
@@ -113,8 +113,10 @@ export default function CameraView({ active }: { active: boolean }) {
       setEvInfo(info ? { min: info.min, max: info.max, step: info.step } : null);
       if (info) setEvVal(info.value);
       keepFocusUi();
+      // one tap brings up focus, brightness AND the zoom stops together
+      showZoomBar();
     },
-    [keepFocusUi]
+    [keepFocusUi, showZoomBar]
   );
   const [toast, setToast] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
@@ -850,6 +852,14 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [active, onShutter]);
 
+  // calibration finished renaming a lens (.6x vs .5x, 3x vs 5x): refresh
+  // the stop chips so they read what this phone actually has
+  useEffect(() => {
+    const onLenses = () => setZoomStops(camera.zoomStops());
+    window.addEventListener("gpscam:lenses-updated", onLenses);
+    return () => window.removeEventListener("gpscam:lenses-updated", onLenses);
+  }, []);
+
   // Android app: volume buttons fire the shutter (MainActivity intercepts
   // the key events and relays them as this window event). Debounced so
   // key auto-repeat can't machine-gun the camera.
@@ -1032,6 +1042,39 @@ export default function CameraView({ active }: { active: boolean }) {
             />
           )}
           <canvas ref={overlayRef} className="cam-overlay" />
+          {/* Lens stops, OVER the picture: living in the controls strip
+                resized that strip as they came and went, so the viewfinder
+                kept growing and shrinking. They fade on their own, so the
+                brief overlap with the watermark is harmless. */}
+          {zoomBar && zoomStops.length > 1 && (
+            <div
+              className="cam-zoombar"
+              style={{ "--ui-rot": `${uiRot}deg` } as React.CSSProperties}
+            >
+              {zoomStops.map((z) => (
+                <button
+                  key={z}
+                  data-active={Math.abs(z - zoomNow) < 0.05}
+                  onClick={() => {
+                    void camera.setZoom(z).then((got) => {
+                      setZoomNow(got);
+                      setZoomLabel(fmtZoom(got));
+                      // asked for a lens the phone won't hand over: say so
+                      // once instead of silently landing somewhere else
+                      if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
+                        showToast(
+                          "This phone doesn't let apps use that lens directly"
+                        );
+                      }
+                    });
+                    showZoomBar();
+                  }}
+                >
+                  {fmtZoom(z)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {(permState === "needed" || permState === "denied") && (
@@ -1212,34 +1255,6 @@ export default function CameraView({ active }: { active: boolean }) {
 
       {/* Opaque controls bar — below the viewfinder, never over it. */}
       <div className="cam-controls">
-        {/* transient lens stops — appear while zooming, fade out after */}
-        {zoomBar && zoomStops.length > 1 && (
-          <div className="cam-zoombar">
-            {zoomStops.map((z) => (
-              <button
-                key={z}
-                data-active={Math.abs(z - zoomNow) < 0.05}
-                onClick={() => {
-                  void camera.setZoom(z).then((got) => {
-                    setZoomNow(got);
-                    setZoomLabel(fmtZoom(got));
-                    // asked for a lens the phone won't hand over: say so
-                    // once instead of silently landing somewhere else
-                    if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
-                      showToast(
-                        "This phone doesn't let apps use that lens directly"
-                      );
-                    }
-                  });
-                  showZoomBar();
-                }}
-              >
-                {fmtZoom(z)}
-              </button>
-            ))}
-          </div>
-        )}
-
         <div className="cam-mode">
           <button
             data-active={mode === "photo"}

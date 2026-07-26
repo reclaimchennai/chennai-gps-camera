@@ -555,18 +555,33 @@ textarea {
 
 /* Lens stops, shown only while zooming (see .cam-zoombar usage): sits
    low and centred, well clear of the watermark's right-edge strip. */
-/* Lives INSIDE the controls strip (below the viewfinder), never over the
-   preview — an absolutely-positioned bar sat on top of the watermark card
-   on tall-screen layouts. */
+/* Floats OVER the preview: putting it in the controls strip resized that
+   strip each time it appeared and disappeared, so the viewfinder kept
+   growing and shrinking. Overlaying costs a brief overlap with the
+   watermark, which is fine because it fades away on its own.
+   Rotates with the device so the labels read upright in landscape. */
 .cam-zoombar {
-  align-self: center;
-  margin-bottom: 6px;
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%) rotate(var(--ui-rot, 0deg));
+  z-index: 6;
   display: flex;
   gap: 4px;
   padding: 4px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
   animation: zoombar-in 0.16s ease-out;
+  transition: transform 0.35s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+
+/* landscape: keep it clear of the (rotated) controls, hugging the side
+   the shutter is not on */
+@media (orientation: landscape) {
+  .cam-zoombar {
+    bottom: 8px;
+  }
 }
 .cam-zoombar button {
   min-width: 38px;
@@ -581,8 +596,8 @@ textarea {
   color: #fbbf24;
 }
 @keyframes zoombar-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* Samsung focus UI, matched to the stock camera: a thin white CIRCLE, a
