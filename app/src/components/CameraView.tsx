@@ -52,6 +52,7 @@ function fmtZoom(z: number): string {
 export default function CameraView({ active }: { active: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
+  const freezeRef = useRef<HTMLCanvasElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
@@ -108,6 +109,17 @@ export default function CameraView({ active }: { active: boolean }) {
 
   const showFocusUi = useCallback(
     (x: number, y: number) => {
+      // The group is ring + brightness + zoom stops stacked downward, so
+      // a tap near an edge would push the lower rows off-screen. Keep the
+      // whole cluster inside the viewport instead of just the ring.
+      const box = boxRef.current?.getBoundingClientRect();
+      const halfW = 105; // widest row (the stops) is ~200px
+      const below = 150; // ring centre to the bottom of the stops
+      const above = 46; // ring centre to the top of the padlock
+      if (box) {
+        x = Math.min(box.right - halfW, Math.max(box.left + halfW, x));
+        y = Math.min(box.bottom - below, Math.max(box.top + above, y));
+      }
       setFocusPos({ x, y, key: Date.now() });
       const info = camera.exposureInfo();
       setEvInfo(info ? { min: info.min, max: info.max, step: info.step } : null);
@@ -852,6 +864,13 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [active, onShutter]);
 
+  // give the controller the canvas it holds the last frame on during a
+  // lens switch
+  useEffect(() => {
+    camera.setFreezeSurface(freezeRef.current);
+    return () => camera.setFreezeSurface(null);
+  }, []);
+
   // calibration finished renaming a lens (.6x vs .5x, 3x vs 5x): refresh
   // the stop chips so they read what this phone actually has
   useEffect(() => {
@@ -990,6 +1009,41 @@ export default function CameraView({ active }: { active: boolean }) {
   const fmtRec = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
+  // One definition, two homes: hanging under the focus group when there is
+  // one (so the stops travel with the tap point), pinned over the bottom of
+  // the picture when zooming without a focus tap.
+  const zoomBarEl = zoomBar && zoomStops.length > 1 && (
+    <div
+      className="cam-zoombar"
+      style={{ "--ui-rot": `${uiRot}deg` } as React.CSSProperties}
+      onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={(e) => e.stopPropagation()}
+    >
+      {zoomStops.map((z) => (
+        <button
+          key={z}
+          data-active={Math.abs(z - zoomNow) < 0.05}
+          onClick={(e) => {
+            e.stopPropagation();
+            void camera.setZoom(z).then((got) => {
+              setZoomNow(got);
+              setZoomLabel(fmtZoom(got));
+              // asked for a lens the phone won't hand over: say so once
+              // instead of silently landing somewhere else
+              if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
+                showToast("This phone doesn't let apps use that lens directly");
+              }
+            });
+            showZoomBar();
+            keepFocusUi();
+          }}
+        >
+          {fmtZoom(z)}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div
       className="cam-screen"
@@ -1029,6 +1083,10 @@ export default function CameraView({ active }: { active: boolean }) {
             autoPlay
             poster={BLACK_POSTER}
           />
+          {/* Holds the last frame while a lens switch releases one camera
+              and opens another, so crossing 0.6x→1x fades instead of
+              flashing black. */}
+          <canvas ref={freezeRef} className="cam-freeze" />
           {settings.gridLines && (
             <div
               className="cam-grid"
@@ -1044,37 +1102,9 @@ export default function CameraView({ active }: { active: boolean }) {
           <canvas ref={overlayRef} className="cam-overlay" />
           {/* Lens stops, OVER the picture: living in the controls strip
                 resized that strip as they came and went, so the viewfinder
-                kept growing and shrinking. They fade on their own, so the
-                brief overlap with the watermark is harmless. */}
-          {zoomBar && zoomStops.length > 1 && (
-            <div
-              className="cam-zoombar"
-              style={{ "--ui-rot": `${uiRot}deg` } as React.CSSProperties}
-            >
-              {zoomStops.map((z) => (
-                <button
-                  key={z}
-                  data-active={Math.abs(z - zoomNow) < 0.05}
-                  onClick={() => {
-                    void camera.setZoom(z).then((got) => {
-                      setZoomNow(got);
-                      setZoomLabel(fmtZoom(got));
-                      // asked for a lens the phone won't hand over: say so
-                      // once instead of silently landing somewhere else
-                      if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
-                        showToast(
-                          "This phone doesn't let apps use that lens directly"
-                        );
-                      }
-                    });
-                    showZoomBar();
-                  }}
-                >
-                  {fmtZoom(z)}
-                </button>
-              ))}
-            </div>
-          )}
+                kept growing and shrinking. With a focus group on screen
+                they ride along underneath it instead (see below). */}
+          {!focusPos && zoomBarEl}
         </div>
 
         {(permState === "needed" || permState === "denied") && (
@@ -1189,7 +1219,13 @@ export default function CameraView({ active }: { active: boolean }) {
       {focusPos && (
         <div
           className="focus-ui"
-          style={{ left: focusPos.x, top: focusPos.y }}
+          style={
+            {
+              left: focusPos.x,
+              top: focusPos.y,
+              "--ui-rot": `${uiRot}deg`,
+            } as React.CSSProperties
+          }
         >
           <div
             key={focusPos.key}
@@ -1219,6 +1255,17 @@ export default function CameraView({ active }: { active: boolean }) {
           {evInfo && (
             <div
               className="ev-slider"
+              // 0 at the far left, 1 at the far right, 0.5 in the middle:
+              // the sun grows and brightens as it travels right, so the
+              // control shows what it does before you let go
+              style={
+                {
+                  "--ev-t":
+                    evInfo.max > evInfo.min
+                      ? (evVal - evInfo.min) / (evInfo.max - evInfo.min)
+                      : 0.5,
+                } as React.CSSProperties
+              }
               onPointerDown={(e) => e.stopPropagation()}
               onPointerMove={(e) => e.stopPropagation()}
               onPointerUp={(e) => e.stopPropagation()}
@@ -1238,6 +1285,11 @@ export default function CameraView({ active }: { active: boolean }) {
               />
             </div>
           )}
+          {/* Lens stops hang off the bottom of the group, so focus ring,
+              brightness and zoom move together as one cluster. */}
+          <div className={`focus-zoom${evInfo ? "" : " no-ev"}`}>
+            {zoomBarEl}
+          </div>
         </div>
       )}
 

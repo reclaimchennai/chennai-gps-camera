@@ -7,7 +7,7 @@ import { isNativeApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 import { qualitySummary } from "../lib/quality";
-import { camera, saveLensOverride, type Lens } from "../lib/camera";
+import { camera, loadLensProfile, type Lens } from "../lib/camera";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -77,6 +77,14 @@ function WheelPicker({
   );
 }
 
+/** Name a lens by what it is, since Android only ever labels them
+ *  "camera2 N, facing back". */
+function lensName(l: Lens): string {
+  if (Math.abs(l.factor - 1) < 0.05) return "Main (1x)";
+  if (l.factor < 1) return `Ultra-wide (${String(l.factor).replace(/^0/, "")}x)`;
+  return `Telephoto (${l.factor}x)`;
+}
+
 export default function SettingsView() {
   const settings = useSettingsStore((s) => s.settings);
   const setSettings = useSettingsStore((s) => s.setSettings);
@@ -86,10 +94,21 @@ export default function SettingsView() {
   const [calRef, setCalRef] = useState(60);
   const [advOpen, setAdvOpen] = useState(false);
   const [plateTest, setPlateTest] = useState<string | null>(null);
-  // rear lenses the app found (empty when the platform exposes only one)
-  const [lenses, setLenses] = useState<Lens[]>([]);
+  // Rear lenses the app found (empty when the platform exposes only one).
+  // Read from the saved profile, not just the live controller: arriving
+  // here from the camera used to show an empty or half-rebuilt list, which
+  // is what made the settings look like they had reset themselves.
+  const [lenses, setLenses] = useState<Lens[]>(() =>
+    camera.lenses.length > 1 ? camera.lenses : loadLensProfile()
+  );
+  const [calibrating, setCalibrating] = useState(false);
+  const [calResult, setCalResult] = useState<string | null>(null);
   useEffect(() => {
-    setLenses(camera.lenses);
+    const sync = () =>
+      setLenses(camera.lenses.length > 1 ? camera.lenses : loadLensProfile());
+    sync();
+    window.addEventListener("gpscam:lenses-updated", sync);
+    return () => window.removeEventListener("gpscam:lenses-updated", sync);
   }, []);
 
   // keep the mic meter running here so the calibration row shows a live
@@ -176,69 +195,6 @@ export default function SettingsView() {
         </button>
         <div className="adv-body" data-open={advOpen}>
           <div>
-            <Row
-              label={
-                <>
-                  Live face blur{" "}
-                  <span className="exp-chip">Experimental</span>
-                  {Date.now() < NEW_GIF_UNTIL && (
-                    <img
-                      src="/new.gif"
-                      alt="New"
-                      style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
-                    />
-                  )}
-                </>
-              }
-              hint="Blurs detected faces in the viewfinder and burns them into photos and recorded videos. Best-effort — always review; uses more battery."
-            >
-              <Toggle
-                on={settings.liveFaceBlur}
-                onChange={(v) => setSettings({ liveFaceBlur: v })}
-              />
-            </Row>
-
-            <div className="row" style={{ display: "block" }}>
-              <div className="label">Camera lenses</div>
-              <div className="hint" style={{ margin: "2px 0 8px" }}>
-                {lenses.length > 1
-                  ? "Pinch past 1x to switch lenses. If a lens is labelled wrong, set its real zoom here."
-                  : "Only one rear camera is available to the app on this device, so zoom is digital. Nothing to configure."}
-              </div>
-              {lenses.map((l) => (
-                <div
-                  key={l.deviceId}
-                  style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}
-                >
-                  <span
-                    className="hint"
-                    style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                  >
-                    {l.isMain ? "Main" : l.label}
-                  </span>
-                  <div className="seg" style={{ width: 190 }}>
-                    {[0.6, 1, 2, 3, 5].map((f) => (
-                      <button
-                        key={f}
-                        data-active={Math.abs(l.factor - f) < 0.05}
-                        onClick={() => {
-                          saveLensOverride(l.deviceId, f);
-                          setLenses((prev) =>
-                            prev.map((x) =>
-                              x.deviceId === l.deviceId ? { ...x, factor: f } : x
-                            )
-                          );
-                          window.dispatchEvent(new Event("gpscam:restart-camera"));
-                        }}
-                      >
-                        {f < 1 ? String(f).replace(/^0/, "") : f}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-
             <div className="row" style={{ display: "block" }}>
               <div className="label">Capture quality</div>
               <div className="hint" style={{ margin: "2px 0 8px" }}>
@@ -269,53 +225,78 @@ export default function SettingsView() {
               </div>
             </div>
 
-            <Row
-              label={
-                <>
-                  Licence plate reader{" "}
-                  <span className="exp-chip">Experimental</span>
-                  {Date.now() < PLATE_NEW_UNTIL && (
-                    <img
-                      src="/new.gif"
-                      alt="New"
-                      style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
-                    />
-                  )}
-                </>
-              }
-              hint="Reads vehicle number plates from photos, fully on-device, in the background — never slows the shutter. Found plates show on the photo and ride along when you share it. Best-effort: verify before reporting."
-            >
-              <Toggle
-                on={settings.plateOcr}
-                onChange={(v) => {
-                  setSettings({ plateOcr: v });
-                  // pre-download/compile the engine now, so the first real
-                  // scan isn't also the slow warm-up
-                  if (v) warmPlateReader();
-                }}
-              />
-            </Row>
-            {settings.plateOcr && (
-              <div className="row" style={{ display: "block" }}>
-                <button
-                  className="ghost-btn"
-                  disabled={plateTest === "running"}
-                  onClick={() => {
-                    setPlateTest("running");
-                    void testPlateReader().then((r) =>
-                      setPlateTest(`${r.ok ? "✓" : "✗"} ${r.detail}`)
-                    );
-                  }}
-                >
-                  {plateTest === "running" ? "Testing…" : "Test the reader"}
-                </button>
-                {plateTest && plateTest !== "running" && (
-                  <div className="hint" style={{ marginTop: 6 }}>
-                    {plateTest}
-                  </div>
-                )}
+            <div className="row" style={{ display: "block" }}>
+              <div className="label">Camera lenses</div>
+              <div className="hint" style={{ margin: "2px 0 8px" }}>
+                {lenses.length > 1
+                  ? "Pinch past 1x to switch lenses. Whichever lens is set to 1x is the one the viewfinder opens on, so if the wide and normal views are the wrong way round, swap their settings here."
+                  : "Only one rear camera is available to the app on this device, so zoom is digital. Nothing to configure."}
               </div>
-            )}
+              {lenses.map((l) => (
+                <div
+                  key={l.deviceId}
+                  style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}
+                >
+                  <span
+                    className="hint"
+                    style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  >
+                    {lensName(l)}
+                  </span>
+                  <div className="seg" style={{ width: 190 }}>
+                    {[0.6, 1, 2, 3, 5].map((f) => (
+                      <button
+                        key={f}
+                        data-active={Math.abs(l.factor - f) < 0.05}
+                        onClick={() => {
+                          // tell the controller too, so it re-sorts and the
+                          // next 1x opens the lens just named 1x
+                          camera.setLensFactor(l.deviceId, f);
+                          setLenses((prev) =>
+                            [...prev]
+                              .map((x) =>
+                                x.deviceId === l.deviceId ? { ...x, factor: f } : x
+                              )
+                              .sort((a, b) => a.factor - b.factor)
+                          );
+                        }}
+                      >
+                        {f < 1 ? String(f).replace(/^0/, "") : f}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {lenses.length > 1 && (
+                <>
+                  <button
+                    className="ghost-btn"
+                    style={{ marginTop: 10 }}
+                    disabled={calibrating}
+                    onClick={() => {
+                      setCalibrating(true);
+                      setCalResult(null);
+                      void camera.calibrateLenses().then((n) => {
+                        setCalibrating(false);
+                        setCalResult(
+                          n > 0
+                            ? `Measured ${n} lens${n > 1 ? "es" : ""}.`
+                            : "Could not measure the lenses. Point the camera at something with detail in it, in good light, and try again."
+                        );
+                      });
+                    }}
+                  >
+                    {calibrating ? "Measuring…" : "Measure automatically"}
+                  </button>
+                  <div className="hint" style={{ marginTop: 6 }}>
+                    {calibrating
+                      ? "Hold the phone still and keep something detailed in view."
+                      : (calResult ??
+                        "Compares what each lens sees to work out its real zoom. Takes a few seconds and needs a detailed scene, not a blank wall.")}
+                  </div>
+                </>
+              )}
+            </div>
 
             {/* styled exactly like the other settings rows: bold label,
                 lighter hint at the standard size */}
@@ -368,6 +349,76 @@ export default function SettingsView() {
                 </button>
               </div>
             </div>
+
+            <Row
+              label={
+                <>
+                  Live face blur{" "}
+                  <span className="exp-chip">Experimental</span>
+                  {Date.now() < NEW_GIF_UNTIL && (
+                    <img
+                      src="/new.gif"
+                      alt="New"
+                      style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
+                    />
+                  )}
+                </>
+              }
+              hint="Blurs detected faces in the viewfinder and burns them into photos and recorded videos. Best-effort — always review; uses more battery."
+            >
+              <Toggle
+                on={settings.liveFaceBlur}
+                onChange={(v) => setSettings({ liveFaceBlur: v })}
+              />
+            </Row>
+
+            <Row
+              label={
+                <>
+                  Licence plate reader{" "}
+                  <span className="exp-chip">Experimental</span>
+                  {Date.now() < PLATE_NEW_UNTIL && (
+                    <img
+                      src="/new.gif"
+                      alt="New"
+                      style={{ height: 15, verticalAlign: "-2px", marginLeft: 6 }}
+                    />
+                  )}
+                </>
+              }
+              hint="Reads vehicle number plates from photos, fully on-device, in the background — never slows the shutter. Found plates show on the photo and ride along when you share it. Best-effort: verify before reporting."
+            >
+              <Toggle
+                on={settings.plateOcr}
+                onChange={(v) => {
+                  setSettings({ plateOcr: v });
+                  // pre-download/compile the engine now, so the first real
+                  // scan isn't also the slow warm-up
+                  if (v) warmPlateReader();
+                }}
+              />
+            </Row>
+            {settings.plateOcr && (
+              <div className="row" style={{ display: "block" }}>
+                <button
+                  className="ghost-btn"
+                  disabled={plateTest === "running"}
+                  onClick={() => {
+                    setPlateTest("running");
+                    void testPlateReader().then((r) =>
+                      setPlateTest(`${r.ok ? "✓" : "✗"} ${r.detail}`)
+                    );
+                  }}
+                >
+                  {plateTest === "running" ? "Testing…" : "Test the reader"}
+                </button>
+                {plateTest && plateTest !== "running" && (
+                  <div className="hint" style={{ marginTop: 6 }}>
+                    {plateTest}
+                  </div>
+                )}
+              </div>
+            )}
 
             <div className="card-title" style={{ paddingTop: 14 }}>
               Address lookup (online)

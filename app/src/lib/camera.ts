@@ -48,6 +48,8 @@ const ULTRA_WIDE_FACTOR = 0.6;
 const TELEPHOTO_FACTOR = 3;
 /** user's per-lens factor corrections, keyed by deviceId */
 const LENS_KEY = "gpscam-lens-factors";
+/** the whole discovered lens line-up, so it survives a camera restart */
+const LENS_PROFILE_KEY = "gpscam-lens-profile";
 
 /** A physical rear camera the app can switch to. */
 export interface Lens {
@@ -73,6 +75,63 @@ export function saveLensOverride(deviceId: string, factor: number): void {
     localStorage.setItem(LENS_KEY, JSON.stringify(all));
   } catch {
     // storage unavailable — the guess stands for this session
+  }
+}
+
+/**
+ * The discovered line-up, remembered across restarts.
+ *
+ * Discovery has to open each camera in turn, and Android allows only ONE
+ * camera open at a time — so it cannot run while the viewfinder is live.
+ * Re-deriving the list on every start() therefore failed every probe and
+ * silently fell back to the old index-order guess (which is what put the
+ * ultra-wide at "1x"), and it wiped the list Settings was displaying.
+ * Discover once, write it here, and read it back instantly afterwards.
+ */
+export function loadLensProfile(): Lens[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(LENS_PROFILE_KEY) ?? "null");
+    if (!raw || raw.v !== 1 || !Array.isArray(raw.lenses)) return [];
+    const over = loadLensOverrides();
+    const lenses: Lens[] = raw.lenses
+      .filter((l: Lens) => l && typeof l.deviceId === "string")
+      .map((l: Lens) => ({
+        deviceId: l.deviceId,
+        label: String(l.label ?? "Camera"),
+        // a manual correction always wins over what discovery decided
+        factor: over[l.deviceId] ?? (Number(l.factor) || 1),
+        isMain: !!l.isMain,
+      }));
+    return lenses.length > 1 ? lenses.sort((a, b) => a.factor - b.factor) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The lens the app calls "1x" — the one whose factor is 1, NOT whichever
+ * camera `facingMode: environment` happened to hand over. Deriving it from
+ * the factor (rather than a stored flag) is what makes a correction in
+ * Settings take effect at once: name a lens 1x and it becomes the lens the
+ * viewfinder opens on.
+ */
+export function pickMainLens(lenses: Lens[]): Lens | null {
+  if (lenses.length < 2) return null;
+  let best: Lens | null = null;
+  for (const l of lenses) {
+    if (!best || Math.abs(l.factor - 1) < Math.abs(best.factor - 1)) best = l;
+  }
+  return best;
+}
+
+export function saveLensProfile(lenses: Lens[]): void {
+  try {
+    localStorage.setItem(
+      LENS_PROFILE_KEY,
+      JSON.stringify({ v: 1, lenses })
+    );
+  } catch {
+    // storage unavailable — discovery just repeats next launch
   }
 }
 
@@ -130,8 +189,14 @@ export class CameraController {
     // depends on preview size — those captures take the full-sensor
     // ImageCapture path — so this is purely a smoothness dial.
     const plan = qualityPlan();
+    // Open the known 1x lens by deviceId when we have one. `facingMode:
+    // environment` is not a promise of the main camera — several phones
+    // hand back the ultra-wide — so relying on it meant the viewfinder
+    // started on a wide shot that the app then called 1x.
+    const known =
+      facing === "environment" ? pickMainLens(loadLensProfile()) : null;
     const video: MediaTrackConstraints = {
-      facingMode: facing,
+      ...(known ? { deviceId: { exact: known.deviceId } } : { facingMode: facing }),
       width: { ideal: plan.previewLongEdge },
       height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
     };
@@ -267,10 +332,78 @@ export class CameraController {
   lenses: Lens[] = [];
   private mainDeviceId: string | null = null;
 
+  /**
+   * Load the remembered line-up, or discover it once.
+   *
+   * Discovery has to take the camera away from the viewfinder for about a
+   * second (see loadLensProfile), so it happens behind the freeze-frame
+   * cover and only when there is nothing cached: on this phone, on this
+   * install, exactly once.
+   */
   private async detectLenses(): Promise<void> {
+    if (this.facing !== "environment") {
+      this.lenses = [];
+      return;
+    }
+    const cached = loadLensProfile();
+    if (cached.length > 1) {
+      this.lenses = cached;
+      window.dispatchEvent(new Event("gpscam:lenses-updated"));
+      await this.ensureOnMainLens();
+      return;
+    }
+    // wait for a frame first — there is nothing to hold up otherwise, and
+    // discovery would show as the black viewfinder it is meant to hide
+    await this.waitForFirstFrame();
+    this.freeze();
+    try {
+      await this.discoverLenses();
+    } finally {
+      await this.ensureOnMainLens();
+      this.unfreeze();
+    }
+  }
+
+  /** Resolve once the viewfinder has something on it (or give up). */
+  private waitForFirstFrame(): Promise<void> {
+    const v = this.video;
+    if (!v || v.videoWidth) return Promise.resolve();
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      v.addEventListener("loadeddata", finish, { once: true });
+      window.setTimeout(finish, 900);
+    });
+  }
+
+  private mainLens(): Lens | null {
+    return pickMainLens(this.lenses);
+  }
+
+  /** At 1x, make sure we are actually streaming the 1x lens. */
+  private async ensureOnMainLens(): Promise<void> {
+    const main = this.mainLens();
+    if (!main || this.zoomValue !== 1 || this.lensSwapping) return;
+    const streaming = this.stream?.getVideoTracks()[0]?.getSettings?.().deviceId;
+    if (!streaming || streaming === main.deviceId) {
+      this.activeLensId = streaming ?? null;
+      return;
+    }
+    this.lensSwapping = true;
+    await this.useDevice(main.deviceId);
+    this.lensSwapping = false;
+    this.digitalZoom = 1;
+    this.applyDigitalTransform();
+    this.zoomValue = 1;
+  }
+
+  private async discoverLenses(): Promise<void> {
     this.lenses = [];
     try {
-      if (this.facing !== "environment") return;
       const devices = await navigator.mediaDevices.enumerateDevices();
       const backs = devices.filter(
         (d) =>
@@ -306,6 +439,13 @@ export class CameraController {
       // the field. The main camera is instead the one with the largest
       // sensor (50 MP main vs 12 MP ultra-wide vs 10 MP tele), which is
       // true across essentially every multi-lens phone.
+      //
+      // Probing opens each camera in turn, and Android permits only one
+      // open at a time, so the viewfinder's own track has to be released
+      // first — otherwise every probe fails, every sensor size reads 0,
+      // and the main lens silently falls back to the index-order guess
+      // this code exists to replace.
+      for (const t of this.stream?.getVideoTracks() ?? []) t.stop();
       const probed: { d: MediaDeviceInfo; px: number }[] = [];
       for (const d of ordered.slice(0, 4)) {
         const px = await probeSensorPixels(d.deviceId);
@@ -339,55 +479,79 @@ export class CameraController {
           isMain,
         });
       }
-      const keep = list;
-      keep.sort((a, b) => a.factor - b.factor);
-      this.lenses = keep.length > 1 ? keep : [];
-
-      // Calibrate: for any lens whose factor is still a GUESS (no user
-      // override, no informative label), measure it optically instead —
-      // brands disagree (0.5x vs 0.6x ultra-wide; 2x/3x/5x tele) and a
-      // convention table is wrong on some popular phone by definition.
-      // Runs once per device, in the background, and is remembered.
-      void this.calibrateGuesses(saved);
-
-      // The default stream may not be the main lens (see above). If it is
-      // not, switch now so a fresh viewfinder at 1x really shows 1x.
-      const main = this.lenses.find((l) => l.isMain);
-      if (main && this.zoomValue === 1 && !this.lensSwapping) {
-        const streaming = this.stream?.getVideoTracks()[0]?.getSettings?.().deviceId;
-        if (streaming && streaming !== main.deviceId) {
-          this.lensSwapping = true;
-          await this.useDevice(main.deviceId);
-          this.lensSwapping = false;
-          this.digitalZoom = 1;
-          this.applyDigitalTransform();
-          this.zoomValue = 1;
-        }
-      }
+      list.sort((a, b) => a.factor - b.factor);
+      this.lenses = list.length > 1 ? list : [];
+      if (this.lenses.length) saveLensProfile(this.lenses);
+      window.dispatchEvent(new Event("gpscam:lenses-updated"));
     } catch {
       this.lenses = [];
     }
   }
 
   /**
-   * Optically measure every lens we only guessed at, then remember the
-   * result so this never runs again on this phone. Deliberately quiet:
-   * a failure (flat scene, camera busy) just leaves the guess in place.
+   * Measure each lens optically and label it the way this phone's own
+   * camera would (.5x/.6x wide; 2x/3x/5x/10x tele).
+   *
+   * Explicit, not automatic: it needs the camera to itself for a few
+   * seconds, which is fine from Settings (no viewfinder) but would mean a
+   * frozen preview if it ran on its own. Returns how many lenses it was
+   * able to measure — a flat scene simply yields none and leaves the
+   * existing values alone.
    */
-  private async calibrateGuesses(saved: Record<string, number>): Promise<void> {
-    const main = this.lenses.find((l) => l.isMain);
-    if (!main) return;
-    for (const lens of this.lenses) {
-      if (lens.isMain || saved[lens.deviceId] != null) continue;
-      if (this.lensSwapping) return; // user is actively zooming; don't fight
-      const measured = await measureLensFactor(main.deviceId, lens.deviceId);
-      if (measured == null) continue;
-      lens.factor = measured;
-      saveLensOverride(lens.deviceId, measured);
+  async calibrateLenses(): Promise<number> {
+    if (this.lenses.length < 2) this.lenses = loadLensProfile();
+    const main = this.mainLens();
+    if (!main) return 0;
+    // whatever is streaming has to let go: one camera at a time
+    const wasLive = !!this.stream;
+    for (const t of this.stream?.getVideoTracks() ?? []) t.stop();
+    let measured = 0;
+    try {
+      for (const lens of this.lenses) {
+        if (lens.deviceId === main.deviceId) continue;
+        const f = await measureLensFactor(main.deviceId, lens.deviceId);
+        if (f == null) continue;
+        lens.factor = f;
+        saveLensOverride(lens.deviceId, f);
+        measured++;
+      }
+    } finally {
+      this.lenses.sort((a, b) => a.factor - b.factor);
+      saveLensProfile(this.lenses);
+      if (wasLive) await this.useDevice(this.mainLens()?.deviceId ?? null);
+      window.dispatchEvent(new Event("gpscam:lenses-updated"));
     }
+    return measured;
+  }
+
+  /**
+   * Apply a manual correction from Settings. Kept here (rather than only
+   * writing localStorage) so the running controller re-sorts immediately
+   * and the very next 1x really opens the lens the user just named 1x.
+   */
+  setLensFactor(deviceId: string, factor: number): void {
+    saveLensOverride(deviceId, factor);
+    if (this.lenses.length < 2) this.lenses = loadLensProfile();
+    const lens = this.lenses.find((l) => l.deviceId === deviceId);
+    if (lens) lens.factor = factor;
     this.lenses.sort((a, b) => a.factor - b.factor);
-    // the viewfinder may be showing a stop that just got renamed
+    if (this.lenses.length) saveLensProfile(this.lenses);
+    // re-seat the viewfinder if 1x now means a different lens. Cheaper and
+    // far less jarring than restarting the whole camera, which is what
+    // used to resize the viewfinder box on every edit here.
+    void this.ensureOnMainLens();
     window.dispatchEvent(new Event("gpscam:lenses-updated"));
+  }
+
+  /** Forget everything discovered, so the next start() re-detects. */
+  forgetLenses(): void {
+    try {
+      localStorage.removeItem(LENS_PROFILE_KEY);
+      localStorage.removeItem(LENS_KEY);
+    } catch {
+      // nothing to clear
+    }
+    this.lenses = [];
   }
 
   /** Zoom stops the UI can offer (one per real lens, plus 2× digital). */
@@ -430,17 +594,25 @@ export class CameraController {
   private async useDevice(deviceId: string | null): Promise<boolean> {
     const audio = this.stream?.getAudioTracks()[0] ?? null;
     const previous = this.activeLensId;
+    // Same width AND height as start(): asking for width alone let the new
+    // lens come back 4:3 where the old one was 16:9, so the viewfinder box
+    // visibly shrank every time the lens changed.
+    const plan = qualityPlan();
+    const size = {
+      width: { ideal: plan.previewLongEdge },
+      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
+    };
     const wanted = (id: string | null): MediaTrackConstraints =>
       id
-        ? {
-            deviceId: { exact: id },
-            width: { ideal: qualityPlan().previewLongEdge },
-          }
-        : {
-            facingMode: this.facing,
-            width: { ideal: qualityPlan().previewLongEdge },
-          };
+        ? { deviceId: { exact: id }, ...size }
+        : { facingMode: this.facing, ...size };
 
+    // Hold the last frame over the viewfinder for the switch. Releasing
+    // one camera and opening another takes a few hundred ms during which
+    // the <video> has nothing to show, which read as a black flash every
+    // time zoom crossed from the wide lens to the main one (1x→2x→3x
+    // never flashed because those are crops of one lens, not a switch).
+    this.freeze();
     // free the camera before asking for another one
     for (const t of this.stream?.getVideoTracks() ?? []) t.stop();
 
@@ -488,6 +660,64 @@ export class CameraController {
       void this.video.play().catch(() => {});
     }
     this.activeLensId = lensId;
+    // drop the held frame only once the new lens is actually painting,
+    // otherwise the cross-fade just reveals the black gap it was hiding
+    this.unfreezeOnFirstFrame();
+  }
+
+  /* ---- freeze-frame cover -------------------------------------------- */
+
+  private freezeCanvas: HTMLCanvasElement | null = null;
+
+  /** The canvas CameraView stacks over the viewfinder for lens switches. */
+  setFreezeSurface(el: HTMLCanvasElement | null): void {
+    this.freezeCanvas = el;
+  }
+
+  /** Paint the current frame onto the cover and show it. */
+  private freeze(): void {
+    const c = this.freezeCanvas;
+    const v = this.video;
+    if (!c || !v || !v.videoWidth) return;
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    try {
+      ctx.drawImage(v, 0, 0, c.width, c.height);
+    } catch {
+      return; // nothing paintable yet
+    }
+    // the held frame must match what was on screen, digital crop included
+    c.style.transform = v.style.transform || "";
+    c.dataset.on = "1";
+  }
+
+  private unfreeze(): void {
+    if (this.freezeCanvas) delete this.freezeCanvas.dataset.on;
+  }
+
+  private unfreezeOnFirstFrame(): void {
+    const v = this.video;
+    if (!v) {
+      this.unfreeze();
+      return;
+    }
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      this.unfreeze();
+    };
+    type WithRvfc = HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number;
+    };
+    const rvfc = (v as WithRvfc).requestVideoFrameCallback;
+    if (rvfc) rvfc.call(v, finish);
+    else v.addEventListener("loadeddata", finish, { once: true });
+    // belt and braces: never leave a still frame standing in for a live
+    // camera, however the new track behaves
+    window.setTimeout(finish, 1200);
   }
 
   /** deviceId of the lens currently streaming (null = default/main). */
