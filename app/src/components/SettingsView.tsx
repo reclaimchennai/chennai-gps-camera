@@ -230,7 +230,9 @@ export default function SettingsView() {
               <div className="hint" style={{ margin: "2px 0 8px" }}>
                 {lenses.length > 1
                   ? "Pinch past 1x to switch lenses. Whichever lens is set to 1x is the one the viewfinder opens on, so if the wide and normal views are the wrong way round, swap their settings here."
-                  : "Only one rear camera is available to the app on this device, so zoom is digital. Nothing to configure."}
+                  : camera.seamlessZoom
+                    ? "This phone lets the camera itself zoom across its lenses, so wide and telephoto are handled for you and switch without any interruption. Nothing to configure."
+                    : "Only one rear camera is available to the app on this device, so zoom is digital. Nothing to configure."}
               </div>
               {lenses.map((l) => (
                 <div

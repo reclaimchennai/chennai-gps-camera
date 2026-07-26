@@ -2,6 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Play, RefreshCw, Search, X, MapPin, Layers, Map as MapIcon, LayoutGrid } from "lucide-react";
 import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
+import {
+  getThumbUrl,
+  setThumbUrl,
+  pruneThumbs,
+  rememberCells,
+  recallCells,
+} from "../lib/thumbcache";
 import type { MediaRecord } from "../types";
 import { navigate } from "../nav";
 import { fmtWard } from "../lib/geo/format";
@@ -58,7 +65,12 @@ function haystack(rec: MediaRecord): string {
 type Chip = "all" | "photos" | "videos" | `tag:${string}`;
 
 export default function GalleryView() {
-  const [cells, setCells] = useState<Cell[] | null>(null);
+  // Start from the grid we painted last time. Opening a photo unmounts this
+  // view, so without this every return showed an empty grid for a frame and
+  // then re-decoded every thumbnail — the flicker on each round trip.
+  const [cells, setCells] = useState<Cell[] | null>(() =>
+    recallCells<Cell[]>()
+  );
   const [query, setQuery] = useState("");
   const [chip, setChip] = useState<Chip>("all");
   // ids the backfill queue just upgraded — briefly highlighted
@@ -67,18 +79,27 @@ export default function GalleryView() {
 
   useEffect(() => {
     let cancelled = false;
-    const urls: string[] = [];
     const load = async () => {
       const items = await listMedia();
       const loaded = await Promise.all(
         items.map(async (rec) => {
-          const t = await getBlob(rec.id, "thumb");
-          const url = t ? URL.createObjectURL(t) : null;
-          if (url) urls.push(url);
+          // reuse the URL we already hold for this record; only build one
+          // for thumbnails we have never seen
+          let url = getThumbUrl(rec.id);
+          if (!url) {
+            const t = await getBlob(rec.id, "thumb");
+            if (t) {
+              url = URL.createObjectURL(t);
+              setThumbUrl(rec.id, url);
+            }
+          }
           return { rec, url };
         })
       );
-      if (!cancelled) setCells(loaded);
+      if (cancelled) return;
+      pruneThumbs(items.map((i) => i.id));
+      setCells(loaded);
+      rememberCells(loaded);
     };
     void load();
 
@@ -101,7 +122,8 @@ export default function GalleryView() {
     return () => {
       cancelled = true;
       window.removeEventListener("gpscam:media-updated", onUpdated);
-      urls.forEach((u) => URL.revokeObjectURL(u));
+      // deliberately NOT revoking here: these URLs are shared with the
+      // photo view and reused on the way back (see lib/thumbcache)
     };
   }, []);
 

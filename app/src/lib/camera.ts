@@ -10,7 +10,7 @@
 import { isNativeApp } from "./native";
 import { preferredAudioConstraints } from "./audio/source";
 import { qualityPlan } from "./quality";
-import { measureLensFactor } from "./lens-calibrate";
+import { measureLensFactor, snapFactor } from "./lens-calibrate";
 
 export type FacingMode = "environment" | "user";
 
@@ -236,18 +236,13 @@ export class CameraController {
       width: { ideal: plan.previewLongEdge },
       height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
     };
-    // Open the known 1x lens by deviceId when we have one. `facingMode:
-    // environment` is not a promise of the main camera — several phones
-    // hand back the ultra-wide — so relying on it meant the viewfinder
-    // started on a wide shot that the app then called 1x. The id has to be
-    // re-resolved against the live device list every time (see
-    // resolveLensProfile): saved ids go stale between launches.
-    const known =
-      facing === "environment" ? await this.knownMainDeviceId() : null;
-    const byFacing: MediaTrackConstraints = { facingMode: facing, ...size };
-    const video: MediaTrackConstraints = known
-      ? { deviceId: { exact: known }, ...size }
-      : byFacing;
+    // Always open the DEFAULT camera for this facing first, never a
+    // remembered physical deviceId. On phones that expose a logical rear
+    // camera, the default IS that camera — the one that can zoom across its
+    // own lenses without interruption — and pinning a single physical sensor
+    // up front would silently give that up. Which camera we end up on is
+    // decided in detectLenses(), once its capabilities can be read.
+    const video: MediaTrackConstraints = { facingMode: facing, ...size };
 
     /**
      * Relax the VIDEO constraint before touching audio.
@@ -260,9 +255,8 @@ export class CameraController {
      */
     const attempts: MediaStreamConstraints[] = [
       { audio, video },
-      ...(known ? [{ audio, video: byFacing }] : []),
-      { audio: baseAudio, video: byFacing },
-      { audio: false, video: byFacing },
+      { audio: baseAudio, video },
+      { audio: false, video },
       { audio: false, video: { facingMode: facing } },
     ];
     let opened: MediaStream | null = null;
@@ -353,6 +347,16 @@ export class CameraController {
    *  (pinching out past 1× switches to that camera). */
   zoomInfo(): ZoomInfo {
     const hw = this.capabilities().zoom;
+    // SEAMLESS: a zoom range reaching below 1× means this track is the
+    // phone's LOGICAL rear camera, which switches physical sensors inside
+    // the camera stack as the zoom ratio crosses their boundaries. That is
+    // how the stock camera app crosses .6×→1× with no interruption at all,
+    // and it is available to us for free — as long as we drive zoom instead
+    // of opening physical cameras ourselves, which throws the logical
+    // camera (and its seamless handover) away.
+    if (hw && hw.min < 0.95) {
+      return { min: hw.min, max: Math.min(hw.max, 10), hardware: true };
+    }
     // widest and longest real lenses set the ends of the range; digital
     // crop extends past the longest one
     const factors = this.lenses.map((l) => l.factor);
@@ -366,6 +370,12 @@ export class CameraController {
       };
     }
     return { min: floor, max: longest * MAX_DIGITAL_ZOOM, hardware: false };
+  }
+
+  /** True when the live track can zoom across lenses by itself. */
+  get seamlessZoom(): boolean {
+    const hw = this.capabilities().zoom;
+    return !!hw && hw.min < 0.95;
   }
 
   /**
@@ -395,6 +405,25 @@ export class CameraController {
   private async detectLenses(): Promise<void> {
     if (this.facing !== "environment") {
       this.lenses = [];
+      return;
+    }
+    // Nothing to discover, and nothing we should touch: this track already
+    // zooms across its own lenses. Probing would mean closing it, and
+    // re-seating onto a single physical camera would cost exactly the
+    // seamless handover we want. Leave it alone.
+    if (this.seamlessZoom) {
+      this.lenses = [];
+      // start at exactly 1.0 rather than wherever the stack happened to be,
+      // so the viewfinder's "1x" is the main-lens field of view
+      try {
+        await this.track?.applyConstraints({
+          advanced: [{ zoom: 1 } as MediaTrackConstraintSet],
+        });
+        this.zoomValue = 1;
+      } catch {
+        // leave it wherever it opened
+      }
+      window.dispatchEvent(new Event("gpscam:lenses-updated"));
       return;
     }
     // Resolve against the live device list, never against saved ids alone:
@@ -448,24 +477,6 @@ export class CameraController {
     return pickMainLens(this.lenses);
   }
 
-  /**
-   * Current deviceId of the remembered 1x lens, or null if there is no
-   * usable profile. Enumerating costs a few ms and opens nothing, unlike
-   * trusting a saved id and discovering it is dead one getUserMedia at a
-   * time.
-   */
-  private async knownMainDeviceId(): Promise<string | null> {
-    try {
-      if (!loadLensProfile().length) return null;
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const resolved = resolveLensProfile(devices);
-      if (!resolved.length) return null;
-      this.lenses = resolved;
-      return pickMainLens(resolved)?.deviceId ?? null;
-    } catch {
-      return null;
-    }
-  }
 
   /** At 1x, make sure we are actually streaming the 1x lens. */
   private async ensureOnMainLens(): Promise<void> {
@@ -641,6 +652,10 @@ export class CameraController {
   zoomStops(): number[] {
     const info = this.zoomInfo();
     const stops = new Set<number>();
+    // seamless track: there are no separate lenses to enumerate, so offer
+    // the wide end the hardware actually reports, named the way this phone
+    // would name it (.5× or .6×), plus the usual steps
+    if (this.seamlessZoom) stops.add(snapFactor(info.min));
     for (const l of this.lenses) stops.add(l.factor);
     // standard steps so there is always something to tap, even on phones
     // that expose a single camera
@@ -906,7 +921,26 @@ export class CameraController {
     const info = this.zoomInfo();
     const clamped = Math.min(info.max, Math.max(info.min, value));
 
-    // OPTICAL first: hand over to the physical lens that natively covers
+    // SEAMLESS first. When the track's own zoom range spans the lenses, the
+    // camera stack does the handover internally: no stop, no reopen, no gap
+    // to paper over — the same mechanism that makes the stock camera app's
+    // .6×→1× transition continuous. Doing our own physical switch here
+    // would be strictly worse, so don't.
+    if (this.seamlessZoom && this.track) {
+      try {
+        await this.track.applyConstraints({
+          advanced: [{ zoom: clamped } as MediaTrackConstraintSet],
+        });
+        this.digitalZoom = 1;
+        this.applyDigitalTransform();
+        this.zoomValue = clamped;
+        return this.zoomValue;
+      } catch {
+        // fall through to the lens-switching path below
+      }
+    }
+
+    // OPTICAL: hand over to the physical lens that natively covers
     // this factor (ultra-wide below 1×, telephoto at its factor and up),
     // then crop only the remainder. That is what keeps a 3× shot sharp
     // instead of upscaling a crop of the main sensor. A swap-in-flight

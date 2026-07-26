@@ -27,6 +27,7 @@ import {
   listMedia,
   newId,
 } from "../lib/db";
+import { getThumbUrl } from "../lib/thumbcache";
 import type { MediaRecord, PhotoRecord } from "../types";
 import { navigate, goBack } from "../nav";
 import { shareBlob, downloadBlob, suggestedName } from "../lib/share";
@@ -86,6 +87,8 @@ export default function MediaDetailView({ id }: { id: string }) {
   // immersive chrome (header + action bar) — hidden by default so the
   // watermark is never covered; a tap raises it
   const [chrome, setChrome] = useState(false);
+  // decoded thumbnail for whatever is on screen now, as an instant stand-in
+  const thumbUrl = getThumbUrl(curId);
   // custom video transport state (native controls are replaced by a
   // floating bar so they never sit over the burned-in watermark)
   const [vp, setVp] = useState({ playing: false, cur: 0, dur: 0, muted: false });
@@ -752,6 +755,13 @@ export default function MediaDetailView({ id }: { id: string }) {
             )}
           </div>
           <div className="viewer-pane">
+            {/* The gallery already holds a decoded thumbnail for this record,
+                so show it instantly underneath while the full-size image
+                decodes. Without it the pane opened blank — the other half of
+                the gallery flicker. */}
+            {!url && thumbUrl && (
+              <img className="pane-img pane-thumb" src={thumbUrl} alt="" draggable={false} />
+            )}
             {url && rec.kind === "photo" && (
               <img ref={imgRef} className="media-photo pane-img" src={url} alt="" draggable={false} />
             )}

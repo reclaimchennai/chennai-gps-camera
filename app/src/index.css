@@ -2525,3 +2525,10 @@ input[type="range"] {
 a {
   color: var(--accent);
 }
+
+/* Decoded thumbnail standing in for a full-size image that is still
+   decoding. Same box as the real image, just softer — so opening a photo
+   never shows an empty pane. */
+.pane-thumb {
+  filter: blur(1px);
+}
