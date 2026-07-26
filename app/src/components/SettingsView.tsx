@@ -7,6 +7,7 @@ import { isNativeApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 import { qualitySummary } from "../lib/quality";
+import { camera, saveLensOverride, type Lens } from "../lib/camera";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -85,6 +86,11 @@ export default function SettingsView() {
   const [calRef, setCalRef] = useState(60);
   const [advOpen, setAdvOpen] = useState(false);
   const [plateTest, setPlateTest] = useState<string | null>(null);
+  // rear lenses the app found (empty when the platform exposes only one)
+  const [lenses, setLenses] = useState<Lens[]>([]);
+  useEffect(() => {
+    setLenses(camera.lenses);
+  }, []);
 
   // keep the mic meter running here so the calibration row shows a live
   // reading; CameraView restarts its own metering when it regains focus
@@ -191,6 +197,47 @@ export default function SettingsView() {
                 onChange={(v) => setSettings({ liveFaceBlur: v })}
               />
             </Row>
+
+            <div className="row" style={{ display: "block" }}>
+              <div className="label">Camera lenses</div>
+              <div className="hint" style={{ margin: "2px 0 8px" }}>
+                {lenses.length > 1
+                  ? "Pinch past 1x to switch lenses. If a lens is labelled wrong, set its real zoom here."
+                  : "Only one rear camera is available to the app on this device, so zoom is digital. Nothing to configure."}
+              </div>
+              {lenses.map((l) => (
+                <div
+                  key={l.deviceId}
+                  style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}
+                >
+                  <span
+                    className="hint"
+                    style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  >
+                    {l.isMain ? "Main" : l.label}
+                  </span>
+                  <div className="seg" style={{ width: 190 }}>
+                    {[0.6, 1, 2, 3, 5].map((f) => (
+                      <button
+                        key={f}
+                        data-active={Math.abs(l.factor - f) < 0.05}
+                        onClick={() => {
+                          saveLensOverride(l.deviceId, f);
+                          setLenses((prev) =>
+                            prev.map((x) =>
+                              x.deviceId === l.deviceId ? { ...x, factor: f } : x
+                            )
+                          );
+                          window.dispatchEvent(new Event("gpscam:restart-camera"));
+                        }}
+                      >
+                        {f < 1 ? String(f).replace(/^0/, "") : f}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
 
             <div className="row" style={{ display: "block" }}>
               <div className="label">Capture quality</div>

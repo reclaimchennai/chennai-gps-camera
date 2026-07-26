@@ -43,6 +43,12 @@ type Mode = "photo" | "video";
 const BLACK_POSTER =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 
+/** ".6×", "1×", "3×", "2.5×" — trims the pointless trailing zero. */
+function fmtZoom(z: number): string {
+  const s = z < 1 ? z.toFixed(1).replace(/^0/, "") : z.toFixed(1);
+  return `${s.endsWith(".0") ? s.slice(0, -2) : s}×`;
+}
+
 export default function CameraView({ active }: { active: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -70,6 +76,18 @@ export default function CameraView({ active }: { active: boolean }) {
   const [camError, setCamError] = useState<string | null>(null);
   const [torch, setTorch] = useState(false);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
+  // Lens stops (.6 / 1 / 3 …) shown ONLY while zooming, then faded out —
+  // a permanent chip row would sit on top of the social-handle watermark.
+  const [zoomStops, setZoomStops] = useState<number[]>([]);
+  const [zoomNow, setZoomNow] = useState(1);
+  const [zoomBar, setZoomBar] = useState(false);
+  const zoomBarTimer = useRef(0);
+  const showZoomBar = useCallback(() => {
+    setZoomStops(camera.zoomStops());
+    setZoomBar(true);
+    window.clearTimeout(zoomBarTimer.current);
+    zoomBarTimer.current = window.setTimeout(() => setZoomBar(false), 2600);
+  }, []);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [flashFx, setFlashFx] = useState(0);
   const [focusPos, setFocusPos] = useState<{ x: number; y: number; key: number } | null>(null);
@@ -904,7 +922,9 @@ export default function CameraView({ active }: { active: boolean }) {
       if (now - lastZoomApply.current < 60) return;
       lastZoomApply.current = now;
       void camera.setZoom(target).then((z) => {
-        setZoomLabel(`${z.toFixed(1)}×`);
+        setZoomLabel(fmtZoom(z));
+        setZoomNow(z);
+        showZoomBar();
       });
     }
   }, []);
@@ -1097,6 +1117,27 @@ export default function CameraView({ active }: { active: boolean }) {
             >
               ✕
             </button>
+          </div>
+        )}
+
+        {/* transient lens stops — appear while zooming, fade out after */}
+        {zoomBar && zoomStops.length > 1 && (
+          <div className="cam-zoombar">
+            {zoomStops.map((z) => (
+              <button
+                key={z}
+                data-active={Math.abs(z - zoomNow) < 0.05}
+                onClick={() => {
+                  void camera.setZoom(z).then((got) => {
+                    setZoomNow(got);
+                    setZoomLabel(fmtZoom(got));
+                  });
+                  showZoomBar();
+                }}
+              >
+                {fmtZoom(z)}
+              </button>
+            ))}
           </div>
         )}
 

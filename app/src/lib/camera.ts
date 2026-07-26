@@ -42,8 +42,58 @@ const MAX_DIGITAL_ZOOM = 4;
 /** Effective zoom factor an ultra-wide lens represents (~0.6× on most
  *  Android phones — matches the ".6" chip Samsung/Pixel cameras show). */
 const ULTRA_WIDE_FACTOR = 0.6;
-/** remembered ultra-wide deviceId, so the probe runs once per device */
-const UW_KEY = "gpscam-ultrawide-id";
+/** Typical telephoto factor when the label doesn't state one (S-series
+ *  and most flagships put their tele at 3×). */
+const TELEPHOTO_FACTOR = 3;
+/** user's per-lens factor corrections, keyed by deviceId */
+const LENS_KEY = "gpscam-lens-factors";
+
+/** A physical rear camera the app can switch to. */
+export interface Lens {
+  deviceId: string;
+  label: string;
+  /** effective zoom factor relative to the main lens (0.6, 1, 3, …) */
+  factor: number;
+  isMain: boolean;
+}
+
+export function loadLensOverrides(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(LENS_KEY) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+export function saveLensOverride(deviceId: string, factor: number): void {
+  try {
+    const all = loadLensOverrides();
+    all[deviceId] = factor;
+    localStorage.setItem(LENS_KEY, JSON.stringify(all));
+  } catch {
+    // storage unavailable — the guess stands for this session
+  }
+}
+
+/** Sensor pixel count for a camera, or null when it can't be opened. */
+async function probeSensorPixels(deviceId: string): Promise<number | null> {
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { deviceId: { exact: deviceId }, width: { ideal: 320 } },
+    });
+    const caps = (s.getVideoTracks()[0]?.getCapabilities?.() ?? {}) as Record<
+      string,
+      unknown
+    >;
+    for (const t of s.getTracks()) t.stop();
+    const w = (caps.width as { max?: number } | undefined)?.max ?? 0;
+    const h = (caps.height as { max?: number } | undefined)?.max ?? 0;
+    return w && h ? w * h : null;
+  } catch {
+    return null;
+  }
+}
 
 export class CameraController {
   stream: MediaStream | null = null;
@@ -112,13 +162,13 @@ export class CameraController {
     this.zoomValue = 1;
     this.digitalZoom = 1;
     this.torchOn = false;
-    this.activeLens = "main";
+    this.activeLensId = null;
     this.mainDeviceId =
       this.stream.getVideoTracks()[0]?.getSettings?.().deviceId ?? null;
     if (this.video) this.video.style.transform = "";
-    // discover an ultra-wide sibling lens in the background so pinching
-    // out below 1× can hand over to it
-    void this.findUltraWide();
+    // discover the phone's other rear lenses in the background so pinch
+    // zoom can hand over to real optics
+    void this.detectLenses();
     return this.stream;
   }
 
@@ -185,89 +235,124 @@ export class CameraController {
    *  (pinching out past 1× switches to that camera). */
   zoomInfo(): ZoomInfo {
     const hw = this.capabilities().zoom;
-    const floor = this.ultraWideId ? ULTRA_WIDE_FACTOR : 1;
-    if (hw) return { min: Math.min(hw.min, floor), max: hw.max, hardware: true };
-    return { min: floor, max: MAX_DIGITAL_ZOOM, hardware: false };
+    // widest and longest real lenses set the ends of the range; digital
+    // crop extends past the longest one
+    const factors = this.lenses.map((l) => l.factor);
+    const floor = factors.length ? Math.min(1, ...factors) : 1;
+    const longest = factors.length ? Math.max(1, ...factors) : 1;
+    if (hw) {
+      return {
+        min: Math.min(hw.min, floor),
+        max: Math.max(hw.max, longest * MAX_DIGITAL_ZOOM),
+        hardware: true,
+      };
+    }
+    return { min: floor, max: longest * MAX_DIGITAL_ZOOM, hardware: false };
   }
 
   /**
-   * Find a separate ultra-wide rear lens, so pinching out below 1× can
-   * switch to it (Android exposes each physical camera as its own
-   * deviceId; labels are the only hint, and only after permission).
-   * Cheap and cached; silent when the platform hides labels.
+   * Physical rear lenses (ultra-wide / main / telephoto), so pinch zoom
+   * can hand over to real optics instead of cropping pixels.
+   *
+   * Android exposes each physical camera as its own deviceId, but the
+   * labels are only ever "camera2 N, facing back" — they never name the
+   * lens, and no web API reports field of view. So: parse what the label
+   * DOES give (index + facing), probe each camera's sensor, then apply
+   * the near-universal Android convention that back cameras are ordered
+   * main, ultra-wide, telephoto. Guesses can be wrong on unusual phones,
+   * so Settings lets the user correct any lens's factor, and those
+   * overrides win here.
    */
-  private ultraWideId: string | null = null;
+  lenses: Lens[] = [];
   private mainDeviceId: string | null = null;
-  private async findUltraWide(): Promise<void> {
-    this.ultraWideId = null;
+
+  private async detectLenses(): Promise<void> {
+    this.lenses = [];
     try {
-      if (this.facing !== "environment") return; // front cams: no UW pair
+      if (this.facing !== "environment") return;
       const devices = await navigator.mediaDevices.enumerateDevices();
-      const cams = devices.filter((d) => d.kind === "videoinput");
-      if (cams.length < 2) return;
-
-      // 1) Label match — works on desktop and the few Android builds that
-      //    give real names.
-      const byLabel = cams.find(
+      const backs = devices.filter(
         (d) =>
-          d.deviceId !== this.mainDeviceId &&
-          /ultra[- ]?wide|wide[- ]?angle|0\.[56]x|超广角/i.test(d.label ?? "")
+          d.kind === "videoinput" &&
+          !/front|facing front|\buser\b/i.test(d.label ?? "")
       );
-      if (byLabel) {
-        this.ultraWideId = byLabel.deviceId;
-        return;
-      }
+      if (backs.length < 2) return; // single logical camera: nothing to switch
 
-      // 2) Android reality: labels are "camera2 0, facing back" — useless.
-      //    Probe instead. A remembered choice short-circuits the probe.
-      const cached = localStorage.getItem(UW_KEY);
-      if (cached && cams.some((d) => d.deviceId === cached)) {
-        this.ultraWideId = cached;
-        return;
-      }
-      const backs = cams.filter(
-        (d) =>
-          d.deviceId !== this.mainDeviceId &&
-          !/front|facing front|user/i.test(d.label ?? "")
-      );
-      if (!backs.length) return;
+      // "camera2 3, facing back" → index 3, for the ordering convention
+      const idxOf = (label: string): number => {
+        const m = /camera2\s+(\d+)/i.exec(label ?? "");
+        return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+      };
+      const ordered = [...backs].sort((a, b) => idxOf(a.label) - idxOf(b.label));
 
-      // Open each candidate briefly at low resolution and keep the one
-      // with the largest sensor output. On a multi-lens phone the extra
-      // back cameras are ultra-wide (typically 12 MP) versus depth/macro
-      // helpers (VGA–2 MP), so "biggest" reliably avoids those, and any
-      // telephoto is a strictly better fallback than no wide option.
-      let best: { id: string; px: number } | null = null;
-      for (const d of backs.slice(0, 4)) {
-        try {
-          const s = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { deviceId: { exact: d.deviceId }, width: { ideal: 320 } },
-          });
-          const t = s.getVideoTracks()[0];
-          const caps = (t?.getCapabilities?.() ?? {}) as Record<string, unknown>;
-          const w = (caps.width as { max?: number } | undefined)?.max ?? 0;
-          const h = (caps.height as { max?: number } | undefined)?.max ?? 0;
-          for (const tr of s.getTracks()) tr.stop();
-          const px = w * h;
-          if (px > 2_000_000 && (!best || px > best.px)) {
-            best = { id: d.deviceId, px };
-          }
-        } catch {
-          // camera busy or not openable — skip this candidate
-        }
+      // A label that actually names the lens beats any convention.
+      const fromLabel = (label: string): number | null => {
+        const l = (label ?? "").toLowerCase();
+        const x = /(\d(?:\.\d)?)\s*x/.exec(l);
+        if (/ultra|wide.?angle/.test(l)) return ULTRA_WIDE_FACTOR;
+        if (/tele/.test(l)) return x ? Number(x[1]) : 3;
+        if (x) return Number(x[1]);
+        return null;
+      };
+
+      const saved = loadLensOverrides();
+      const list: Lens[] = [];
+      for (let i = 0; i < ordered.length && i < 4; i++) {
+        const d = ordered[i];
+        const isMain =
+          d.deviceId === this.mainDeviceId || (i === 0 && !this.mainDeviceId);
+        // convention for extra back cameras: ultra-wide first, then tele
+        const conventional = isMain
+          ? 1
+          : list.some((l) => l.factor < 1)
+            ? TELEPHOTO_FACTOR
+            : ULTRA_WIDE_FACTOR;
+        const factor =
+          saved[d.deviceId] ?? fromLabel(d.label) ?? conventional;
+        list.push({
+          deviceId: d.deviceId,
+          label: d.label || `Camera ${i + 1}`,
+          factor,
+          isMain,
+        });
       }
-      if (best) {
-        this.ultraWideId = best.id;
-        try {
-          localStorage.setItem(UW_KEY, best.id);
-        } catch {
-          // storage unavailable — probe again next launch
+      // a phone can report cameras that are not real shooting lenses
+      // (depth, macro): drop anything whose sensor is tiny
+      const keep: Lens[] = [];
+      for (const lens of list) {
+        if (lens.isMain) {
+          keep.push(lens);
+          continue;
         }
+        const px = await probeSensorPixels(lens.deviceId);
+        if (px === null || px >= 2_000_000) keep.push(lens);
       }
+      keep.sort((a, b) => a.factor - b.factor);
+      this.lenses = keep.length > 1 ? keep : [];
     } catch {
-      // enumeration blocked — stay at a 1× floor
+      this.lenses = [];
     }
+  }
+
+  /** Zoom stops the UI can offer (one per real lens, plus 2× digital). */
+  zoomStops(): number[] {
+    const info = this.zoomInfo();
+    const stops = new Set<number>();
+    for (const l of this.lenses) stops.add(l.factor);
+    stops.add(1);
+    if (info.max >= 2) stops.add(2);
+    return [...stops].filter((z) => z >= info.min && z <= info.max).sort((a, b) => a - b);
+  }
+
+  /** The lens that natively covers a target zoom factor. */
+  private lensFor(factor: number): Lens | null {
+    if (!this.lenses.length) return null;
+    // the widest lens whose factor is <= target (so the rest is a crop in)
+    let best: Lens | null = null;
+    for (const l of this.lenses) {
+      if (l.factor <= factor + 1e-6 && (!best || l.factor > best.factor)) best = l;
+    }
+    return best ?? this.lenses[0];
   }
 
   /** Switch the running stream to a specific physical camera (lens). */
@@ -299,48 +384,50 @@ export class CameraController {
         this.video.srcObject = combined;
         void this.video.play().catch(() => {});
       }
-      this.activeLens = deviceId ? "ultrawide" : "main";
+      this.activeLensId = deviceId;
       return true;
     } catch {
       return false;
     }
   }
 
-  private activeLens: "main" | "ultrawide" = "main";
+  /** deviceId of the lens currently streaming (null = default/main). */
+  private activeLensId: string | null = null;
   private lensSwapping = false;
+
+  /** Zoom factor of the lens currently in use. */
+  get activeLensFactor(): number {
+    const l = this.lenses.find((x) => x.deviceId === this.activeLensId);
+    return l?.factor ?? 1;
+  }
 
   async setZoom(value: number): Promise<number> {
     const info = this.zoomInfo();
     const clamped = Math.min(info.max, Math.max(info.min, value));
 
-    // Ultra-wide lens hand-off: below ~0.8× switch to the wide camera,
-    // back above it return to the main one. Guarded by a swap-in-flight
-    // flag so a fast pinch can't fire overlapping getUserMedia calls.
-    if (this.ultraWideId && !this.lensSwapping) {
-      const wantUltra = clamped < 0.8;
-      if (wantUltra && this.activeLens !== "ultrawide") {
+    // OPTICAL first: hand over to the physical lens that natively covers
+    // this factor (ultra-wide below 1×, telephoto at its factor and up),
+    // then crop only the remainder. That is what keeps a 3× shot sharp
+    // instead of upscaling a crop of the main sensor. A swap-in-flight
+    // flag stops a fast pinch firing overlapping getUserMedia calls.
+    if (this.lenses.length > 1 && !this.lensSwapping) {
+      const want = this.lensFor(clamped);
+      if (want && want.deviceId !== (this.activeLensId ?? this.mainDeviceId)) {
         this.lensSwapping = true;
-        const ok = await this.useDevice(this.ultraWideId);
+        const ok = await this.useDevice(want.isMain ? null : want.deviceId);
         this.lensSwapping = false;
         if (ok) {
-          this.digitalZoom = 1;
+          this.digitalZoom = Math.max(1, clamped / want.factor);
           this.applyDigitalTransform();
-          this.zoomValue = ULTRA_WIDE_FACTOR;
-          return this.zoomValue;
-        }
-      } else if (!wantUltra && this.activeLens === "ultrawide") {
-        this.lensSwapping = true;
-        const ok = await this.useDevice(null);
-        this.lensSwapping = false;
-        if (ok) {
-          this.digitalZoom = 1;
-          this.applyDigitalTransform();
-          this.zoomValue = 1;
+          this.zoomValue = clamped;
           return this.zoomValue;
         }
       }
-      // while on the ultra-wide lens, 0.6×–1× needs no further change
-      if (this.activeLens === "ultrawide" && clamped < 1) {
+      // already on the right lens: the residual is a digital crop on top
+      const base = this.activeLensFactor;
+      if (base !== 1) {
+        this.digitalZoom = Math.max(1, clamped / base);
+        this.applyDigitalTransform();
         this.zoomValue = clamped;
         return this.zoomValue;
       }
