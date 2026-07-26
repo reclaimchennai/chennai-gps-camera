@@ -222,6 +222,19 @@ export default function MediaDetailView({ id }: { id: string }) {
       const u =
         (r.kind === "video" && (await urlFor(curId, "final"))) ||
         (await urlFor(curId, r.kind === "photo" ? "final" : "source"));
+      // Decode a photo BEFORE it goes on screen. Handing a fresh blob URL
+      // straight to the <img> makes the browser decode a multi-megapixel
+      // JPEG during paint, which is the stutter on opening an image; doing
+      // it here keeps that work off the frame that swaps the thumbnail out.
+      if (u && r.kind === "photo") {
+        try {
+          const pre = new Image();
+          pre.src = u;
+          await pre.decode();
+        } catch {
+          // decode unsupported or aborted — show it anyway
+        }
+      }
       if (u) setUrl(u);
       // evict cached URLs whose id left the prev/cur/next window
       const keep = new Set(

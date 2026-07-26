@@ -271,6 +271,10 @@ export class CameraController {
     }
     if (!opened) throw lastErr instanceof Error ? lastErr : new Error("camera");
     this.stream = opened;
+    // A fresh stream always starts at 1x, but the user's chosen zoom must
+    // survive minimising the app: it used to silently drop to 1x while the
+    // indicator still read 3x, so the label and the picture disagreed.
+    const wanted = this.desiredZoom;
     this.zoomValue = 1;
     this.digitalZoom = 1;
     this.torchOn = false;
@@ -279,9 +283,22 @@ export class CameraController {
       this.stream.getVideoTracks()[0]?.getSettings?.().deviceId ?? null;
     if (this.video) this.video.style.transform = "";
     // discover the phone's other rear lenses in the background so pinch
-    // zoom can hand over to real optics
-    void this.detectLenses();
+    // zoom can hand over to real optics, then put the zoom back
+    void this.detectLenses().then(() => this.restoreZoom(wanted));
     return this.stream;
+  }
+
+  /** Zoom the user last asked for; survives a stream restart. */
+  private desiredZoom = 1;
+
+  /** Re-apply the remembered zoom once a new stream is ready. */
+  private async restoreZoom(wanted: number): Promise<void> {
+    if (Math.abs(wanted - 1) < 0.01) return;
+    const got = await this.setZoom(wanted);
+    this.desiredZoom = wanted; // setZoom may have clamped; keep the intent
+    window.dispatchEvent(
+      new CustomEvent("gpscam:zoom-changed", { detail: { zoom: got } })
+    );
   }
 
   attach(video: HTMLVideoElement): void {
@@ -713,16 +730,17 @@ export class CameraController {
     this.freeze();
     // free the camera before asking for another one
     for (const t of this.stream?.getVideoTracks() ?? []) t.stop();
-    // track.stop() returns immediately but Android releases the camera
-    // asynchronously, so opening the next lens straight away hits
-    // NotReadableError. That is why lens switching worked on the very first
-    // launch (discovery's probe sequence supplied natural gaps) and then
-    // failed on every launch afterwards, reporting that the phone would not
-    // allow the lens at all. Give the hardware a moment, then retry.
-    await CameraController.settle(RELEASE_MS);
 
+    /**
+     * track.stop() returns immediately but Android releases the camera
+     * asynchronously, so an open can come back NotReadableError while the
+     * previous lens is still letting go. Try AT ONCE and only wait if that
+     * actually happens: waiting first cost every switch a fixed delay even
+     * on phones that hand the camera over straight away, which is the lag
+     * still visible next to the stock camera app.
+     */
     const open = async (id: string | null): Promise<MediaStreamTrack | null> => {
-      for (let attempt = 0; attempt < 3; attempt++) {
+      for (let attempt = 0; attempt < 4; attempt++) {
         try {
           const s = await navigator.mediaDevices.getUserMedia({
             audio: false,
@@ -730,8 +748,8 @@ export class CameraController {
           });
           return s.getVideoTracks()[0] ?? null;
         } catch {
-          // busy, not unsupported: wait longer each time before giving up
-          await CameraController.settle(RELEASE_MS * (attempt + 2));
+          // busy, not unsupported: back off a little more each time
+          await CameraController.settle(RELEASE_MS * (attempt + 1) * 0.5);
         }
       }
       return null;
@@ -920,6 +938,7 @@ export class CameraController {
   async setZoom(value: number): Promise<number> {
     const info = this.zoomInfo();
     const clamped = Math.min(info.max, Math.max(info.min, value));
+    this.desiredZoom = clamped;
 
     // SEAMLESS first. When the track's own zoom range spans the lenses, the
     // camera stack does the handover internally: no stop, no reopen, no gap

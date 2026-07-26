@@ -65,6 +65,9 @@ export default function CameraView({ active }: { active: boolean }) {
     const box = boxRef.current;
     if (!vp || !box) return;
     const apply = () => {
+      // while the screen is display:none everything measures 0; writing that
+      // in would collapse the viewfinder on the way back
+      if (!vp.clientHeight || !vp.clientWidth) return;
       box.style.setProperty("--vph", `${vp.clientHeight}px`);
       box.style.setProperty("--vpw", `${vp.clientWidth}px`);
     };
@@ -875,6 +878,14 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [active, onShutter]);
 
+  // Coming back from display:none the element can be left paused, and a
+  // paused viewfinder shows the WebView's play-button overlay.
+  useEffect(() => {
+    if (!active) return;
+    const v = videoRef.current;
+    if (v && v.srcObject && v.paused) void v.play().catch(() => {});
+  }, [active]);
+
   // give the controller the canvas it holds the last frame on during a
   // lens switch
   useEffect(() => {
@@ -911,6 +922,19 @@ export default function CameraView({ active }: { active: boolean }) {
       void setShutterKeys(false);
     };
   }, [active, onShutter]);
+
+  // the stream restarted (minimise/restore) and the controller put the zoom
+  // back: follow it, so the chips and the indicator match the picture
+  useEffect(() => {
+    const onZoom = (e: Event) => {
+      const z = (e as CustomEvent<{ zoom: number }>).detail?.zoom;
+      if (typeof z !== "number") return;
+      setZoomNow(z);
+      setZoomStops(camera.zoomStops());
+    };
+    window.addEventListener("gpscam:zoom-changed", onZoom);
+    return () => window.removeEventListener("gpscam:zoom-changed", onZoom);
+  }, []);
 
   // an AF lock does not survive the track it was applied to (a lens switch
   // opens a new one), so drop the padlock rather than show a dead one
@@ -1085,6 +1109,13 @@ export default function CameraView({ active }: { active: boolean }) {
       style={
         {
           visibility: active ? "visible" : "hidden",
+          // display:none, not just hidden. The live viewfinder is a
+          // hardware-composited video layer in the Android WebView, and
+          // leaving it in the render tree behind the gallery made every
+          // open/close of a photo flicker. `visibility` keeps compositing;
+          // `display` removes it. The stream itself keeps running, so
+          // coming back is still instant.
+          display: active ? undefined : "none",
           "--ui-rot": `${uiRot}deg`,
         } as React.CSSProperties
       }
