@@ -555,18 +555,17 @@ textarea {
 
 /* Lens stops, shown only while zooming (see .cam-zoombar usage): sits
    low and centred, well clear of the watermark's right-edge strip. */
+/* Lives INSIDE the controls strip (below the viewfinder), never over the
+   preview — an absolutely-positioned bar sat on top of the watermark card
+   on tall-screen layouts. */
 .cam-zoombar {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
-  z-index: 6;
+  align-self: center;
+  margin-bottom: 6px;
   display: flex;
   gap: 4px;
   padding: 4px;
   border-radius: 18px;
-  background: rgba(0, 0, 0, 0.42);
-  backdrop-filter: blur(6px);
+  background: rgba(255, 255, 255, 0.08);
   animation: zoombar-in 0.16s ease-out;
 }
 .cam-zoombar button {
@@ -582,8 +581,8 @@ textarea {
   color: #fbbf24;
 }
 @keyframes zoombar-in {
-  from { opacity: 0; transform: translate(-50%, 6px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
 }
 
 /* Samsung focus UI, matched to the stock camera: a thin white CIRCLE, a

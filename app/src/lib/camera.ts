@@ -356,44 +356,86 @@ export class CameraController {
   }
 
   /** Switch the running stream to a specific physical camera (lens). */
+  /**
+   * Switch the running stream to a specific physical camera (lens).
+   *
+   * CRITICAL on Android: only ONE camera may be open at a time. Opening
+   * the new lens while the old track is still live fails (NotReadable /
+   * Overconstrained), which is why lens switching silently did nothing —
+   * the caller then fell back to a digital "zoom" that scaled the preview
+   * DOWN, shrinking the viewfinder into a small rectangle instead of
+   * showing a wider view. So: release the current video track FIRST, then
+   * open the new one, and if that fails, reopen what we had so the user is
+   * never left with a dead viewfinder.
+   */
   private async useDevice(deviceId: string | null): Promise<boolean> {
-    try {
-      const audio = this.stream?.getAudioTracks()[0];
-      const next = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: deviceId
-          ? {
-              deviceId: { exact: deviceId },
-              width: { ideal: qualityPlan().previewLongEdge },
-            }
-          : {
-              facingMode: this.facing,
-              width: { ideal: qualityPlan().previewLongEdge },
-            },
-      });
-      // swap only the video track, keeping the mic (and the dB meter) alive
-      const oldVideo = this.stream?.getVideoTracks() ?? [];
-      const newVideo = next.getVideoTracks()[0];
-      if (!newVideo) return false;
-      const combined = new MediaStream(
-        audio ? [newVideo, audio] : [newVideo]
-      );
-      for (const t of oldVideo) t.stop();
-      this.stream = combined;
-      if (this.video) {
-        this.video.srcObject = combined;
-        void this.video.play().catch(() => {});
+    const audio = this.stream?.getAudioTracks()[0] ?? null;
+    const previous = this.activeLensId;
+    const wanted = (id: string | null): MediaTrackConstraints =>
+      id
+        ? {
+            deviceId: { exact: id },
+            width: { ideal: qualityPlan().previewLongEdge },
+          }
+        : {
+            facingMode: this.facing,
+            width: { ideal: qualityPlan().previewLongEdge },
+          };
+
+    // free the camera before asking for another one
+    for (const t of this.stream?.getVideoTracks() ?? []) t.stop();
+
+    const open = async (id: string | null): Promise<MediaStreamTrack | null> => {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: wanted(id),
+        });
+        return s.getVideoTracks()[0] ?? null;
+      } catch {
+        return null;
       }
-      this.activeLensId = deviceId;
-      return true;
-    } catch {
-      return false;
+    };
+
+    let track = await open(deviceId);
+    let landedOn = deviceId;
+    if (!track) {
+      // couldn't get the requested lens — restore the previous one
+      track = await open(previous);
+      landedOn = previous;
+      if (!track) {
+        track = await open(null);
+        landedOn = null;
+      }
+      if (!track) return false;
+      this.attachStream(track, audio, landedOn);
+      return false; // restored, but the requested switch did not happen
     }
+    this.attachStream(track, audio, landedOn);
+    return true;
+  }
+
+  private attachStream(
+    videoTrack: MediaStreamTrack,
+    audio: MediaStreamTrack | null,
+    lensId: string | null
+  ): void {
+    const combined = new MediaStream(
+      audio ? [videoTrack, audio] : [videoTrack]
+    );
+    this.stream = combined;
+    if (this.video) {
+      this.video.srcObject = combined;
+      void this.video.play().catch(() => {});
+    }
+    this.activeLensId = lensId;
   }
 
   /** deviceId of the lens currently streaming (null = default/main). */
   private activeLensId: string | null = null;
   private lensSwapping = false;
+  /** true once a physical lens refused to open on this device */
+  lensUnavailable = false;
 
   /** Zoom factor of the lens currently in use. */
   get activeLensFactor(): number {
@@ -422,6 +464,16 @@ export class CameraController {
           this.zoomValue = clamped;
           return this.zoomValue;
         }
+        // The lens refused to open (some phones simply do not expose their
+        // extra cameras to the WebView). Drop it so we stop offering a
+        // stop we cannot deliver, and stay at the widest we really have.
+        this.lenses = this.lenses.filter((l) => l.deviceId !== want.deviceId);
+        this.lensUnavailable = true;
+        const floor = this.zoomInfo().min;
+        this.digitalZoom = Math.max(1, clamped);
+        this.applyDigitalTransform();
+        this.zoomValue = Math.max(floor, Math.max(1, clamped));
+        return this.zoomValue;
       }
       // already on the right lens: the residual is a digital crop on top
       const base = this.activeLensFactor;
@@ -444,9 +496,12 @@ export class CameraController {
       }
       return this.zoomValue;
     }
-    // digital: crop-scale the preview; capture/record apply the same crop
-    this.digitalZoom = clamped;
-    this.zoomValue = clamped;
+    // Digital: crop-scale the preview; capture/record apply the same crop.
+    // NEVER below 1 — cropping cannot add field of view, and scaling the
+    // video element down just shrank the viewfinder into a small
+    // rectangle (exactly what a failed ultra-wide switch used to do).
+    this.digitalZoom = Math.max(1, clamped);
+    this.zoomValue = this.digitalZoom;
     this.applyDigitalTransform();
     return this.zoomValue;
   }

@@ -1120,27 +1120,6 @@ export default function CameraView({ active }: { active: boolean }) {
           </div>
         )}
 
-        {/* transient lens stops — appear while zooming, fade out after */}
-        {zoomBar && zoomStops.length > 1 && (
-          <div className="cam-zoombar">
-            {zoomStops.map((z) => (
-              <button
-                key={z}
-                data-active={Math.abs(z - zoomNow) < 0.05}
-                onClick={() => {
-                  void camera.setZoom(z).then((got) => {
-                    setZoomNow(got);
-                    setZoomLabel(fmtZoom(got));
-                  });
-                  showZoomBar();
-                }}
-              >
-                {fmtZoom(z)}
-              </button>
-            ))}
-          </div>
-        )}
-
         {zoomLabel && (
           <div className="cam-toast" style={{ bottom: "auto", top: "20%" }}>
             {zoomLabel}
@@ -1233,6 +1212,34 @@ export default function CameraView({ active }: { active: boolean }) {
 
       {/* Opaque controls bar — below the viewfinder, never over it. */}
       <div className="cam-controls">
+        {/* transient lens stops — appear while zooming, fade out after */}
+        {zoomBar && zoomStops.length > 1 && (
+          <div className="cam-zoombar">
+            {zoomStops.map((z) => (
+              <button
+                key={z}
+                data-active={Math.abs(z - zoomNow) < 0.05}
+                onClick={() => {
+                  void camera.setZoom(z).then((got) => {
+                    setZoomNow(got);
+                    setZoomLabel(fmtZoom(got));
+                    // asked for a lens the phone won't hand over: say so
+                    // once instead of silently landing somewhere else
+                    if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
+                      showToast(
+                        "This phone doesn't let apps use that lens directly"
+                      );
+                    }
+                  });
+                  showZoomBar();
+                }}
+              >
+                {fmtZoom(z)}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="cam-mode">
           <button
             data-active={mode === "photo"}
