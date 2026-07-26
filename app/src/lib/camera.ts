@@ -63,6 +63,24 @@ export interface Lens {
   isMain: boolean;
 }
 
+/**
+ * One-time reset of stored lens state. Versions up to 1.11.2 auto-saved
+ * optical measurements INTO the manual-override store, and a wrong one
+ * (e.g. from a flat scene) is indistinguishable from a user choice — it
+ * poisons every later detection. That is why the web app could stay
+ * swapped while a fresh APK install was fine. Wipe once; detection is
+ * reliable now and rebuilds the profile on the next start.
+ */
+try {
+  if (localStorage.getItem("gpscam-lens-v") !== "2") {
+    localStorage.removeItem("gpscam-lens-factors");
+    localStorage.removeItem("gpscam-lens-profile");
+    localStorage.setItem("gpscam-lens-v", "2");
+  }
+} catch {
+  // storage unavailable — nothing stored to migrate either
+}
+
 export function loadLensOverrides(): Record<string, number> {
   try {
     return JSON.parse(localStorage.getItem(LENS_KEY) ?? "{}");
@@ -236,13 +254,30 @@ export class CameraController {
       width: { ideal: plan.previewLongEdge },
       height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
     };
-    // Always open the DEFAULT camera for this facing first, never a
-    // remembered physical deviceId. On phones that expose a logical rear
-    // camera, the default IS that camera — the one that can zoom across its
-    // own lenses without interruption — and pinning a single physical sensor
-    // up front would silently give that up. Which camera we end up on is
-    // decided in detectLenses(), once its capabilities can be read.
-    const video: MediaTrackConstraints = { facingMode: facing, ...size };
+    // Open the remembered 1x lens DIRECTLY when a profile exists. A profile
+    // is only ever saved on phones WITHOUT a logical cross-lens camera
+    // (detectLenses skips discovery entirely when the track zooms below 1x
+    // by itself), so this cannot cost the seamless path — but it removes
+    // the open-default-then-switch-to-main dance that every start on this
+    // class of Samsung was paying: that switch was the 1-2 s launch delay
+    // and the black gap with the stray white dot, on cold start and on
+    // every return from the background alike. Ids are re-resolved by label
+    // each time (they go stale between sessions).
+    let known: Lens | null = null;
+    if (facing === "environment") {
+      try {
+        if (loadLensProfile().length) {
+          known = pickMainLens(
+            resolveLensProfile(await navigator.mediaDevices.enumerateDevices())
+          );
+        }
+      } catch {
+        known = null;
+      }
+    }
+    const video: MediaTrackConstraints = known
+      ? { deviceId: { exact: known.deviceId }, ...size }
+      : { facingMode: facing, ...size };
 
     /**
      * Relax the VIDEO constraint before touching audio.
@@ -253,10 +288,14 @@ export class CameraController {
      * recording came out silent, and the four rejections in a row put a
      * multi-second spinner on the launch screen.
      */
+    const byFacing: MediaTrackConstraints = { facingMode: facing, ...size };
     const attempts: MediaStreamConstraints[] = [
       { audio, video },
-      { audio: baseAudio, video },
-      { audio: false, video },
+      // a dead deviceId must fall back to the default camera BEFORE any
+      // rung gives up the microphone (see v1.11.4)
+      ...(known ? [{ audio, video: byFacing }] : []),
+      { audio: baseAudio, video: byFacing },
+      { audio: false, video: byFacing },
       { audio: false, video: { facingMode: facing } },
     ];
     let opened: MediaStream | null = null;

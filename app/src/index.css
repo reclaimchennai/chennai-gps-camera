@@ -338,9 +338,13 @@ textarea {
   visibility: hidden;
   transform-origin: center;
   transition: opacity 0.22s ease;
-  /* No z-index: it must stack above the <video> but BELOW the grid and the
-     watermark overlay, which follow it in the DOM. Lifting it above them
-     made the watermark card vanish for the length of every lens switch. */
+  /* Above the black prefill (z-index 3), below the controls (6). Without
+     this the prefill — which appears the moment the <video> empties —
+     painted OVER the held frame, so every lens switch flashed black for a
+     frame with the chips still visible: exactly what the user's screen
+     recording showed. The watermark overlay canvas is z-index 5 so the
+     card stays visible above the held frame. */
+  z-index: 4;
 }
 .cam-freeze[data-on="1"] {
   opacity: 1;
@@ -355,6 +359,10 @@ textarea {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+.cam-overlay {
+  /* the live card must stay visible above the freeze cover (z-index 4) */
+  z-index: 5;
 }
 
 .cam-top {
@@ -822,10 +830,12 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
 }
 
 .rec-timer {
+  /* positioned by CameraView from the live card rect: top-left in
+     portrait, directly below the watermark card in landscape, never
+     over the card wherever the user anchors it */
   position: absolute;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  transform-origin: top left;
+  transform: rotate(var(--ui-rot, 0deg));
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
   border-radius: 16px;
@@ -2530,5 +2540,10 @@ a {
    decoding. Same box as the real image, just softer — so opening a photo
    never shows an empty pane. */
 .pane-thumb {
-  filter: blur(1px);
+  /* Same displayed box as the full-size image it stands in for. At its
+     natural size the small thumbnail rendered tiny and then "expanded"
+     when the real image arrived — the visible jump on opening a photo. */
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }

@@ -80,6 +80,21 @@ export default function CameraView({ active }: { active: boolean }) {
   // true once the stream is genuinely painting, so the viewfinder zone can
   // stay flat black until then instead of showing a stray couple of pixels
   const [videoLive, setVideoLive] = useState(false);
+  const livePollRef = useRef(0);
+  // Poll instead of trusting media events: in the Android WebView the
+  // 'emptied'/'loadeddata' pair does not fire reliably across srcObject
+  // swaps, which left the collapsed <video> visible as a white speck in
+  // the middle of the launch screen.
+  const armLivePoll = useCallback(() => {
+    setVideoLive(false);
+    cancelAnimationFrame(livePollRef.current);
+    const poll = () => {
+      const v = videoRef.current;
+      if (v && v.videoWidth > 0 && !v.paused) setVideoLive(true);
+      else livePollRef.current = requestAnimationFrame(poll);
+    };
+    livePollRef.current = requestAnimationFrame(poll);
+  }, []);
   const [ready, setReady] = useState(false);
   const [camError, setCamError] = useState<string | null>(null);
   const [torch, setTorch] = useState(false);
@@ -140,6 +155,14 @@ export default function CameraView({ active }: { active: boolean }) {
   const [toast, setToast] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [recSeconds, setRecSeconds] = useState(0);
+  // live watermark card rect (rotated drawing space) from the overlay loop
+  const cardInfoRef = useRef<{
+    rect: { x: number; y: number; width: number; height: number } | null;
+    rot: number;
+    w: number;
+    h: number;
+  } | null>(null);
+  const [recPos, setRecPos] = useState<{ left: number; top: number } | null>(null);
   // capture-in-flight UX: a preview that flies into the gallery button
   // and a pulse on the button while the real file finishes saving
   const [flyImg, setFlyImg] = useState<{ src: string; key: number } | null>(null);
@@ -449,6 +472,7 @@ export default function CameraView({ active }: { active: boolean }) {
       // rotate (CSS --ui-rot), so the card previews upright and in its
       // true landscape layout — exactly what the capture will bake in.
       const rot = live.uiRotation;
+      let cardRect: { x: number; y: number; width: number; height: number } | null = null;
       if (rot === 90 || rot === -90) {
         ctx.save();
         if (rot === 90) {
@@ -458,11 +482,14 @@ export default function CameraView({ active }: { active: boolean }) {
           ctx.translate(0, h);
           ctx.rotate(-Math.PI / 2);
         }
-        renderWatermark(ctx, h, w, data, watermark, profile, assetsRef.current);
+        cardRect = renderWatermark(ctx, h, w, data, watermark, profile, assetsRef.current);
         ctx.restore();
       } else {
-        renderWatermark(ctx, w, h, data, watermark, profile, assetsRef.current);
+        cardRect = renderWatermark(ctx, w, h, data, watermark, profile, assetsRef.current);
       }
+      // the recording timer positions itself off the live card (never over
+      // it); rects are in the ROTATED drawing space, dims in canvas px
+      cardInfoRef.current = { rect: cardRect, rot, w, h };
     };
 
     // throttled on-device detection for the live blur preview
@@ -878,13 +905,24 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [active, onShutter]);
 
-  // Coming back from display:none the element can be left paused, and a
-  // paused viewfinder shows the WebView's play-button overlay.
+  // Coming back to the camera (from the gallery or the background):
+  // - the element can be left paused by display:none (shows the WebView's
+  //   play overlay), so play it;
+  //  - the WebView may have killed the camera track while it was hidden —
+  //   restart if so, which also re-applies the remembered zoom;
+  // - and whatever happened, make the chips read what the controller is
+  //   actually doing, so the label can never disagree with the picture.
   useEffect(() => {
     if (!active) return;
     const v = videoRef.current;
     if (v && v.srcObject && v.paused) void v.play().catch(() => {});
-  }, [active]);
+    const track = camera.stream?.getVideoTracks()[0];
+    if (ready && permState === "granted" && (!track || track.readyState !== "live")) {
+      void startCam(modeRef.current);
+    }
+    setZoomNow(camera.zoom);
+    setZoomStops(camera.zoomStops());
+  }, [active, ready, permState, startCam]);
 
   // give the controller the canvas it holds the last frame on during a
   // lens switch
@@ -936,12 +974,83 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => window.removeEventListener("gpscam:zoom-changed", onZoom);
   }, []);
 
+  /**
+   * Recording timer placement, off the live card so it never covers it:
+   * portrait, top-left on the flash/settings line (or just below the card
+   * when the user anchors the card at the top); landscape, directly below
+   * the card. Recomputed while recording so it follows rotation and card
+   * position live.
+   */
+  useEffect(() => {
+    if (!recording) {
+      setRecPos(null);
+      return;
+    }
+    const tick = () => {
+      const info = cardInfoRef.current;
+      const canvas = overlayRef.current;
+      const box = viewportRef.current; // the pill's containing block
+      if (!info || !canvas || !box) return;
+      const cr = canvas.getBoundingClientRect();
+      const br = box.getBoundingClientRect();
+      if (!cr.width || !info.w) return;
+      const kx = cr.width / info.w; // canvas px -> css px
+      const ky = cr.height / info.h;
+      const M = 12 / kx; // margins in canvas px
+      const gap = 8 / ky;
+      const { rect, rot, w, h } = info;
+      const rotH = rot === 90 || rot === -90 ? w : h;
+      const cardIsTop = !!rect && rect.y < rotH / 2;
+      // Portrait with the card anywhere but the top: plain top-left of the
+      // SCREEN, on the flash/settings line — not of the video box, which
+      // can sit centred with black bars around it.
+      if (!(rot === 90 || rot === -90) && !cardIsTop) {
+        setRecPos((p) =>
+          p && p.left === 12 && p.top === 12 ? p : { left: 12, top: 12 }
+        );
+        return;
+      }
+      // Otherwise anchor below the card, in rotated drawing space — and
+      // when the card already hugs the bottom edge (its usual anchor),
+      // "below" would land off the picture, so sit just above it instead.
+      const pillH = 32 / ky; // pill box in canvas px, generous
+      let u = M;
+      let v = M;
+      if (rect) {
+        u = rect.x;
+        v = rect.y + rect.height + gap;
+        if (v + pillH > rotH - M) v = Math.max(M, rect.y - gap - pillH);
+      }
+      // rotated point -> screen canvas px (must mirror the draw transform)
+      let x = u;
+      let y = v;
+      if (rot === 90) {
+        x = w - v;
+        y = u;
+      } else if (rot === -90) {
+        x = v;
+        y = h - u;
+      }
+      const left = (cr.left - br.left) + x * kx;
+      const top = (cr.top - br.top) + y * ky;
+      setRecPos((p) =>
+        p && Math.abs(p.left - left) < 2 && Math.abs(p.top - top) < 2
+          ? p
+          : { left, top }
+      );
+    };
+    tick();
+    const t = window.setInterval(tick, 400);
+    return () => window.clearInterval(t);
+  }, [recording, uiRot]);
+
   // an AF lock does not survive the track it was applied to (a lens switch
   // opens a new one), so drop the padlock rather than show a dead one
   useEffect(() => {
     const onTrack = () => {
       setAfLocked(false);
       setTorch(false);
+      armLivePoll();
       // the meter was listening to the previous stream's audio track
       const wantsMeter =
         useSettingsStore.getState().watermark.fields.soundLevel;
@@ -952,7 +1061,7 @@ export default function CameraView({ active }: { active: boolean }) {
     };
     window.addEventListener("gpscam:track-changed", onTrack);
     return () => window.removeEventListener("gpscam:track-changed", onTrack);
-  }, []);
+  }, [armLivePoll]);
 
   // ---- gestures: tap-to-focus + pinch-to-zoom -----------------------------
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -1275,7 +1384,20 @@ export default function CameraView({ active }: { active: boolean }) {
           </div>
         )}
         {toast && <div className="cam-toast">{toast}</div>}
-        {recording && <div className="rec-timer">{fmtRec(recSeconds)}</div>}
+        {recording && (
+          <div
+            className="rec-timer"
+            style={
+              {
+                left: recPos?.left ?? 12,
+                top: recPos?.top ?? 12,
+                "--ui-rot": `${uiRot}deg`,
+              } as React.CSSProperties
+            }
+          >
+            {fmtRec(recSeconds)}
+          </div>
+        )}
 
       </div>
 

@@ -298,6 +298,21 @@ export default function SettingsView() {
                   </div>
                 </>
               )}
+              <button
+                className="ghost-btn"
+                style={{ marginTop: 10 }}
+                onClick={() => {
+                  // forget everything and let the camera rediscover from
+                  // scratch — the escape hatch when a phone's remembered
+                  // line-up is stale or wrong
+                  camera.forgetLenses();
+                  setLenses([]);
+                  setCalResult(null);
+                  window.dispatchEvent(new Event("gpscam:restart-camera"));
+                }}
+              >
+                Detect lenses again
+              </button>
             </div>
 
             {/* styled exactly like the other settings rows: bold label,
