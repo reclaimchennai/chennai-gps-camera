@@ -285,6 +285,24 @@ textarea {
   pointer-events: none;
 }
 
+/* Until the stream paints, the viewfinder zone is filled with flat black.
+   A <video> with no data has no useful intrinsic size, so it rendered as a
+   couple of stray pixels in the middle of the dark area — the white speck
+   seen on a slow launch. Cover the zone and hide the element until it has
+   an actual picture. */
+.cam-prefill {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  /* No z-index: plain DOM order must apply, so this covers the <video> but
+     the held frame and the watermark (both later siblings) still cover it.
+     Lifting it would black out every lens switch. */
+  pointer-events: none;
+}
+.cam-video-box[data-live="false"] video {
+  visibility: hidden;
+}
+
 .cam-video-box video {
   display: block;
   /* measured by CameraView's ResizeObserver — never overflows the

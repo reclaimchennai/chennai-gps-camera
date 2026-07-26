@@ -70,6 +70,19 @@ public class NativeBridgePlugin extends Plugin {
     }
 
     /**
+     * Route the volume rocker to the shutter, or leave it to the system.
+     *
+     * Only the live viewfinder asks for it. Everywhere else — the gallery
+     * above all, where the rocker has to set playback volume for a recorded
+     * video — the keys must behave normally.
+     */
+    @PluginMethod
+    public void setShutterKeys(PluginCall call) {
+        MainActivity.setShutterKeys(call.getBoolean("enabled", false));
+        call.resolve();
+    }
+
+    /**
      * Mock-location disclosure (NOT a restriction — spoofing stays
      * allowed, it just gets labelled). Reads the last known fix from both
      * providers and reports Android's own isMock()/isFromMockProvider()

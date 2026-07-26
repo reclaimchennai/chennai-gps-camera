@@ -18,6 +18,7 @@ import {
   checkNativePermissions,
   ensureCameraPermissions,
   requestLocationPermissionNative,
+  setShutterKeys,
 } from "../lib/native";
 import { navigate } from "../nav";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
@@ -73,6 +74,9 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => ro.disconnect();
   }, []);
   const [mode, setMode] = useState<Mode>("photo");
+  // true once the stream is genuinely painting, so the viewfinder zone can
+  // stay flat black until then instead of showing a stray couple of pixels
+  const [videoLive, setVideoLive] = useState(false);
   const [ready, setReady] = useState(false);
   const [camError, setCamError] = useState<string | null>(null);
   const [torch, setTorch] = useState(false);
@@ -892,8 +896,25 @@ export default function CameraView({ active }: { active: boolean }) {
       onShutter();
     };
     window.addEventListener("gpscamShutterKey", onVolumeShutter);
-    return () => window.removeEventListener("gpscamShutterKey", onVolumeShutter);
+    // Claim the rocker only while the viewfinder is actually up. Holding it
+    // app-wide meant the gallery couldn't set playback volume on a video.
+    void setShutterKeys(true);
+    return () => {
+      window.removeEventListener("gpscamShutterKey", onVolumeShutter);
+      void setShutterKeys(false);
+    };
   }, [active, onShutter]);
+
+  // an AF lock does not survive the track it was applied to (a lens switch
+  // opens a new one), so drop the padlock rather than show a dead one
+  useEffect(() => {
+    const onTrack = () => {
+      setAfLocked(false);
+      setTorch(false);
+    };
+    window.addEventListener("gpscam:track-changed", onTrack);
+    return () => window.removeEventListener("gpscam:track-changed", onTrack);
+  }, []);
 
   // ---- gestures: tap-to-focus + pinch-to-zoom -----------------------------
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -1069,6 +1090,7 @@ export default function CameraView({ active }: { active: boolean }) {
         <div
           ref={boxRef}
           className={`cam-video-box${mirrored ? " mirrored" : ""}`}
+          data-live={videoLive}
           // long-pressing a live preview must not open the WebView's media
           // context menu (downloadfile.bin / Copy video frame / PiP)
           onContextMenu={(e) => e.preventDefault()}
@@ -1082,7 +1104,12 @@ export default function CameraView({ active }: { active: boolean }) {
             muted
             autoPlay
             poster={BLACK_POSTER}
+            onLoadedData={(e) => {
+              if (e.currentTarget.videoWidth > 0) setVideoLive(true);
+            }}
+            onEmptied={() => setVideoLive(false)}
           />
+          {!videoLive && <div className="cam-prefill" />}
           {/* Holds the last frame while a lens switch releases one camera
               and opens another, so crossing 0.6x→1x fades instead of
               flashing black. */}

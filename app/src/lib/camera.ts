@@ -124,6 +124,36 @@ export function pickMainLens(lenses: Lens[]): Lens | null {
   return best;
 }
 
+/**
+ * Re-point a remembered line-up at the CURRENT deviceIds.
+ *
+ * deviceId is not a durable handle: the browser salts it per session, so a
+ * saved id can be dead on the next launch even though the camera is the
+ * same one. The label ("camera2 0, facing back") IS stable, so the saved
+ * entries are matched by label and given whatever id that camera has now.
+ * Without this, every remembered id went stale and the app fell all the way
+ * down its getUserMedia fallback ladder — which is what silently dropped
+ * audio, broke lens switching and put a multi-second spinner on launch.
+ */
+export function resolveLensProfile(devices: MediaDeviceInfo[]): Lens[] {
+  const saved = loadLensProfile();
+  if (!saved.length) return [];
+  const cams = devices.filter((d) => d.kind === "videoinput");
+  const out: Lens[] = [];
+  for (const l of saved) {
+    const byLabel = l.label
+      ? cams.find((d) => d.label === l.label)
+      : undefined;
+    const match = byLabel ?? cams.find((d) => d.deviceId === l.deviceId);
+    if (!match) continue;
+    out.push({ ...l, deviceId: match.deviceId, label: match.label || l.label });
+  }
+  // a partial match means the phone is not the one this profile describes
+  return out.length === saved.length && out.length > 1
+    ? out.sort((a, b) => a.factor - b.factor)
+    : [];
+}
+
 export function saveLensProfile(lenses: Lens[]): void {
   try {
     localStorage.setItem(
@@ -189,42 +219,51 @@ export class CameraController {
     // depends on preview size — those captures take the full-sensor
     // ImageCapture path — so this is purely a smoothness dial.
     const plan = qualityPlan();
-    // Open the known 1x lens by deviceId when we have one. `facingMode:
-    // environment` is not a promise of the main camera — several phones
-    // hand back the ultra-wide — so relying on it meant the viewfinder
-    // started on a wide shot that the app then called 1x.
-    const known =
-      facing === "environment" ? pickMainLens(loadLensProfile()) : null;
-    const video: MediaTrackConstraints = {
-      ...(known ? { deviceId: { exact: known.deviceId } } : { facingMode: facing }),
+    const size = {
       width: { ideal: plan.previewLongEdge },
       height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
     };
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio, video });
-    } catch {
+    // Open the known 1x lens by deviceId when we have one. `facingMode:
+    // environment` is not a promise of the main camera — several phones
+    // hand back the ultra-wide — so relying on it meant the viewfinder
+    // started on a wide shot that the app then called 1x. The id has to be
+    // re-resolved against the live device list every time (see
+    // resolveLensProfile): saved ids go stale between launches.
+    const known =
+      facing === "environment" ? await this.knownMainDeviceId() : null;
+    const byFacing: MediaTrackConstraints = { facingMode: facing, ...size };
+    const video: MediaTrackConstraints = known
+      ? { deviceId: { exact: known }, ...size }
+      : byFacing;
+
+    /**
+     * Relax the VIDEO constraint before touching audio.
+     *
+     * The old ladder reused the same video constraint for its first three
+     * rungs and only varied audio, so one unusable deviceId meant the only
+     * attempt that could succeed was the `audio: false` one — every
+     * recording came out silent, and the four rejections in a row put a
+     * multi-second spinner on the launch screen.
+     */
+    const attempts: MediaStreamConstraints[] = [
+      { audio, video },
+      ...(known ? [{ audio, video: byFacing }] : []),
+      { audio: baseAudio, video: byFacing },
+      { audio: false, video: byFacing },
+      { audio: false, video: { facingMode: facing } },
+    ];
+    let opened: MediaStream | null = null;
+    let lastErr: unknown = null;
+    for (const c of attempts) {
       try {
-        // the exact-device pick may have gone stale (accessory unplugged) —
-        // retry letting the OS choose the input before giving up on audio
-        this.stream = await navigator.mediaDevices.getUserMedia({
-          audio: baseAudio,
-          video,
-        });
-      } catch {
-        try {
-          // mic denied — camera still works, recordings will be silent
-          this.stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video,
-          });
-        } catch {
-          this.stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { facingMode: facing },
-          });
-        }
+        opened = await navigator.mediaDevices.getUserMedia(c);
+        break;
+      } catch (e) {
+        lastErr = e;
       }
     }
+    if (!opened) throw lastErr instanceof Error ? lastErr : new Error("camera");
+    this.stream = opened;
     this.zoomValue = 1;
     this.digitalZoom = 1;
     this.torchOn = false;
@@ -345,9 +384,21 @@ export class CameraController {
       this.lenses = [];
       return;
     }
-    const cached = loadLensProfile();
+    // Resolve against the live device list, never against saved ids alone:
+    // a profile whose labels no longer match this hardware is worse than no
+    // profile, because every id in it is a dead end.
+    let cached: Lens[] = [];
+    try {
+      cached = resolveLensProfile(
+        await navigator.mediaDevices.enumerateDevices()
+      );
+    } catch {
+      cached = [];
+    }
     if (cached.length > 1) {
       this.lenses = cached;
+      this.lensFailures.clear();
+      this.lensUnavailable = false;
       window.dispatchEvent(new Event("gpscam:lenses-updated"));
       await this.ensureOnMainLens();
       return;
@@ -382,6 +433,25 @@ export class CameraController {
 
   private mainLens(): Lens | null {
     return pickMainLens(this.lenses);
+  }
+
+  /**
+   * Current deviceId of the remembered 1x lens, or null if there is no
+   * usable profile. Enumerating costs a few ms and opens nothing, unlike
+   * trusting a saved id and discovering it is dead one getUserMedia at a
+   * time.
+   */
+  private async knownMainDeviceId(): Promise<string | null> {
+    try {
+      if (!loadLensProfile().length) return null;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const resolved = resolveLensProfile(devices);
+      if (!resolved.length) return null;
+      this.lenses = resolved;
+      return pickMainLens(resolved)?.deviceId ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** At 1x, make sure we are actually streaming the 1x lens. */
@@ -660,6 +730,14 @@ export class CameraController {
       void this.video.play().catch(() => {});
     }
     this.activeLensId = lensId;
+    // this lens works: clear any recorded misses so a single hiccup earlier
+    // cannot accumulate toward writing it off
+    if (lensId) this.lensFailures.delete(lensId);
+    // A new track focuses continuously and has its own torch state, so any
+    // AF lock the UI is showing is no longer real. Say so rather than
+    // leaving a padlock on screen that locks nothing.
+    this.torchOn = false;
+    window.dispatchEvent(new Event("gpscam:track-changed"));
     // drop the held frame only once the new lens is actually painting,
     // otherwise the cross-fade just reveals the black gap it was hiding
     this.unfreezeOnFirstFrame();
@@ -690,11 +768,27 @@ export class CameraController {
     }
     // the held frame must match what was on screen, digital crop included
     c.style.transform = v.style.transform || "";
+    // Pin the box while the video has no data. The box takes its size from
+    // the <video>, so an emptied element collapsed it to a couple of pixels
+    // — and because the box clips its overflow, that clipped the held frame
+    // away and showed a black flash in the middle of the switch.
+    const box = c.parentElement;
+    if (box) {
+      box.style.minWidth = `${box.offsetWidth}px`;
+      box.style.minHeight = `${box.offsetHeight}px`;
+    }
     c.dataset.on = "1";
   }
 
   private unfreeze(): void {
-    if (this.freezeCanvas) delete this.freezeCanvas.dataset.on;
+    const c = this.freezeCanvas;
+    if (!c) return;
+    delete c.dataset.on;
+    const box = c.parentElement;
+    if (box) {
+      box.style.minWidth = "";
+      box.style.minHeight = "";
+    }
   }
 
   private unfreezeOnFirstFrame(): void {
@@ -723,7 +817,9 @@ export class CameraController {
   /** deviceId of the lens currently streaming (null = default/main). */
   private activeLensId: string | null = null;
   private lensSwapping = false;
-  /** true once a physical lens refused to open on this device */
+  /** consecutive open failures per lens, so one miss is not fatal */
+  private lensFailures = new Map<string, number>();
+  /** true once a physical lens has repeatedly refused to open here */
   lensUnavailable = false;
 
   /** Zoom factor of the lens currently in use. */
@@ -755,11 +851,17 @@ export class CameraController {
           this.zoomValue = clamped;
           return this.zoomValue;
         }
-        // The lens refused to open (some phones simply do not expose their
-        // extra cameras to the WebView). Drop it so we stop offering a
-        // stop we cannot deliver, and stay at the widest we really have.
-        this.lenses = this.lenses.filter((l) => l.deviceId !== want.deviceId);
-        this.lensUnavailable = true;
+        // The lens did not open. Do NOT write it off on the first failure:
+        // a camera can be momentarily busy (another switch still settling,
+        // the app returning from the background), and permanently dropping
+        // it on one miss is what left zoom broken until the app was killed
+        // and relaunched. Only give up after it has failed repeatedly.
+        const misses = (this.lensFailures.get(want.deviceId) ?? 0) + 1;
+        this.lensFailures.set(want.deviceId, misses);
+        if (misses >= 3) {
+          this.lenses = this.lenses.filter((l) => l.deviceId !== want.deviceId);
+          this.lensUnavailable = true;
+        }
         const floor = this.zoomInfo().min;
         this.digitalZoom = Math.max(1, clamped);
         this.applyDigitalTransform();
@@ -889,9 +991,28 @@ export class CameraController {
   async lockFocus(): Promise<boolean> {
     if (!this.track) return false;
     try {
-      const caps = (this.track.getCapabilities?.() ?? {}) as Record<string, unknown>;
+      // A track that has only just started can report an empty capability
+      // set for a moment, which read as "this camera cannot lock focus" and
+      // stuck until the app was restarted. Give it a beat to fill in.
+      let caps = (this.track.getCapabilities?.() ?? {}) as Record<string, unknown>;
+      for (let i = 0; i < 3 && !caps.focusMode; i++) {
+        await new Promise((r) => window.setTimeout(r, 150));
+        if (!this.track) return false;
+        caps = (this.track.getCapabilities?.() ?? {}) as Record<string, unknown>;
+      }
       const modes = caps.focusMode as string[] | undefined;
-      if (!modes?.includes("manual")) return false;
+      if (!modes?.includes("manual")) {
+        // some Android WebViews expose a one-shot lock instead of manual
+        if (modes?.includes("single-shot")) {
+          await this.track.applyConstraints({
+            advanced: [
+              { focusMode: "single-shot" } as unknown as MediaTrackConstraintSet,
+            ],
+          });
+          return true;
+        }
+        return false;
+      }
       const settings = (this.track.getSettings?.() ?? {}) as Record<string, unknown>;
       const fd = settings.focusDistance as number | undefined;
       await this.track.applyConstraints({

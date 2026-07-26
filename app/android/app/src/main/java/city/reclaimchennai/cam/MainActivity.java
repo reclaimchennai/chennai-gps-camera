@@ -20,19 +20,34 @@ public class MainActivity extends BridgeActivity {
     public static final int REQ_LOCATION = 9107;
 
     /**
-     * Volume buttons as the shutter, like every camera app. Both keys are
-     * consumed while the app is foreground (a camera app doesn't play
-     * media, so hijacking volume is the expected trade); only the first
-     * press of a hold fires — auto-repeat is swallowed. The web layer
-     * decides what "shutter" means (photo vs start/stop recording).
+     * Whether volume keys currently act as the shutter.
+     *
+     * ONLY the live camera screen sets this. Swallowing volume everywhere
+     * meant the gallery could not adjust playback volume on a recorded
+     * video, which is worse than useless — it is the one screen where the
+     * rocker obviously should do its normal job. The web layer turns this on
+     * when the viewfinder is showing and off the moment it is not.
+     */
+    private static volatile boolean shutterKeys = false;
+
+    public static void setShutterKeys(boolean on) {
+        shutterKeys = on;
+    }
+
+    /**
+     * Volume buttons as the shutter, like every camera app — but only while
+     * the viewfinder is up (see shutterKeys). Only the first press of a hold
+     * fires; auto-repeat is swallowed. The web layer decides what "shutter"
+     * means (photo vs start/stop recording).
      * NOTE: the power button cannot be used — Android reserves it for the
      * system (screen off / device-wide double-press camera shortcut) and
      * never delivers it to apps.
      */
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-                || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+        if (shutterKeys
+                && (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+                        || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
             if (event.getRepeatCount() == 0 && bridge != null) {
                 try {
                     bridge.triggerWindowJSEvent("gpscamShutterKey", "{}");
@@ -47,8 +62,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-                || keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
+        if (shutterKeys
+                && (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
+                        || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
             return true; // consumed on the way down
         }
         return super.onKeyUp(keyCode, event);

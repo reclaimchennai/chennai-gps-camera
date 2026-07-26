@@ -63,6 +63,7 @@ interface NativeBridgePlugin {
   }>;
   requestLocationNative(): Promise<{ requested: boolean }>;
   checkMockLocation(): Promise<{ mock: boolean }>;
+  setShutterKeys(opts: { enabled: boolean }): Promise<void>;
 }
 
 export interface NativePermStates {
@@ -86,6 +87,22 @@ export function isNativeApp(): boolean {
 
 function bridge(): NativeBridgePlugin | undefined {
   return cap()?.Plugins?.NativeBridge;
+}
+
+/**
+ * Volume rocker = shutter, but ONLY while the viewfinder is on screen.
+ * Everywhere else (the gallery especially, where it has to set playback
+ * volume) the keys must do their normal job. No-op on web and on APKs
+ * older than this feature.
+ */
+export async function setShutterKeys(enabled: boolean): Promise<void> {
+  const b = bridge();
+  if (!b?.setShutterKeys) return;
+  try {
+    await b.setShutterKeys({ enabled });
+  } catch {
+    // older APK without the method — volume keys keep their old behaviour
+  }
 }
 
 /** Permission STATES, never prompting. null on web / old APKs. */
