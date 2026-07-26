@@ -300,12 +300,21 @@ export class CameraController {
     ];
     let opened: MediaStream | null = null;
     let lastErr: unknown = null;
-    for (const c of attempts) {
-      try {
-        opened = await navigator.mediaDevices.getUserMedia(c);
-        break;
-      } catch (e) {
-        lastErr = e;
+    // Returning from the background, Android often has not finished
+    // releasing the camera we just stopped, so EVERY rung fails in one
+    // quick cascade — which used to both lose the microphone and leave a
+    // dark viewfinder until an unrelated watchdog retried seconds later.
+    // Retry the whole ladder with a short settle instead: round two
+    // starts again from the best constraints, audio included.
+    for (let round = 0; round < 3 && !opened; round++) {
+      if (round > 0) await CameraController.settle(RELEASE_MS * round);
+      for (const c of attempts) {
+        try {
+          opened = await navigator.mediaDevices.getUserMedia(c);
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
       }
     }
     if (!opened) throw lastErr instanceof Error ? lastErr : new Error("camera");
@@ -890,6 +899,9 @@ export class CameraController {
   /* ---- freeze-frame cover -------------------------------------------- */
 
   private freezeCanvas: HTMLCanvasElement | null = null;
+  /** How the NEXT held frame should scale while the lens opens: >1 when
+   *  zooming in (.6x->1x), <1 when zooming out. Read once by freeze(). */
+  private freezeScale = 1;
 
   /** The canvas CameraView stacks over the viewfinder for lens switches. */
   setFreezeSurface(el: HTMLCanvasElement | null): void {
@@ -910,8 +922,23 @@ export class CameraController {
     } catch {
       return; // nothing paintable yet
     }
-    // the held frame must match what was on screen, digital crop included
-    c.style.transform = v.style.transform || "";
+    // The held frame must match what was on screen, digital crop included —
+    // and then GLIDE toward the target framing while the lens opens, so the
+    // hardware gap reads as a deliberate zoom animation instead of a stall.
+    // Nothing can make the physical switch itself instant in a WebView;
+    // this is the honest way to spend that time.
+    const base = v.style.transform || "";
+    const glide = Math.min(2, Math.max(0.5, this.freezeScale));
+    this.freezeScale = 1;
+    c.style.transition = "none";
+    c.style.transform = base;
+    if (glide !== 1) {
+      requestAnimationFrame(() => {
+        if (c.dataset.on !== "1") return;
+        c.style.transition = "transform 0.55s cubic-bezier(0.3, 0.6, 0.3, 1)";
+        c.style.transform = `${base} scale(${glide})`.trim();
+      });
+    }
     // Pin the box while the video has no data. The box takes its size from
     // the <video>, so an emptied element collapsed it to a couple of pixels
     // — and because the box clips its overflow, that clipped the held frame
@@ -1007,6 +1034,7 @@ export class CameraController {
       const want = this.lensFor(clamped);
       if (want && want.deviceId !== (this.activeLensId ?? this.mainDeviceId)) {
         this.lensSwapping = true;
+        this.freezeScale = clamped / (this.zoomValue || 1);
         // always switch by explicit deviceId — plain facingMode can hand
         // back a different lens entirely on some phones
         const ok = await this.useDevice(want.deviceId);

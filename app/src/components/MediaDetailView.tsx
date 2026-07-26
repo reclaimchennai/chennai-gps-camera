@@ -28,6 +28,7 @@ import {
   newId,
 } from "../lib/db";
 import { getThumbUrl } from "../lib/thumbcache";
+import { viewerOrderFor } from "../lib/viewer-order";
 import type { MediaRecord, PhotoRecord } from "../types";
 import { navigate, goBack } from "../nav";
 import { shareBlob, downloadBlob, suggestedName } from "../lib/share";
@@ -203,6 +204,17 @@ export default function MediaDetailView({ id }: { id: string }) {
               videoIds.has(m.sourceVideoId)
             )
         );
+        // Opened from the photo map: swipe by PLACE (nearest neighbourhood
+        // first, chronological within one), not by global capture time.
+        const mapOrder = viewerOrderFor(curId);
+        if (mapOrder) {
+          const pos = new Map(mapOrder.map((id, i) => [id, i]));
+          const inOrder = all.filter((m) => pos.has(m.id));
+          if (inOrder.length > 1) {
+            inOrder.sort((a, b) => pos.get(a.id)! - pos.get(b.id)!);
+            all = inOrder;
+          }
+        }
       }
       const idx = all.findIndex((m) => m.id === curId);
       const prev = idx > 0 ? all[idx - 1] : undefined;

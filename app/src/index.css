@@ -661,6 +661,11 @@ textarea {
   position: absolute;
   z-index: 6;
   pointer-events: none;
+  /* the WHOLE cluster (ring, padlock, brightness line, zoom stops) turns
+     with the device around the tap point — rotating only the zoom stops
+     left the slider horizontal in landscape, everything overlapping and
+     the brightness control unusable */
+  transform: rotate(var(--ui-rot, 0deg));
 }
 .focus-ui .focus-ring.hold {
   left: 0;
@@ -716,7 +721,8 @@ textarea {
 }
 .focus-zoom .cam-zoombar {
   position: static;
-  transform: rotate(var(--ui-rot, 0deg));
+  /* parent .focus-ui already carries the rotation */
+  transform: none;
   bottom: auto;
   left: auto;
 }
@@ -2539,6 +2545,16 @@ a {
 /* Decoded thumbnail standing in for a full-size image that is still
    decoding. Same box as the real image, just softer — so opening a photo
    never shows an empty pane. */
+.viewer-pane .media-photo {
+  /* the full image replaces the thumbnail stand-in: fade it in so any
+     residual decode/size settle reads as a soft focus-pull, not a jump */
+  animation: photo-in 0.18s ease;
+}
+@keyframes photo-in {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
 .pane-thumb {
   /* Same displayed box as the full-size image it stands in for. At its
      natural size the small thumbnail rendered tiny and then "expanded"

@@ -86,11 +86,26 @@ export default function CameraView({ active }: { active: boolean }) {
   // swaps, which left the collapsed <video> visible as a white speck in
   // the middle of the launch screen.
   const armLivePoll = useCallback(() => {
+    // hide the stale element SYNCHRONOUSLY — the React state lands a frame
+    // later, and that frame is the milliseconds-long flash of old picture
+    // still visible on resume
+    if (boxRef.current) boxRef.current.dataset.live = "false";
     setVideoLive(false);
     cancelAnimationFrame(livePollRef.current);
     const poll = () => {
       const v = videoRef.current;
-      if (v && v.videoWidth > 0 && !v.paused) setVideoLive(true);
+      const track = (v?.srcObject as MediaStream | null)?.getVideoTracks?.()[0];
+      // a REAL preview: transient junk streams report a 2 px frame with an
+      // already-ended track, and counting that as live is what left the tiny
+      // speck uncovered at boot
+      if (
+        v &&
+        v.videoWidth >= 32 &&
+        !v.paused &&
+        track &&
+        track.readyState === "live"
+      )
+        setVideoLive(true);
       else livePollRef.current = requestAnimationFrame(poll);
     };
     livePollRef.current = requestAnimationFrame(poll);
@@ -139,8 +154,18 @@ export default function CameraView({ active }: { active: boolean }) {
       const below = 150; // ring centre to the bottom of the stops
       const above = 46; // ring centre to the top of the padlock
       if (box) {
-        x = Math.min(box.right - halfW, Math.max(box.left + halfW, x));
-        y = Math.min(box.bottom - below, Math.max(box.top + above, y));
+        const rot =
+          ((useLiveStore.getState().uiRotation % 360) + 360) % 360;
+        if (rot === 90 || rot === 270) {
+          // the cluster is rotated: it now extends along screen-X
+          const lead = rot === 90 ? below : above;
+          const tail = rot === 90 ? above : below;
+          x = Math.min(box.right - tail, Math.max(box.left + lead, x));
+          y = Math.min(box.bottom - halfW, Math.max(box.top + halfW, y));
+        } else {
+          x = Math.min(box.right - halfW, Math.max(box.left + halfW, x));
+          y = Math.min(box.bottom - below, Math.max(box.top + above, y));
+        }
       }
       setFocusPos({ x, y, key: Date.now() });
       const info = camera.exposureInfo();
@@ -283,6 +308,10 @@ export default function CameraView({ active }: { active: boolean }) {
     camStarting.current = true;
     setReady(false);
     setCamError(null);
+    // cover the zone NOW: the old stream's element keeps its last size, so
+    // without this the poll still thought the picture was live and the
+    // collapsed/stale <video> showed as the white speck on every resume
+    armLivePoll();
     try {
       await camera.start();
       if (videoRef.current) camera.attach(videoRef.current);
@@ -298,7 +327,7 @@ export default function CameraView({ active }: { active: boolean }) {
     } finally {
       camStarting.current = false;
     }
-  }, []);
+  }, [armLivePoll]);
 
   // Self-heal: transient start failures (camera busy after a phone call,
   // slow HAL) retry quietly. Only runs once permissions are held, so it
@@ -409,7 +438,10 @@ export default function CameraView({ active }: { active: boolean }) {
       const canvas = overlayRef.current;
       const video = videoRef.current;
       if (!canvas || !video || video.videoWidth === 0) return;
-      const rect = video.getBoundingClientRect();
+      // Size from the BOX, never the video element: getBoundingClientRect
+      // on the video includes the digital-zoom scale() transform, so the
+      // card grew with every pinch and snapped back on release.
+      const rect = (boxRef.current ?? video).getBoundingClientRect();
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const w = Math.round(rect.width * dpr);
       const h = Math.round(rect.height * dpr);
@@ -961,6 +993,31 @@ export default function CameraView({ active }: { active: boolean }) {
     };
   }, [active, onShutter]);
 
+  // Free-floating zoom bar: sit ABOVE the watermark card in portrait
+  // rather than on top of it (the card anchors to the same bottom edge).
+  const [barBottom, setBarBottom] = useState<number | null>(null);
+  useEffect(() => {
+    if (!zoomBar || focusPos) return;
+    const tick = () => {
+      const info = cardInfoRef.current;
+      const box = boxRef.current;
+      if (!info || !box) return;
+      const { rect, rot, h } = info;
+      if (rot === 90 || rot === -90 || !rect) {
+        setBarBottom(null);
+        return;
+      }
+      const bh = box.getBoundingClientRect().height;
+      if (!bh || !info.h) return;
+      const cardTopCss = rect.y * (bh / h);
+      const b = Math.max(12, Math.round(bh - cardTopCss + 8));
+      setBarBottom((p) => (p !== null && Math.abs(p - b) < 3 ? p : b));
+    };
+    tick();
+    const t = window.setInterval(tick, 400);
+    return () => window.clearInterval(t);
+  }, [zoomBar, focusPos]);
+
   // the stream restarted (minimise/restore) and the controller put the zoom
   // back: follow it, so the chips and the indicator match the picture
   useEffect(() => {
@@ -1183,7 +1240,12 @@ export default function CameraView({ active }: { active: boolean }) {
   const zoomBarEl = zoomBar && zoomStops.length > 1 && (
     <div
       className="cam-zoombar"
-      style={{ "--ui-rot": `${uiRot}deg` } as React.CSSProperties}
+      style={
+        {
+          "--ui-rot": `${uiRot}deg`,
+          ...(barBottom !== null ? { bottom: barBottom } : {}),
+        } as React.CSSProperties
+      }
       onPointerDown={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}
     >
@@ -1259,7 +1321,8 @@ export default function CameraView({ active }: { active: boolean }) {
             autoPlay
             poster={BLACK_POSTER}
             onLoadedData={(e) => {
-              if (e.currentTarget.videoWidth > 0) setVideoLive(true);
+              // same bar as the poll: 2 px junk streams must not count
+              if (e.currentTarget.videoWidth >= 32) setVideoLive(true);
             }}
             onEmptied={() => setVideoLive(false)}
           />

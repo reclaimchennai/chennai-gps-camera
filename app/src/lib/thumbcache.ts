@@ -52,3 +52,14 @@ export function rememberCells<T>(cells: T): void {
 export function recallCells<T>(): T | null {
   return (lastCells as T) ?? null;
 }
+
+/** Gallery scroll offset, so returning from a photo lands where you were. */
+let galleryScroll = 0;
+
+export function rememberScroll(px: number): void {
+  galleryScroll = px;
+}
+
+export function recallScroll(): number {
+  return galleryScroll;
+}

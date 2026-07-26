@@ -8,7 +8,10 @@ import {
   pruneThumbs,
   rememberCells,
   recallCells,
+  rememberScroll,
+  recallScroll,
 } from "../lib/thumbcache";
+import { clearViewerOrder } from "../lib/viewer-order";
 import type { MediaRecord } from "../types";
 import { navigate } from "../nav";
 import { fmtWard } from "../lib/geo/format";
@@ -76,6 +79,18 @@ export default function GalleryView() {
   // ids the backfill queue just upgraded — briefly highlighted
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
   const { bind: bindPeek, layer: peekLayer } = usePeek();
+
+  // Opening a photo unmounts this screen; keep the scroll offset so coming
+  // back lands exactly where the user was, not at the top of the grid.
+  useEffect(() => {
+    // the Screen body is the scroll container
+    const body = document.querySelector<HTMLElement>(".screen-body");
+    if (!body) return;
+    body.scrollTop = recallScroll();
+    const onScroll = () => rememberScroll(body.scrollTop);
+    body.addEventListener("scroll", onScroll, { passive: true });
+    return () => body.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,13 +285,16 @@ export default function GalleryView() {
               key={rec.id}
               className={`gallery-cell${flashIds.has(rec.id) ? " updated" : ""}`}
               {...bindPeek(rec)}
-              onClick={() =>
+              onClick={() => {
+                // browsing from the grid swipes in gallery order, not in
+                // whatever neighbourhood order the map may have set up
+                clearViewerOrder();
                 navigate(
                   rec.kind === "video" && frameCounts.has(rec.id)
                     ? `/gallery/group/${rec.id}`
                     : `/media/${rec.id}`
-                )
-              }
+                );
+              }}
             >
               {url ? (
                 <img src={url} alt="" loading="lazy" />
