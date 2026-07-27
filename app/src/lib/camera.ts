@@ -1171,6 +1171,10 @@ export class CameraController {
   async focusAt(point?: { x: number; y: number }): Promise<boolean> {
     const track = this.track;
     if (!track) return false;
+    // a fresh tap always wins over a sweep still in progress
+    this.afGeneration++;
+    this.afRunning = false;
+    window.clearTimeout(this.afResumeTimer);
     const poi = point
       ? [
           {
@@ -1288,6 +1292,9 @@ export class CameraController {
       lum[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
     }
     let energy = 0;
+    let mean = 0;
+    for (let i = 0; i < lum.length; i++) mean += lum[i];
+    mean /= lum.length;
     for (let y = 1; y < N - 1; y++) {
       for (let x = 1; x < N - 1; x++) {
         const i = y * N + x;
@@ -1296,7 +1303,34 @@ export class CameraController {
         energy += gx * gx + gy * gy;
       }
     }
-    return energy;
+    // Normalise by brightness: autoexposure shifts during a sweep, and a
+    // darker frame has smaller gradients for reasons that have nothing to
+    // do with focus.
+    return energy / Math.max(1, mean * mean);
+  }
+
+  /** Wait for the preview to actually deliver new frames. */
+  private nextFrames(count: number, capMs: number): Promise<void> {
+    const v = this.video as
+      | (HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number })
+      | null;
+    if (!v?.requestVideoFrameCallback) return CameraController.settle(capMs);
+    return new Promise((resolve) => {
+      let seen = 0;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve();
+      };
+      const step = () => {
+        if (done) return;
+        if (++seen >= count) return finish();
+        v.requestVideoFrameCallback!(step);
+      };
+      v.requestVideoFrameCallback!(step);
+      window.setTimeout(finish, capMs);
+    });
   }
 
   private afCanvas: HTMLCanvasElement | null = null;
@@ -1311,8 +1345,18 @@ export class CameraController {
     const track = this.track;
     if (!range || !track || this.afRunning) return false;
     this.afRunning = true;
-    const settle = 110;
-    const measure = async (distance: number): Promise<number | null> => {
+    this.afGeneration++;
+    const gen = this.afGeneration;
+    /**
+     * Set a distance and measure once the lens has actually got there.
+     * The first version waited a flat 110 ms, which is less than the lens
+     * takes to move on real hardware — so each reading described the
+     * PREVIOUS distance's picture and the sweep settled somewhere blurry.
+     * Wait for real frames instead, and throw the first ones away.
+     */
+    const measure = async (
+      distance: number
+    ): Promise<{ at: number; score: number } | null> => {
       try {
         await track.applyConstraints({
           advanced: [
@@ -1322,32 +1366,100 @@ export class CameraController {
       } catch {
         return null;
       }
-      await CameraController.settle(settle);
-      return this.sharpnessAt(point);
+      await this.nextFrames(3, 320);
+      if (gen !== this.afGeneration) return null; // a newer tap took over
+      const score = this.sharpnessAt(point);
+      if (score == null) return null;
+      // Credit the reading to where the lens ACTUALLY is, not where it was
+      // asked to go. A lens in motion means the frame just measured belongs
+      // to a different distance than the one requested — attributing it to
+      // the request is what made the sweep pick a distance that then turned
+      // out blurry when it landed there.
+      const now = (track.getSettings?.() ?? {}) as Record<string, unknown>;
+      const at =
+        typeof now.focusDistance === "number" ? now.focusDistance : distance;
+      return { at, score };
     };
     try {
       let best = { d: range.min, score: -1 };
       const sweep = async (from: number, to: number, steps: number) => {
         for (let i = 0; i < steps; i++) {
+          if (gen !== this.afGeneration) return;
           const d = from + ((to - from) * i) / (steps - 1);
-          const score = await measure(d);
-          if (score != null && score > best.score) best = { d, score };
+          const r = await measure(d);
+          if (r && r.score > best.score) best = { d: r.at, score: r.score };
         }
       };
-      await sweep(range.min, range.max, 7);
-      if (best.score <= 0) return false;
-      const span = (range.max - range.min) / 6;
+      await sweep(range.min, range.max, 6);
+      if (gen !== this.afGeneration || best.score <= 0) return false;
+      const span = (range.max - range.min) / 5;
       await sweep(
         Math.max(range.min, best.d - span),
         Math.min(range.max, best.d + span),
-        5
+        4
       );
-      await measure(best.d); // settle on the winner
+      if (gen !== this.afGeneration) return false;
+      // Land on the winner and CHECK it. If the picture there is much worse
+      // than the reading that won, the sweep was misled (the scene moved,
+      // or the lens lagged) — rather than leave the camera parked out of
+      // focus, hand it back to the camera's own autofocus.
+      // Land on the winner and CHECK it — patiently. The lens may have to
+      // travel back across the range to get here, so the first reading can
+      // still be describing where it was, not where it is. Give it longer
+      // and take a second look before concluding the sweep was wrong.
+      const first = await measure(best.d);
+      if (gen !== this.afGeneration) return false;
+      let confirmed = first?.score ?? null;
+      if (confirmed == null || confirmed < best.score * 0.6) {
+        // the lens may still be travelling — look again before giving up
+        await this.nextFrames(4, 500);
+        if (gen !== this.afGeneration) return false;
+        confirmed = this.sharpnessAt(point);
+      }
+      if (confirmed == null || confirmed < best.score * 0.6) {
+        await this.resumeAutoFocus();
+        return false;
+      }
+      this.autoResumeFocus(gen);
       return true;
     } finally {
-      this.afRunning = false;
+      if (gen === this.afGeneration) this.afRunning = false;
     }
   }
+
+  /** Bumped by every new tap, so an in-flight sweep abandons quietly. */
+  private afGeneration = 0;
+  private afResumeTimer = 0;
+
+  /** Back to the camera's own continuous autofocus. */
+  private async resumeAutoFocus(): Promise<void> {
+    try {
+      await this.track?.applyConstraints({
+        advanced: [
+          { focusMode: "continuous" } as unknown as MediaTrackConstraintSet,
+        ],
+      });
+    } catch {
+      // nothing to undo
+    }
+  }
+
+  /**
+   * Hold the tapped focus for a few seconds, then let the camera take over
+   * again — so a tap never leaves the preview parked out of focus, and the
+   * user does not have to tap somewhere else to recover. Cancelled if the
+   * focus gets locked, or another tap starts a new sweep.
+   */
+  private autoResumeFocus(gen: number): void {
+    window.clearTimeout(this.afResumeTimer);
+    this.afResumeTimer = window.setTimeout(() => {
+      if (gen !== this.afGeneration || this.focusHeld) return;
+      void this.resumeAutoFocus();
+    }, 4000);
+  }
+
+  /** Set while the user has explicitly locked focus. */
+  focusHeld = false;
 
   /** Did the camera accept an aim point the last time we sent one? */
   aimSupported: boolean | null = null;
@@ -1498,13 +1610,18 @@ export class CameraController {
       // did it stick? some pipelines resolve the promise and ignore it
       const now = (track.getSettings?.() ?? {}) as Record<string, unknown>;
       const mode = now.focusMode as string | undefined;
-      if (mode === undefined || mode === advanced.focusMode) return true;
+      if (mode === undefined || mode === advanced.focusMode) {
+        // an explicit lock outranks the tap-to-focus auto-resume
+        this.focusHeld = true;
+        return true;
+      }
     }
     return false;
   }
 
   /** Back to continuous autofocus (unlock). */
   async unlockFocus(): Promise<void> {
+    this.focusHeld = false;
     if (!this.track) return;
     try {
       await this.track.applyConstraints({
