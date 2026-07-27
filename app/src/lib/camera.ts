@@ -1158,17 +1158,47 @@ export class CameraController {
   }
 
   /** Best-effort tap-to-focus; most browsers silently ignore this. */
-  async focusAt(): Promise<void> {
-    if (!this.track) return;
-    try {
-      await this.track.applyConstraints({
-        advanced: [
-          { focusMode: "single-shot" } as unknown as MediaTrackConstraintSet,
-        ],
-      });
-    } catch {
-      // not supported — the tap still shows the focus ring for feedback
+  /**
+   * Focus (and meter) where the user tapped.
+   *
+   * `point` is normalised 0..1 across the frame the viewfinder is showing.
+   * This used to send focusMode alone with no coordinates, so every tap
+   * re-ran autofocus on whatever the camera already considered the subject
+   * — the ring moved, the focus did not. pointsOfInterest is what actually
+   * aims it; falls back through progressively simpler constraints for
+   * pipelines that accept less.
+   */
+  async focusAt(point?: { x: number; y: number }): Promise<boolean> {
+    const track = this.track;
+    if (!track) return false;
+    const poi = point
+      ? [
+          {
+            x: Math.min(1, Math.max(0, point.x)),
+            y: Math.min(1, Math.max(0, point.y)),
+          },
+        ]
+      : null;
+    const tries: Record<string, unknown>[] = [
+      ...(poi
+        ? [
+            { pointsOfInterest: poi, focusMode: "single-shot" },
+            { pointsOfInterest: poi },
+          ]
+        : []),
+      { focusMode: "single-shot" },
+    ];
+    for (const advanced of tries) {
+      try {
+        await track.applyConstraints({
+          advanced: [advanced as unknown as MediaTrackConstraintSet],
+        });
+        return true;
+      } catch {
+        // this pipeline rejects this form — try a simpler one
+      }
     }
+    return false;
   }
 
   /** Exposure-compensation range/value, when the camera exposes it

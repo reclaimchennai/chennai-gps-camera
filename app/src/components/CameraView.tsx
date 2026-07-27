@@ -1040,7 +1040,7 @@ export default function CameraView({ active }: { active: boolean }) {
   const [toastPos, setToastPos] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
     const wantBar = zoomBar && !focusPos;
-    const wantToast = !!toast || !!zoomLabel;
+    const wantToast = !!toast || !!zoomLabel || afLocked;
     if (!recording && !wantBar && !wantToast) {
       setRecPos(null);
       setFreeBar(null);
@@ -1149,14 +1149,16 @@ export default function CameraView({ active }: { active: boolean }) {
       // landscape this puts them above the focus ring, upright with the
       // rest of the rotated UI — they used to stay horizontal at the
       // bottom, on top of the card.
-      if (wantToast) {
+      {
         const TOAST_H = 44 / ky;
         const TOAST_W = 260 / kx;
         const rotW = landscape ? h : w;
         const atTop = !rect || !cardIsTop; // card at the bottom (or none)
-        let v = atTop ? M : rotH - M - TOAST_H;
-        // the pill owns the top edge in landscape: sit under it
-        if (landscape && recording && atTop) v += PILL_H + gap;
+        // roughly where the "AF locked" chip sits, so every notice appears
+        // in the one familiar place
+        let v = atTop ? M + 44 / ky : rotH - M - TOAST_H;
+        // the recording pill owns the very top edge: sit under it
+        if (recording && atTop) v += PILL_H + gap;
         const u = Math.max(M, (rotW - TOAST_W) / 2);
         const t2 = toScreen(u, v);
         setToastPos((p) =>
@@ -1164,8 +1166,6 @@ export default function CameraView({ active }: { active: boolean }) {
             ? p
             : t2
         );
-      } else {
-        setToastPos(null);
       }
     };
     // drop the stale position the moment orientation changes, so the pill
@@ -1174,7 +1174,7 @@ export default function CameraView({ active }: { active: boolean }) {
     tick();
     const t = window.setInterval(tick, 400);
     return () => window.clearInterval(t);
-  }, [recording, zoomBar, focusPos, uiRot, toast, zoomLabel]);
+  }, [recording, zoomBar, focusPos, uiRot, toast, zoomLabel, afLocked]);
 
   // Acquire or release the microphone as the need changes, without
   // restarting the camera: entering video mode needs it, going back to
@@ -1297,7 +1297,18 @@ export default function CameraView({ active }: { active: boolean }) {
               void camera.unlockFocus();
             }
             showFocusUi(e.clientX, e.clientY);
-            void camera.focusAt();
+            // aim the camera at the tapped point, not just anywhere: the
+            // video's rect already includes the digital-zoom transform, so
+            // this maps the tap straight into frame coordinates
+            const vr = videoRef.current?.getBoundingClientRect();
+            let point: { x: number; y: number } | undefined;
+            if (vr && vr.width > 0 && vr.height > 0) {
+              let nx = (e.clientX - vr.left) / vr.width;
+              const ny = (e.clientY - vr.top) / vr.height;
+              if (camera.facing === "user") nx = 1 - nx; // preview is mirrored
+              point = { x: nx, y: ny };
+            }
+            void camera.focusAt(point);
           }
         }
         tapCandidate.current = null;
@@ -1693,6 +1704,16 @@ export default function CameraView({ active }: { active: boolean }) {
       {afLocked && !focusPos && (
         <button
           className="af-chip"
+          style={
+            (toastPos
+              ? {
+                  left: toastPos.left,
+                  top: toastPos.top,
+                  transform: `rotate(${uiRot}deg)`,
+                  transformOrigin: "top left",
+                }
+              : {}) as React.CSSProperties
+          }
           onClick={() => {
             setAfLocked(false);
             void camera.unlockFocus();
