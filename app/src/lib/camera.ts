@@ -1179,15 +1179,17 @@ export class CameraController {
           },
         ]
       : null;
-    const tries: Record<string, unknown>[] = [
-      ...(poi
-        ? [
-            { pointsOfInterest: poi, focusMode: "single-shot" },
-            { pointsOfInterest: poi },
-          ]
-        : []),
-      { focusMode: "single-shot" },
-    ];
+    // AIMED forms only. A bare focusMode: single-shot must NOT be treated
+    // as success here: it is accepted by cameras that ignore the aim point
+    // entirely, so returning on it meant the app reported "focused" while
+    // refocusing on whatever it already liked — which is exactly why
+    // tapping different places did nothing on the owner's phone.
+    const tries: Record<string, unknown>[] = poi
+      ? [
+          { pointsOfInterest: poi, focusMode: "single-shot" },
+          { pointsOfInterest: poi },
+        ]
+      : [{ focusMode: "single-shot" }];
     for (const advanced of tries) {
       try {
         await track.applyConstraints({
@@ -1202,29 +1204,155 @@ export class CameraController {
         const now = (track.getSettings?.() ?? {}) as Record<string, unknown>;
         const got = now.pointsOfInterest as { x: number }[] | undefined;
         this.aimSupported = Array.isArray(got) && got.length > 0;
-        if (this.aimSupported) return true;
+        if (this.aimSupported) {
+          this.aimMethod = "aim point accepted";
+          return true;
+        }
         continue;
       }
       return true;
     }
-    // last resort: some pipelines only accept it as a BASIC constraint
-    if (poi) {
+    if (!poi) return false;
+    // some pipelines only accept it as a BASIC constraint
+    {
       try {
         await track.applyConstraints({
           pointsOfInterest: poi,
         } as unknown as MediaTrackConstraints);
         const now = (track.getSettings?.() ?? {}) as Record<string, unknown>;
         this.aimSupported = Array.isArray(now.pointsOfInterest);
-        return this.aimSupported;
+        if (this.aimSupported) return true;
       } catch {
         this.aimSupported = false;
       }
     }
+    // The WebView ignores pointsOfInterest outright on some phones (the
+    // owner's S25+ reports exactly that), but it DOES expose manual focus
+    // with a focusDistance range. So focus the old-fashioned way: sweep the
+    // lens and keep the distance that makes the tapped area sharpest. This
+    // is what a camera does internally; we can do it from here because we
+    // can both set the distance and see the result.
+    if (point && this.focusDistanceRange()) {
+      const ok = await this.contrastFocus(point);
+      if (ok) {
+        this.aimMethod = "contrast sweep (camera ignores aim points)";
+        return true;
+      }
+    }
+    // nothing aimed worked — at least re-run the camera's own autofocus
+    try {
+      await track.applyConstraints({
+        advanced: [
+          { focusMode: "single-shot" } as unknown as MediaTrackConstraintSet,
+        ],
+      });
+    } catch {
+      // nothing more to try
+    }
     return false;
+  }
+
+  private focusDistanceRange(): { min: number; max: number } | null {
+    const caps = (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+    const modes = caps.focusMode as string[] | undefined;
+    const fd = caps.focusDistance as { min?: number; max?: number } | undefined;
+    if (!fd || typeof fd.min !== "number" || typeof fd.max !== "number") return null;
+    if (fd.max <= fd.min) return null;
+    if (modes && !modes.includes("manual")) return null;
+    return { min: fd.min, max: fd.max };
+  }
+
+  /** Sharpness of a region of the current frame (gradient energy). */
+  private sharpnessAt(point: { x: number; y: number }): number | null {
+    const v = this.video;
+    if (!v || !v.videoWidth) return null;
+    const N = 64; // sample the region into a small square
+    const c = (this.afCanvas ??= document.createElement("canvas"));
+    c.width = N;
+    c.height = N;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    // a region around the tap, ~22% of the frame, kept inside the picture
+    const rw = v.videoWidth * 0.22;
+    const rh = v.videoHeight * 0.22;
+    const sx = Math.min(v.videoWidth - rw, Math.max(0, point.x * v.videoWidth - rw / 2));
+    const sy = Math.min(v.videoHeight - rh, Math.max(0, point.y * v.videoHeight - rh / 2));
+    try {
+      ctx.drawImage(v, sx, sy, rw, rh, 0, 0, N, N);
+    } catch {
+      return null;
+    }
+    const d = ctx.getImageData(0, 0, N, N).data;
+    const lum = new Float32Array(N * N);
+    for (let i = 0, j = 0; i < d.length; i += 4, j++) {
+      lum[j] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    }
+    let energy = 0;
+    for (let y = 1; y < N - 1; y++) {
+      for (let x = 1; x < N - 1; x++) {
+        const i = y * N + x;
+        const gx = lum[i + 1] - lum[i - 1];
+        const gy = lum[i + N] - lum[i - N];
+        energy += gx * gx + gy * gy;
+      }
+    }
+    return energy;
+  }
+
+  private afCanvas: HTMLCanvasElement | null = null;
+  private afRunning = false;
+
+  /**
+   * Focus on the tapped area by trying distances and keeping the sharpest.
+   * Coarse pass across the whole range, then a fine pass around the winner.
+   */
+  private async contrastFocus(point: { x: number; y: number }): Promise<boolean> {
+    const range = this.focusDistanceRange();
+    const track = this.track;
+    if (!range || !track || this.afRunning) return false;
+    this.afRunning = true;
+    const settle = 110;
+    const measure = async (distance: number): Promise<number | null> => {
+      try {
+        await track.applyConstraints({
+          advanced: [
+            { focusMode: "manual", focusDistance: distance } as unknown as MediaTrackConstraintSet,
+          ],
+        });
+      } catch {
+        return null;
+      }
+      await CameraController.settle(settle);
+      return this.sharpnessAt(point);
+    };
+    try {
+      let best = { d: range.min, score: -1 };
+      const sweep = async (from: number, to: number, steps: number) => {
+        for (let i = 0; i < steps; i++) {
+          const d = from + ((to - from) * i) / (steps - 1);
+          const score = await measure(d);
+          if (score != null && score > best.score) best = { d, score };
+        }
+      };
+      await sweep(range.min, range.max, 7);
+      if (best.score <= 0) return false;
+      const span = (range.max - range.min) / 6;
+      await sweep(
+        Math.max(range.min, best.d - span),
+        Math.min(range.max, best.d + span),
+        5
+      );
+      await measure(best.d); // settle on the winner
+      return true;
+    } finally {
+      this.afRunning = false;
+    }
   }
 
   /** Did the camera accept an aim point the last time we sent one? */
   aimSupported: boolean | null = null;
+  /** How the last tap-to-focus was actually achieved, for the report. */
+  aimMethod: string | null = null;
 
   /**
    * What this camera pipeline actually lets us control. Shown in Settings:
@@ -1232,6 +1360,10 @@ export class CameraController {
    * guessing from the outside has cost several release cycles.
    */
   controlReport(): Record<string, string> {
+    return { ...this.controlReportCore() };
+  }
+
+  private controlReportCore(): Record<string, string> {
     const caps = (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
     const set = (this.track?.getSettings?.() ?? {}) as Record<string, unknown>;
     const range = (v: unknown) => {
@@ -1246,13 +1378,30 @@ export class CameraController {
         : "not offered",
       "Focus distance": range(caps.focusDistance),
       "Tap to focus":
-        this.aimSupported === null
+        this.aimMethod ??
+        (this.aimSupported === null
           ? "not tried yet — tap the viewfinder once"
-          : this.aimSupported
-            ? "accepted"
-            : "ignored by this camera",
+          : "aim points ignored, and no manual focus to fall back on"),
       Exposure: range(caps.exposureCompensation),
+      "Exposure mode": Array.isArray(caps.exposureMode)
+        ? (caps.exposureMode as string[]).join(", ")
+        : "not offered",
+      "Aim (pointsOfInterest)": caps.pointsOfInterest ? "offered" : "not offered",
+      "White balance": Array.isArray(caps.whiteBalanceMode)
+        ? (caps.whiteBalanceMode as string[]).join(", ")
+        : "not offered",
       Torch: caps.torch ? "yes" : "not offered",
+      Resolution: `${set.width ?? "?"}x${set.height ?? "?"} @ ${set.frameRate ?? "?"}fps`,
+      "Sensor max": `${(caps.width as { max?: number })?.max ?? "?"}x${
+        (caps.height as { max?: number })?.max ?? "?"
+      }`,
+      Lenses: this.lenses.length
+        ? this.lenses.map((l) => `${l.factor}x`).join(", ")
+        : "single camera",
+      "Seamless zoom": this.seamlessZoom ? "yes" : "no",
+      Runtime: isNativeApp() ? "Android app" : "browser",
+      Build: `${__BUILD_TS__.slice(0, 16).replace("T", " ")} UTC`,
+      Browser: navigator.userAgent.slice(0, 90),
     };
   }
 

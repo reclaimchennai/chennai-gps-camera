@@ -102,6 +102,7 @@ export default function SettingsView() {
     camera.lenses.length > 1 ? camera.lenses : loadLensProfile()
   );
   const [controls, setControls] = useState<Record<string, string> | null>(null);
+  const [copied, setCopied] = useState(false);
   const [calibrating, setCalibrating] = useState(false);
   const [calResult, setCalResult] = useState<string | null>(null);
   useEffect(() => {
@@ -325,12 +326,30 @@ export default function SettingsView() {
                   controls on the same phone, which decides what tap-to-focus
                   and focus lock can do here.
                 </div>
-                <button
-                  className="ghost-btn"
-                  onClick={() => setControls(camera.controlReport())}
-                >
-                  {controls ? "Refresh" : "Check"}
-                </button>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    className="ghost-btn"
+                    onClick={() => setControls(camera.controlReport())}
+                  >
+                    {controls ? "Refresh" : "Check"}
+                  </button>
+                  {controls && (
+                    <button
+                      className="ghost-btn"
+                      onClick={() => {
+                        const text = Object.entries(camera.controlReport())
+                          .map(([k, v]) => `${k}: ${v}`)
+                          .join("\n");
+                        void navigator.clipboard
+                          ?.writeText(text)
+                          .then(() => setCopied(true))
+                          .catch(() => setCopied(false));
+                      }}
+                    >
+                      {copied ? "Copied" : "Copy for a report"}
+                    </button>
+                  )}
+                </div>
                 {controls && (
                   <div className="hint" style={{ marginTop: 8, lineHeight: 1.6 }}>
                     {Object.entries(controls).map(([k, v]) => (

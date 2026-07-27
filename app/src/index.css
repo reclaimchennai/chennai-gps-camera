@@ -614,6 +614,7 @@ textarea {
    watermark, which is fine because it fades away on its own.
    Rotates with the device so the labels read upright in landscape. */
 .cam-zoombar {
+  touch-action: none;
   position: absolute;
   left: 50%;
   bottom: 12px;
@@ -661,6 +662,14 @@ textarea {
   position: absolute;
   z-index: 6;
   pointer-events: none;
+  /* This cluster lives OUTSIDE .cam-viewport, so it does not inherit that
+     element's touch-action: none. Without this, a finger drag on the
+     brightness slider is treated as a page gesture: the browser fires
+     pointercancel and the drag dies. Synthetic pointer events never
+     reproduced it — only a real finger did. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
   /* the WHOLE cluster (ring, padlock, brightness line, zoom stops) turns
      with the device around the tap point — rotating only the zoom stops
      left the slider horizontal in landscape, everything overlapping and
@@ -683,6 +692,7 @@ textarea {
 }
 /* the padlock straddles the top of the circle */
 .focus-lock-btn {
+  touch-action: none;
   position: absolute;
   left: 0;
   top: -38px; /* circle radius: sits on the circumference */
@@ -728,6 +738,7 @@ textarea {
 }
 
 .ev-slider {
+  touch-action: none;
   position: absolute;
   left: 0;
   top: 56px;
