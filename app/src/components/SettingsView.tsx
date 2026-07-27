@@ -299,8 +299,27 @@ export default function SettingsView() {
                   </div>
                 </>
               )}
-              <div className="row" style={{ display: "block", padding: "10px 0 0" }}>
-                <div className="label">What this camera allows</div>
+              <button
+                className="ghost-btn"
+                style={{ marginTop: 10 }}
+                onClick={() => {
+                  // forget everything and let the camera rediscover from
+                  // scratch — the escape hatch when a phone's remembered
+                  // line-up is stale or wrong
+                  camera.forgetLenses();
+                  setLenses([]);
+                  setCalResult(null);
+                  window.dispatchEvent(new Event("gpscam:restart-camera"));
+                }}
+              >
+                Detect lenses again
+              </button>
+            </div>
+
+            {/* styled exactly like the other settings rows: bold label,
+                lighter hint at the standard size */}
+              <div className="row" style={{ display: "block" }}>
+                <div className="label">Camera capabilities</div>
                 <div className="hint" style={{ margin: "2px 0 8px" }}>
                   The Android app and Chrome are given different camera
                   controls on the same phone, which decides what tap-to-focus
@@ -322,25 +341,6 @@ export default function SettingsView() {
                   </div>
                 )}
               </div>
-              <button
-                className="ghost-btn"
-                style={{ marginTop: 10 }}
-                onClick={() => {
-                  // forget everything and let the camera rediscover from
-                  // scratch — the escape hatch when a phone's remembered
-                  // line-up is stale or wrong
-                  camera.forgetLenses();
-                  setLenses([]);
-                  setCalResult(null);
-                  window.dispatchEvent(new Event("gpscam:restart-camera"));
-                }}
-              >
-                Detect lenses again
-              </button>
-            </div>
-
-            {/* styled exactly like the other settings rows: bold label,
-                lighter hint at the standard size */}
             <div className="row" style={{ display: "block" }}>
               <div className="label">
                 Noise meter calibration

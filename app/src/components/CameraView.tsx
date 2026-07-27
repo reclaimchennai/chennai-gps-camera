@@ -133,6 +133,17 @@ export default function CameraView({ active }: { active: boolean }) {
   const [evInfo, setEvInfo] = useState<{ min: number; max: number; step: number } | null>(null);
   const [evVal, setEvVal] = useState(0);
   const [afLocked, setAfLocked] = useState(false);
+  // Confirmation, not a permanent badge: two seconds, then it clears —
+  // and the two seconds start when the focus cluster gets out of the way,
+  // because the chip is hidden while that is on screen (the padlock there
+  // is already showing the state). Counting from the tap instead meant the
+  // window expired before the chip could ever be seen.
+  const [afChip, setAfChip] = useState(false);
+  const afChipPending = useRef(false);
+  const afChipTimer = useRef(0);
+  const flashAfChip = useCallback(() => {
+    afChipPending.current = true;
+  }, []);
   const focusHideTimer = useRef(0);
   const pinching = useRef(false);
   const tapCandidate = useRef<{ x: number; y: number } | null>(null);
@@ -175,6 +186,19 @@ export default function CameraView({ active }: { active: boolean }) {
     },
     [keepFocusUi]
   );
+
+  useEffect(() => {
+    if (!afLocked) {
+      afChipPending.current = false;
+      setAfChip(false);
+      return;
+    }
+    if (focusPos || !afChipPending.current) return;
+    afChipPending.current = false;
+    setAfChip(true);
+    window.clearTimeout(afChipTimer.current);
+    afChipTimer.current = window.setTimeout(() => setAfChip(false), 2000);
+  }, [afLocked, focusPos]);
 
   const showFocusUi = useCallback(
     (x: number, y: number) => {
@@ -1072,7 +1096,7 @@ export default function CameraView({ active }: { active: boolean }) {
   const [toastPos, setToastPos] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
     const wantBar = zoomBar && !focusPos;
-    const wantToast = !!toast || !!zoomLabel || afLocked;
+    const wantToast = !!toast || !!zoomLabel || (afLocked && afChip);
     if (!recording && !wantBar && !wantToast) {
       setRecPos(null);
       setFreeBar(null);
@@ -1183,16 +1207,16 @@ export default function CameraView({ active }: { active: boolean }) {
       // bottom, on top of the card.
       {
         const TOAST_H = 44 / ky;
-        const TOAST_W = 260 / kx;
         const rotW = landscape ? h : w;
         const atTop = !rect || !cardIsTop; // card at the bottom (or none)
-        // roughly where the "AF locked" chip sits, so every notice appears
-        // in the one familiar place
-        let v = atTop ? M + 44 / ky : rotH - M - TOAST_H;
+        // The CENTRE of the notice, in rotated space — the element then
+        // centres itself on it with translate(-50%, -50%), so chips and
+        // messages of different widths all sit in the same place. Anchoring
+        // by top-left is what threw the "AF locked" chip off-centre.
+        let v = atTop ? M + TOAST_H : rotH - M - TOAST_H / 2;
         // the recording pill owns the very top edge: sit under it
         if (recording && atTop) v += PILL_H + gap;
-        const u = Math.max(M, (rotW - TOAST_W) / 2);
-        const t2 = toScreen(u, v);
+        const t2 = toScreen(rotW / 2, v);
         setToastPos((p) =>
           p && Math.abs(p.left - t2.left) < 3 && Math.abs(p.top - t2.top) < 3
             ? p
@@ -1206,7 +1230,7 @@ export default function CameraView({ active }: { active: boolean }) {
     tick();
     const t = window.setInterval(tick, 400);
     return () => window.clearInterval(t);
-  }, [recording, zoomBar, focusPos, uiRot, toast, zoomLabel, afLocked]);
+  }, [recording, zoomBar, focusPos, uiRot, toast, zoomLabel, afLocked, afChip]);
 
   // Acquire or release the microphone as the need changes, without
   // restarting the camera: entering video mode needs it, going back to
@@ -1599,8 +1623,7 @@ export default function CameraView({ active }: { active: boolean }) {
                     left: toastPos.left,
                     top: toastPos.top,
                     bottom: "auto",
-                    transform: `rotate(${uiRot}deg)`,
-                    transformOrigin: "top left",
+                    transform: `translate(-50%, -50%) rotate(${uiRot}deg)`,
                   }
                 : { bottom: "auto", top: "12%" }) as React.CSSProperties
             }
@@ -1617,8 +1640,7 @@ export default function CameraView({ active }: { active: boolean }) {
                     left: toastPos.left,
                     top: toastPos.top,
                     bottom: "auto",
-                    transform: `rotate(${uiRot}deg)`,
-                    transformOrigin: "top left",
+                    transform: `translate(-50%, -50%) rotate(${uiRot}deg)`,
                   }
                 : { bottom: "auto", top: "12%" }) as React.CSSProperties
             }
@@ -1684,7 +1706,10 @@ export default function CameraView({ active }: { active: boolean }) {
                 void camera.unlockFocus();
               } else {
                 void camera.lockFocus().then((ok) => {
-                  if (ok) setAfLocked(true);
+                  if (ok) {
+                    setAfLocked(true);
+                    flashAfChip();
+                  }
                   else showToast("Couldn't hold focus — try again");
                 });
               }
@@ -1752,7 +1777,7 @@ export default function CameraView({ active }: { active: boolean }) {
         </div>
       )}
 
-      {afLocked && !focusPos && (
+      {afLocked && afChip && !focusPos && (
         <button
           className="af-chip"
           style={
@@ -1760,8 +1785,7 @@ export default function CameraView({ active }: { active: boolean }) {
               ? {
                   left: toastPos.left,
                   top: toastPos.top,
-                  transform: `rotate(${uiRot}deg)`,
-                  transformOrigin: "top left",
+                  transform: `translate(-50%, -50%) rotate(${uiRot}deg)`,
                 }
               : {}) as React.CSSProperties
           }
