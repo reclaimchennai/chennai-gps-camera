@@ -296,6 +296,10 @@ textarea {
    which is why the stray speck survived in the Android WebView (the web
    build only ever hid it by opening fast enough to never show it). */
 .cam-prefill {
+  /* Shown ONLY while a granted camera is starting. It used to render
+     whenever there was no picture, which included the first-run permission
+     gate — and at z-index 3 it covered the "Enable camera" button
+     completely, leaving new installs with an unusable black screen. */
   position: absolute;
   inset: 0;
   background: #000;

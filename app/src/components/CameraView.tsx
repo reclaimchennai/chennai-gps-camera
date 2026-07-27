@@ -300,16 +300,42 @@ export default function CameraView({ active }: { active: boolean }) {
   >(() => (isNativeApp() ? "unknown" : "granted"));
   useEffect(() => {
     if (!isNativeApp()) return;
-    void checkNativePermissions().then((s) => {
-      // old APK bridge (null) → behave as before rather than blocking
-      setPermState(s === null || s.camera ? "granted" : "needed");
+    void (async () => {
+      // The bridge can answer null — plugin not ready yet, or an older
+      // build. Treating that as "granted" was catastrophic on a FRESH
+      // INSTALL: the gate never rendered, nothing ever asked for
+      // permissions, and the camera simply failed. Never infer a grant
+      // from a missing answer; retry, then find out for real.
+      let s = await checkNativePermissions();
+      for (let i = 0; i < 5 && s === null; i++) {
+        await new Promise((r) => window.setTimeout(r, 400));
+        s = await checkNativePermissions();
+      }
+      if (s === null) {
+        // no usable bridge: ask the camera itself. A refusal means we must
+        // show the gate; anything else means we can proceed.
+        try {
+          const probe = await navigator.mediaDevices.getUserMedia({ video: true });
+          for (const t of probe.getTracks()) t.stop();
+          setPermState("granted");
+        } catch (e) {
+          const name = (e as { name?: string })?.name;
+          setPermState(
+            name === "NotAllowedError" || name === "SecurityError"
+              ? "needed"
+              : "granted"
+          );
+        }
+        return;
+      }
+      setPermState(s.camera ? "granted" : "needed");
       // resume an interrupted first-run flow: camera already granted but
       // location missing (e.g. the app died between the split steps) →
       // finish the solo location request once the camera is up
-      if (s && s.camera && !s.location) {
+      if (s.camera && !s.location) {
         window.setTimeout(() => void requestLocationPermissionNative(), 1500);
       }
-    });
+    })();
   }, []);
   const permRequesting = useRef(false);
   const [permBusy, setPermBusy] = useState(false);
@@ -382,10 +408,19 @@ export default function CameraView({ active }: { active: boolean }) {
       // fresh stream = fresh AF/exposure state
       setAfLocked(false);
       setFocusPos(null);
-    } catch {
-      setCamError(
-        "Camera unavailable. Check that permission is granted and no other app is using it."
-      );
+    } catch (e) {
+      // A refusal means the app does NOT hold the permission, whatever the
+      // bridge reported earlier — put the gate back so the user has a way
+      // to grant it, instead of a dead viewfinder and a retry that can
+      // never succeed.
+      const name = (e as { name?: string })?.name;
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        setPermState((p) => (p === "granted" ? "needed" : p));
+      } else {
+        setCamError(
+          "Camera unavailable. Check that permission is granted and no other app is using it."
+        );
+      }
     } finally {
       camStarting.current = false;
     }
@@ -1526,10 +1561,13 @@ export default function CameraView({ active }: { active: boolean }) {
         {/* Black fill over the whole viewfinder zone until the stream
             paints. Must sit outside .cam-video-box: that box is sized by
             the <video>, so it has no size to fill before the first frame. */}
-        {!videoLive && <div className="cam-prefill" />}
+        {!videoLive && permState === "granted" && <div className="cam-prefill" />}
 
         {(permState === "needed" || permState === "denied") && (
-          <div className="empty-note" style={{ position: "absolute", inset: "26% 24px auto" }}>
+          <div
+            className="empty-note"
+            style={{ position: "absolute", inset: "26% 24px auto", zIndex: 9 }}
+          >
             <Camera size={34} style={{ opacity: 0.8 }} />
             <div style={{ marginTop: 10, fontWeight: 600 }}>
               Camera &amp; location access
@@ -1561,7 +1599,10 @@ export default function CameraView({ active }: { active: boolean }) {
         )}
 
         {camError && permState === "granted" && (
-          <div className="empty-note" style={{ position: "absolute", inset: "30% 20px auto" }}>
+          <div
+            className="empty-note"
+            style={{ position: "absolute", inset: "30% 20px auto", zIndex: 9 }}
+          >
             {camError}
             <div style={{ marginTop: 16 }}>
               <button className="primary-btn" onClick={() => void startCam(mode)}>
