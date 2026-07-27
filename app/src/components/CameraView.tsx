@@ -6,7 +6,7 @@ import {
 } from "react";
 import { camera } from "../lib/camera";
 import { qualityPlan } from "../lib/quality";
-import { startMeter, stopMeter } from "../lib/audio/meter";
+import { startMeter, stopMeter, sampleNoiseOnce } from "../lib/audio/meter";
 import { scheduleBackfill } from "../lib/backfill";
 import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
@@ -393,9 +393,12 @@ export default function CameraView({ active }: { active: boolean }) {
     // Only claim the microphone when this session needs it (video mode or
     // the noise-level watermark field). In photo mode without that field,
     // other apps keep their access to the mic while our viewfinder is up.
-    camera.audioWanted =
-      (_m ?? modeRef.current) === "video" ||
-      useSettingsStore.getState().watermark.fields.soundLevel;
+    // Video needs the microphone. Photo mode does NOT hold it just to keep
+    // a live noise reading on screen — recording audio stops other apps'
+    // music on Android, and a viewfinder sitting idle has no business
+    // silencing the user's music. A short reading is taken at capture
+    // instead (see doCapture).
+    camera.audioWanted = (_m ?? modeRef.current) === "video";
     // cover the zone NOW: the old stream's element keeps its last size, so
     // without this the poll still thought the picture was live and the
     // collapsed/stale <video> showed as the white speck on every resume
@@ -469,7 +472,7 @@ export default function CameraView({ active }: { active: boolean }) {
   // ---- live sound meter (watermark "Sound level" field) ---------------
   const soundOn = useSettingsStore((s) => s.watermark.fields.soundLevel);
   useEffect(() => {
-    if (!active || !ready || !soundOn) {
+    if (!active || !ready || !soundOn || mode !== "video") {
       stopMeter();
       return;
     }
@@ -477,7 +480,7 @@ export default function CameraView({ active }: { active: boolean }) {
     // track — one meter attach, stable across photo/video switches
     startMeter(camera.stream);
     return () => stopMeter();
-  }, [active, ready, soundOn]);
+  }, [active, ready, soundOn, mode]);
 
   const switchMode = useCallback(
     (m: Mode) => {
@@ -710,6 +713,14 @@ export default function CameraView({ active }: { active: boolean }) {
     if (grabbing.current || !ready) return;
     grabbing.current = true;
     setFlashFx((k) => k + 1);
+    // Photo mode keeps the microphone released so other apps can keep
+    // playing audio. If the watermark carries a noise level, take one
+    // short reading — started here, NOT awaited, so it never delays the
+    // shutter; the capture pipeline reads whatever has landed by the time
+    // it stamps the card.
+    if (useSettingsStore.getState().watermark.fields.soundLevel) {
+      void sampleNoiseOnce();
+    }
     try {
       const { job, preview } = await grabFrame();
       if (preview) setFlyImg({ src: preview, key: Date.now() });
@@ -1130,7 +1141,7 @@ export default function CameraView({ active }: { active: boolean }) {
   const [freeBar, setFreeBar] = useState<{ left: number; top: number } | null>(null);
   const [toastPos, setToastPos] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
-    const wantBar = zoomBar && !focusPos;
+    const wantBar = zoomBar;
     const wantToast = !!toast || !!zoomLabel || (afLocked && afChip);
     if (!recording && !wantBar && !wantToast) {
       setRecPos(null);
@@ -1211,7 +1222,10 @@ export default function CameraView({ active }: { active: boolean }) {
 
       // ---- free zoom chips ----
       if (wantBar && rect) {
-        let u = rect.x;
+        // Centre of the bar, on the frame's centre line — it used to be
+        // anchored to the CARD's left edge, which is why it never looked
+        // centred. Vertically it still hugs the card so it cannot cover it.
+        const u = (landscape ? h : w) / 2;
         let v: number;
         if (!landscape) {
           // above a bottom card; below the card AND the pill otherwise
@@ -1223,7 +1237,7 @@ export default function CameraView({ active }: { active: boolean }) {
           // pill owns the top/bottom edges now, the card owns its own edge
           v = cardIsTop ? rect.y + rect.height + gap : rect.y - gap - BAR_H;
         }
-        v = Math.max(M, v);
+        v = Math.max(M, v + BAR_H / 2); // v was an edge; anchor the centre
         const b = toScreen(u, v);
         setFreeBar((p) =>
           p && Math.abs(p.left - b.left) < 3 && Math.abs(p.top - b.top) < 3
@@ -1272,11 +1286,11 @@ export default function CameraView({ active }: { active: boolean }) {
   // photo (with the noise field off) hands it back to other apps.
   useEffect(() => {
     if (!active || !ready) return;
-    const need = mode === "video" || soundOn;
+    const need = mode === "video";
     camera.audioWanted = need;
     if (need) void camera.ensureAudio();
     else camera.releaseAudio();
-  }, [active, ready, mode, soundOn]);
+  }, [active, ready, mode]);
 
   // an AF lock does not survive the track it was applied to (a lens switch
   // opens a new one), so drop the padlock rather than show a dead one
@@ -1460,8 +1474,7 @@ export default function CameraView({ active }: { active: boolean }) {
               left: freeBar.left,
               top: freeBar.top,
               bottom: "auto",
-              transform: `rotate(${uiRot}deg)`,
-              transformOrigin: "top left",
+              transform: `translate(-50%, -50%) rotate(${uiRot}deg)`,
             }
           : { "--ui-rot": `${uiRot}deg` }) as React.CSSProperties
       }
@@ -1471,17 +1484,6 @@ export default function CameraView({ active }: { active: boolean }) {
       {zoomChips}
     </div>
   );
-  // Focus-group copy: plain, the parent cluster carries rotation.
-  const focusZoomBarEl = zoomBar && zoomStops.length > 1 && (
-    <div
-      className="cam-zoombar"
-      onPointerDown={(e) => e.stopPropagation()}
-      onPointerUp={(e) => e.stopPropagation()}
-    >
-      {zoomChips}
-    </div>
-  );
-
   return (
     <div
       className="cam-screen"
@@ -1555,7 +1557,7 @@ export default function CameraView({ active }: { active: boolean }) {
                 resized that strip as they came and went, so the viewfinder
                 kept growing and shrinking. With a focus group on screen
                 they ride along underneath it instead (see below). */}
-          {!focusPos && zoomBarEl}
+          {zoomBarEl}
         </div>
 
         {/* Black fill over the whole viewfinder zone until the stream
@@ -1810,11 +1812,7 @@ export default function CameraView({ active }: { active: boolean }) {
               />
             </div>
           )}
-          {/* Lens stops hang off the bottom of the group, so focus ring,
-              brightness and zoom move together as one cluster. */}
-          <div className={`focus-zoom${evInfo ? "" : " no-ev"}`}>
-            {focusZoomBarEl}
-          </div>
+
         </div>
       )}
 

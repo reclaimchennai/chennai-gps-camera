@@ -719,27 +719,6 @@ textarea {
   100% { opacity: 1; scale: 1; }
 }
 /* plain line below the circle; the sun IS the slider thumb */
-/* Zoom stops hang below the brightness line, inside the focus group, so
-   ring + brightness + stops move as one cluster wherever you tap. */
-.focus-zoom {
-  position: absolute;
-  left: 0;
-  top: 92px;
-  transform: translateX(-50%);
-  display: grid;
-  place-items: center;
-  pointer-events: auto;
-}
-.focus-zoom.no-ev {
-  top: 58px; /* no brightness row on this camera: close the gap */
-}
-.focus-zoom .cam-zoombar {
-  position: static;
-  /* parent .focus-ui already carries the rotation */
-  transform: none;
-  bottom: auto;
-  left: auto;
-}
 
 .ev-slider {
   touch-action: none;

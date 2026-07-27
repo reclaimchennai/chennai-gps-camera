@@ -222,3 +222,31 @@ export function dbFromAnalyser(node: AnalyserNode): number | null {
     Math.min(CEIL, Math.max(FLOOR, 20 * Math.log10(rms) + DB_OFFSET + cal))
   );
 }
+
+/**
+ * One short microphone reading, then release it again.
+ *
+ * Photo mode does not keep the microphone open — holding it stops music on
+ * Android — so when the watermark carries a noise level, take a brief
+ * sample at capture and hand the microphone straight back. Roughly half a
+ * second: long enough for the level to settle, short enough that a music
+ * app barely notices.
+ */
+export async function sampleNoiseOnce(ms = 600): Promise<number | null> {
+  if (useLiveStore.getState().db != null) return useLiveStore.getState().db;
+  try {
+    startMeter(null);
+    const started = Date.now();
+    let value: number | null = null;
+    while (Date.now() - started < ms) {
+      await new Promise((r) => window.setTimeout(r, 100));
+      const db = useLiveStore.getState().db;
+      if (db != null) value = db;
+    }
+    return value;
+  } catch {
+    return null;
+  } finally {
+    stopMeter();
+  }
+}
