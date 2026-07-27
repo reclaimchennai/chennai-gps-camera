@@ -1209,69 +1209,64 @@ export class CameraController {
   /** AF lock: freeze the lens at its current position (focusMode manual +
    *  the current focusDistance). Returns false when the device/browser
    *  doesn't support it, so the UI can skip the lock chip honestly. */
+  /**
+   * AF lock.
+   *
+   * This worked before the app started opening a specific physical camera
+   * by deviceId: on Samsung the LOGICAL rear camera advertises
+   * focusMode: ["manual", ...] while the individual camera2 devices behind
+   * it often advertise nothing at all — so capability-gating the lock made
+   * it "unsupported" on a camera that can in fact hold focus.
+   *
+   * So: do not gate on capabilities. Try every form of the constraint that
+   * any Android WebView is known to accept, and confirm from getSettings()
+   * that it actually took, rather than trusting either the capability list
+   * or a silently-resolved applyConstraints.
+   */
   async lockFocus(): Promise<boolean> {
-    // A tap right after a lens switch finds the new track still settling —
-    // its capabilities are empty and applyConstraints rejects — which is
-    // the "randomly not supported" report. Give it a few tries before
-    // concluding anything.
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      // a tap landing mid-switch finds a track that is still settling
       if (this.lensSwapping) {
         await CameraController.settle(200);
         continue;
       }
       if (await this.tryLockFocus()) return true;
-      await CameraController.settle(200);
+      await CameraController.settle(150);
     }
     return false;
   }
 
   private async tryLockFocus(): Promise<boolean> {
-    if (!this.track) return false;
-    try {
-      // A track that has only just started can report an empty capability
-      // set for a moment, which read as "this camera cannot lock focus" and
-      // stuck until the app was restarted. Give it a beat to fill in.
-      let caps = (this.track.getCapabilities?.() ?? {}) as Record<string, unknown>;
-      for (let i = 0; i < 3 && !caps.focusMode; i++) {
-        await new Promise((r) => window.setTimeout(r, 150));
-        if (!this.track) return false;
-        caps = (this.track.getCapabilities?.() ?? {}) as Record<string, unknown>;
+    const track = this.track;
+    if (!track) return false;
+    const settings = (track.getSettings?.() ?? {}) as Record<string, unknown>;
+    const caps = (track.getCapabilities?.() ?? {}) as Record<string, unknown>;
+    const fd = settings.focusDistance as number | undefined;
+    const fdCap = caps.focusDistance as { min?: number; max?: number } | undefined;
+    const distance = fd ?? fdCap?.min;
+    // most specific first; single-shot last because it re-focuses once
+    // before holding, which is the least "locked" of the options
+    const tries: Record<string, unknown>[] = [
+      ...(distance != null
+        ? [{ focusMode: "manual", focusDistance: distance }]
+        : []),
+      { focusMode: "manual" },
+      { focusMode: "single-shot" },
+    ];
+    for (const advanced of tries) {
+      try {
+        await track.applyConstraints({
+          advanced: [advanced as unknown as MediaTrackConstraintSet],
+        });
+      } catch {
+        continue; // this camera rejects this form; try the next
       }
-      const modes = caps.focusMode as string[] | undefined;
-      if (!modes?.includes("manual")) {
-        // Don't take a missing or short capability list as proof: Android
-        // WebViews under-report focusMode intermittently, which is why the
-        // lock randomly claimed to be unsupported on a camera that had
-        // just locked fine. Try the modes that exist, in order, and only
-        // report failure if the camera itself rejects all of them.
-        for (const mode of ["single-shot", "manual"]) {
-          if (modes && modes.length && !modes.includes(mode)) continue;
-          try {
-            await this.track.applyConstraints({
-              advanced: [
-                { focusMode: mode } as unknown as MediaTrackConstraintSet,
-              ],
-            });
-            return true;
-          } catch {
-            // try the next mode
-          }
-        }
-        return false;
-      }
-      const settings = (this.track.getSettings?.() ?? {}) as Record<string, unknown>;
-      const fd = settings.focusDistance as number | undefined;
-      await this.track.applyConstraints({
-        advanced: [
-          (fd != null
-            ? { focusMode: "manual", focusDistance: fd }
-            : { focusMode: "manual" }) as unknown as MediaTrackConstraintSet,
-        ],
-      });
-      return true;
-    } catch {
-      return false;
+      // did it stick? some pipelines resolve the promise and ignore it
+      const now = (track.getSettings?.() ?? {}) as Record<string, unknown>;
+      const mode = now.focusMode as string | undefined;
+      if (mode === undefined || mode === advanced.focusMode) return true;
     }
+    return false;
   }
 
   /** Back to continuous autofocus (unlock). */

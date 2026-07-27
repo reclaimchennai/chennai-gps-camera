@@ -124,7 +124,7 @@ export default function CameraView({ active }: { active: boolean }) {
     setZoomStops(camera.zoomStops());
     setZoomBar(true);
     window.clearTimeout(zoomBarTimer.current);
-    zoomBarTimer.current = window.setTimeout(() => setZoomBar(false), 4000);
+    zoomBarTimer.current = window.setTimeout(() => setZoomBar(false), 2500);
   }, []);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [flashFx, setFlashFx] = useState(0);
@@ -141,7 +141,7 @@ export default function CameraView({ active }: { active: boolean }) {
   /** Restart the auto-hide timer (any interaction keeps the UI alive). */
   const keepFocusUi = useCallback(() => {
     window.clearTimeout(focusHideTimer.current);
-    focusHideTimer.current = window.setTimeout(() => setFocusPos(null), 4000);
+    focusHideTimer.current = window.setTimeout(() => setFocusPos(null), 2500);
   }, []);
 
   const showFocusUi = useCallback(
@@ -1143,29 +1143,28 @@ export default function CameraView({ active }: { active: boolean }) {
         setFreeBar(null);
       }
 
-      // ---- messages: always clear of the card, and of the chips ----
-      if (wantToast && rect) {
-        const TOAST_H = 36 / ky;
-        let u = M;
-        let v: number;
-        if (!landscape) {
-          v = cardIsTop
-            ? rect.y + rect.height + gap + PILL_H + gap + BAR_H + gap
-            : rect.y - gap - BAR_H - gap - TOAST_H;
-        } else {
-          v = cardIsTop
-            ? rect.y + rect.height + gap + BAR_H + gap
-            : rect.y - gap - BAR_H - gap - TOAST_H;
-        }
-        v = Math.max(M, v);
-        u = Math.max(M, rect.x);
+      // ---- messages ----
+      // Always on the edge OPPOSITE the watermark card, centred along it,
+      // and below the recording pill when that shares the edge. In
+      // landscape this puts them above the focus ring, upright with the
+      // rest of the rotated UI — they used to stay horizontal at the
+      // bottom, on top of the card.
+      if (wantToast) {
+        const TOAST_H = 44 / ky;
+        const TOAST_W = 260 / kx;
+        const rotW = landscape ? h : w;
+        const atTop = !rect || !cardIsTop; // card at the bottom (or none)
+        let v = atTop ? M : rotH - M - TOAST_H;
+        // the pill owns the top edge in landscape: sit under it
+        if (landscape && recording && atTop) v += PILL_H + gap;
+        const u = Math.max(M, (rotW - TOAST_W) / 2);
         const t2 = toScreen(u, v);
         setToastPos((p) =>
           p && Math.abs(p.left - t2.left) < 3 && Math.abs(p.top - t2.top) < 3
             ? p
             : t2
         );
-      } else if (wantToast) {
+      } else {
         setToastPos(null);
       }
     };
@@ -1204,7 +1203,9 @@ export default function CameraView({ active }: { active: boolean }) {
       }
     };
     window.addEventListener("gpscam:track-changed", onTrack);
-    return () => window.removeEventListener("gpscam:track-changed", onTrack);
+    return () => {
+      window.removeEventListener("gpscam:track-changed", onTrack);
+    };
   }, [armLivePoll]);
 
   // ---- gestures: tap-to-focus + pinch-to-zoom -----------------------------
@@ -1546,8 +1547,21 @@ export default function CameraView({ active }: { active: boolean }) {
           </div>
         )}
 
-        {zoomLabel && (
-          <div className="cam-toast" style={{ bottom: "auto", top: "20%" }}>
+        {zoomLabel && !toast && (
+          <div
+            className="cam-toast"
+            style={
+              (toastPos
+                ? {
+                    left: toastPos.left,
+                    top: toastPos.top,
+                    bottom: "auto",
+                    transform: `rotate(${uiRot}deg)`,
+                    transformOrigin: "top left",
+                  }
+                : { bottom: "auto", top: "12%" }) as React.CSSProperties
+            }
+          >
             {zoomLabel}
           </div>
         )}
@@ -1563,7 +1577,7 @@ export default function CameraView({ active }: { active: boolean }) {
                     transform: `rotate(${uiRot}deg)`,
                     transformOrigin: "top left",
                   }
-                : {}) as React.CSSProperties
+                : { bottom: "auto", top: "12%" }) as React.CSSProperties
             }
           >
             {toast}
@@ -1628,7 +1642,7 @@ export default function CameraView({ active }: { active: boolean }) {
               } else {
                 void camera.lockFocus().then((ok) => {
                   if (ok) setAfLocked(true);
-                  else showToast("Focus lock not supported on this camera");
+                  else showToast("Couldn't hold focus — try again");
                 });
               }
             }}
