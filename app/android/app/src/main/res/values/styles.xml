@@ -16,7 +16,19 @@
     </style>
 
 
+    <!--
+      Cold start looks like the camera opening, not like an app launching.
+      Android can kill a backgrounded camera app at any time (the process
+      is expensive), so "reopening" is often a genuine COLD START — and the
+      default splash flashed the launcher icon on a pale panel before the
+      black viewfinder, which reads as a stutter. Flat black, matching the
+      viewfinder, makes that boot invisible: black splash, black
+      viewfinder, picture.
+    -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:background">@android:color/black</item>
+        <item name="windowSplashScreenBackground">@android:color/black</item>
+        <item name="windowSplashScreenAnimatedIcon">@null</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
     </style>
 </resources>

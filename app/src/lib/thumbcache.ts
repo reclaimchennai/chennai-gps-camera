@@ -22,10 +22,24 @@ export function getThumbUrl(id: string): string | null {
   return urls.get(id) ?? null;
 }
 
+/** Holding every thumbnail alive is memory the OS counts against us, and
+ *  a heavier process is a process Android kills sooner in the background —
+ *  which is what turns "switch back to the app" into a cold start. Keep a
+ *  generous working set, not the whole library. */
+const MAX_THUMBS = 400;
+
 export function setThumbUrl(id: string, url: string): void {
   const old = urls.get(id);
   if (old && old !== url) URL.revokeObjectURL(old);
+  urls.delete(id); // re-insert so Map order tracks recency
   urls.set(id, url);
+  while (urls.size > MAX_THUMBS) {
+    const oldest = urls.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    const u = urls.get(oldest);
+    if (u) URL.revokeObjectURL(u);
+    urls.delete(oldest);
+  }
 }
 
 /** Release anything whose record no longer exists. */

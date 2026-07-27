@@ -308,6 +308,12 @@ export default function CameraView({ active }: { active: boolean }) {
     camStarting.current = true;
     setReady(false);
     setCamError(null);
+    // Only claim the microphone when this session needs it (video mode or
+    // the noise-level watermark field). In photo mode without that field,
+    // other apps keep their access to the mic while our viewfinder is up.
+    camera.audioWanted =
+      (_m ?? modeRef.current) === "video" ||
+      useSettingsStore.getState().watermark.fields.soundLevel;
     // cover the zone NOW: the old stream's element keeps its last size, so
     // without this the poll still thought the picture was live and the
     // collapsed/stale <video> showed as the white speck on every resume
@@ -710,6 +716,9 @@ export default function CameraView({ active }: { active: boolean }) {
 
         let rafId = 0;
         let compositeDone = false;
+        // true once at least one real camera frame has been composited, so
+        // a gap can hold that frame instead of writing black
+        let lastGoodFrame = false;
         const paint = () => {
           if (compositeDone) return;
           // frame + blur draw in the camera's own (portrait) pixel space;
@@ -722,6 +731,16 @@ export default function CameraView({ active }: { active: boolean }) {
           } else if (recRot === -90) {
             cctx.translate(cc.width, 0);
             cctx.rotate(Math.PI / 2);
+          }
+          // While a lens switch has the camera closed the <video> has no
+          // frame, and painting it burned a black stretch into the saved
+          // recording. Hold the previous composited frame instead — the
+          // canvas already contains it, so simply skip this paint.
+          if (!liveVideo.videoWidth || liveVideo.readyState < 2) {
+            if (lastGoodFrame) {
+              cctx.restore(); // balance the save() above
+              return;
+            }
           }
           // match digital zoom by cropping the centre of the frame
           const dz = camera.captureZoom;
@@ -737,6 +756,7 @@ export default function CameraView({ active }: { active: boolean }) {
           } else {
             cctx.drawImage(liveVideo, 0, 0, vw, vh);
           }
+          lastGoodFrame = true;
           if (liveBlurOn) {
             for (const b of liveBoxesRef.current) {
               const cells = 9;
@@ -1017,11 +1037,14 @@ export default function CameraView({ active }: { active: boolean }) {
    *   pill, chips and card can never cover each other.
    */
   const [freeBar, setFreeBar] = useState<{ left: number; top: number } | null>(null);
+  const [toastPos, setToastPos] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
     const wantBar = zoomBar && !focusPos;
-    if (!recording && !wantBar) {
+    const wantToast = !!toast || !!zoomLabel;
+    if (!recording && !wantBar && !wantToast) {
       setRecPos(null);
       setFreeBar(null);
+      setToastPos(null);
       return;
     }
     const tick = () => {
@@ -1119,6 +1142,32 @@ export default function CameraView({ active }: { active: boolean }) {
       } else if (wantBar) {
         setFreeBar(null);
       }
+
+      // ---- messages: always clear of the card, and of the chips ----
+      if (wantToast && rect) {
+        const TOAST_H = 36 / ky;
+        let u = M;
+        let v: number;
+        if (!landscape) {
+          v = cardIsTop
+            ? rect.y + rect.height + gap + PILL_H + gap + BAR_H + gap
+            : rect.y - gap - BAR_H - gap - TOAST_H;
+        } else {
+          v = cardIsTop
+            ? rect.y + rect.height + gap + BAR_H + gap
+            : rect.y - gap - BAR_H - gap - TOAST_H;
+        }
+        v = Math.max(M, v);
+        u = Math.max(M, rect.x);
+        const t2 = toScreen(u, v);
+        setToastPos((p) =>
+          p && Math.abs(p.left - t2.left) < 3 && Math.abs(p.top - t2.top) < 3
+            ? p
+            : t2
+        );
+      } else if (wantToast) {
+        setToastPos(null);
+      }
     };
     // drop the stale position the moment orientation changes, so the pill
     // vanishes for a frame instead of flashing at its previous corner
@@ -1126,7 +1175,18 @@ export default function CameraView({ active }: { active: boolean }) {
     tick();
     const t = window.setInterval(tick, 400);
     return () => window.clearInterval(t);
-  }, [recording, zoomBar, focusPos, uiRot]);
+  }, [recording, zoomBar, focusPos, uiRot, toast, zoomLabel]);
+
+  // Acquire or release the microphone as the need changes, without
+  // restarting the camera: entering video mode needs it, going back to
+  // photo (with the noise field off) hands it back to other apps.
+  useEffect(() => {
+    if (!active || !ready) return;
+    const need = mode === "video" || soundOn;
+    camera.audioWanted = need;
+    if (need) void camera.ensureAudio();
+    else camera.releaseAudio();
+  }, [active, ready, mode, soundOn]);
 
   // an AF lock does not survive the track it was applied to (a lens switch
   // opens a new one), so drop the padlock rather than show a dead one
@@ -1491,7 +1551,24 @@ export default function CameraView({ active }: { active: boolean }) {
             {zoomLabel}
           </div>
         )}
-        {toast && <div className="cam-toast">{toast}</div>}
+        {toast && (
+          <div
+            className="cam-toast"
+            style={
+              (toastPos
+                ? {
+                    left: toastPos.left,
+                    top: toastPos.top,
+                    bottom: "auto",
+                    transform: `rotate(${uiRot}deg)`,
+                    transformOrigin: "top left",
+                  }
+                : {}) as React.CSSProperties
+            }
+          >
+            {toast}
+          </div>
+        )}
         {recording && recPos && (
           <div
             className="rec-timer"

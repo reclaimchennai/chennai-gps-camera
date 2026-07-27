@@ -232,6 +232,25 @@ export class CameraController {
    * both see the real signal. Stills are unaffected by the 1080p
    * stream: ImageCapture.takePhoto() reads the full sensor.
    */
+  /**
+   * Whether this session needs the microphone at all.
+   *
+   * Holding it for the whole time the viewfinder is up blocks every other
+   * app from recording audio — the stock camera app opens the mic only
+   * when it needs it, and so do we now: video mode, or the noise-level
+   * watermark field. ensureAudio() acquires it on demand before a
+   * recording starts, so nothing is lost by waiting.
+   */
+  audioWanted = true;
+
+  /** Release the microphone without disturbing the picture. */
+  releaseAudio(): void {
+    for (const t of this.stream?.getAudioTracks() ?? []) {
+      t.stop();
+      this.stream?.removeTrack(t);
+    }
+  }
+
   async start(facing: FacingMode = this.facing): Promise<MediaStream> {
     this.stop();
     this.facing = facing;
@@ -289,7 +308,8 @@ export class CameraController {
      * multi-second spinner on the launch screen.
      */
     const byFacing: MediaTrackConstraints = { facingMode: facing, ...size };
-    const attempts: MediaStreamConstraints[] = [
+    const attempts: MediaStreamConstraints[] = this.audioWanted
+      ? [
       { audio, video },
       // a dead deviceId must fall back to the default camera BEFORE any
       // rung gives up the microphone (see v1.11.4)
@@ -297,7 +317,12 @@ export class CameraController {
       { audio: baseAudio, video: byFacing },
       { audio: false, video: byFacing },
       { audio: false, video: { facingMode: facing } },
-    ];
+        ]
+      : [
+          { audio: false, video },
+          { audio: false, video: byFacing },
+          { audio: false, video: { facingMode: facing } },
+        ];
     let opened: MediaStream | null = null;
     let lastErr: unknown = null;
     // Returning from the background, Android often has not finished
@@ -1185,6 +1210,22 @@ export class CameraController {
    *  the current focusDistance). Returns false when the device/browser
    *  doesn't support it, so the UI can skip the lock chip honestly. */
   async lockFocus(): Promise<boolean> {
+    // A tap right after a lens switch finds the new track still settling —
+    // its capabilities are empty and applyConstraints rejects — which is
+    // the "randomly not supported" report. Give it a few tries before
+    // concluding anything.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (this.lensSwapping) {
+        await CameraController.settle(200);
+        continue;
+      }
+      if (await this.tryLockFocus()) return true;
+      await CameraController.settle(200);
+    }
+    return false;
+  }
+
+  private async tryLockFocus(): Promise<boolean> {
     if (!this.track) return false;
     try {
       // A track that has only just started can report an empty capability
