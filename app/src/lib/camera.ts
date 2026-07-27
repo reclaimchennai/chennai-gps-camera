@@ -883,9 +883,11 @@ export class CameraController {
       void this.video.play().catch(() => {});
     }
     this.activeLensId = lensId;
-    // this lens works: clear any recorded misses so a single hiccup earlier
-    // cannot accumulate toward writing it off
-    if (lensId) this.lensFailures.delete(lensId);
+    // a camera opened: the hardware is clearly healthy, so wipe EVERY
+    // lens's recorded misses. Counting misses per-lens across unrelated
+    // busy spells is what produced the occasional false "this phone
+    // doesn't let apps use that lens" that later cleared on its own.
+    this.lensFailures.clear();
     // A new track focuses continuously and has its own torch state, so any
     // AF lock the UI is showing is no longer real. Say so rather than
     // leaving a padlock on screen that locks nothing.

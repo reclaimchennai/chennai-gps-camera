@@ -233,10 +233,15 @@ public class MainActivity extends BridgeActivity {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                WebView wv = bridge.getWebView();
-                if (wv != null && wv.canGoBack()) {
-                    wv.goBack();
-                } else {
+                // Never WebView.goBack(): its idea of the hash history and
+                // the app's disagree once swipe navigation has used
+                // replaceState, which is how back from the gallery ended up
+                // walking dead entries instead of reaching the camera. The
+                // router decides; it calls minimizeApp() when it is already
+                // at the camera.
+                try {
+                    bridge.triggerWindowJSEvent("gpscamBack", "{}");
+                } catch (Exception e) {
                     setEnabled(false);
                     getOnBackPressedDispatcher().onBackPressed();
                     setEnabled(true);

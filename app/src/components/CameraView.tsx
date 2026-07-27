@@ -1061,25 +1061,32 @@ export default function CameraView({ active }: { active: boolean }) {
       // ---- recording pill ----
       if (recording) {
         let pill: { left: number; top: number };
-        // portrait home: ON the flash/settings line, left edge — used
-        // unless the card actually covers that spot
-        const icon = document.querySelector(".cam-top button");
-        const ir = icon?.getBoundingClientRect();
-        const homeTop = ir ? ir.top + ir.height / 2 - 17 - br.top : 12;
-        const cardCovers =
-          !!rect &&
-          !landscape &&
-          rect.y * ky + (cr.top - br.top) < homeTop + 34 &&
-          rect.x * kx + (cr.left - br.left) < 12 + 96;
-        if (!landscape && !cardCovers) {
-          pill = { left: 12, top: homeTop };
-        } else if (rect) {
-          // under the card (or over it at the rotated bottom edge)
-          let v = rect.y + rect.height + gap;
-          if (v + PILL_H > rotH - M) v = Math.max(M, rect.y - gap - PILL_H);
-          pill = toScreen(rect.x, v);
+        const PILL_W = 88 / kx; // canvas px, generous "00:00" + dot
+        if (!landscape) {
+          // portrait home: ON the flash/settings line, left edge — used
+          // unless the card actually covers that spot
+          const icon = document.querySelector(".cam-top button");
+          const ir = icon?.getBoundingClientRect();
+          const homeTop = ir ? ir.top + ir.height / 2 - 17 - br.top : 12;
+          const cardCovers =
+            !!rect &&
+            rect.y * ky + (cr.top - br.top) < homeTop + 34 &&
+            rect.x * kx + (cr.left - br.left) < 12 + 96;
+          if (!cardCovers) {
+            pill = { left: 12, top: homeTop };
+          } else if (rect) {
+            pill = toScreen(rect.x, rect.y + rect.height + gap);
+          } else {
+            pill = { left: 12, top: 12 };
+          }
         } else {
-          pill = { left: 12, top: 12 };
+          // landscape: centred at the TOP of the rotated view (the line
+          // the social strip runs along); when the user anchors the card
+          // at the top, take the opposite edge — the bottom — instead
+          const rotW = w === rotH ? h : w; // width of the rotated space
+          const u = Math.max(M, (rotW - PILL_W) / 2);
+          const v = cardIsTop ? rotH - M - PILL_H : M;
+          pill = toScreen(u, v);
         }
         setRecPos((p) =>
           p && Math.abs(p.left - pill.left) < 2 && Math.abs(p.top - pill.top) < 2
@@ -1098,13 +1105,9 @@ export default function CameraView({ active }: { active: boolean }) {
             ? rect.y + rect.height + gap + PILL_H + gap
             : rect.y - gap - BAR_H;
         } else {
-          // opposite side from the pill: pill goes below/over the card,
-          // the chips take the free side toward the picture centre
-          const below = rect.y + rect.height + gap;
-          const pillFlipped = below + PILL_H > rotH - M;
-          v = pillFlipped
-            ? Math.max(M, rect.y - gap - PILL_H - gap - BAR_H)
-            : rect.y - gap - BAR_H;
+          // landscape: the free side of the card, toward the centre — the
+          // pill owns the top/bottom edges now, the card owns its own edge
+          v = cardIsTop ? rect.y + rect.height + gap : rect.y - gap - BAR_H;
         }
         v = Math.max(M, v);
         const b = toScreen(u, v);
@@ -1117,6 +1120,9 @@ export default function CameraView({ active }: { active: boolean }) {
         setFreeBar(null);
       }
     };
+    // drop the stale position the moment orientation changes, so the pill
+    // vanishes for a frame instead of flashing at its previous corner
+    setRecPos(null);
     tick();
     const t = window.setInterval(tick, 400);
     return () => window.clearInterval(t);
@@ -1486,13 +1492,13 @@ export default function CameraView({ active }: { active: boolean }) {
           </div>
         )}
         {toast && <div className="cam-toast">{toast}</div>}
-        {recording && (
+        {recording && recPos && (
           <div
             className="rec-timer"
             style={
               {
-                left: recPos?.left ?? 12,
-                top: recPos?.top ?? 12,
+                left: recPos.left,
+                top: recPos.top,
                 "--ui-rot": `${uiRot}deg`,
               } as React.CSSProperties
             }

@@ -80,3 +80,22 @@ export function goBack(): void {
   if (window.history.length > 1) window.history.back();
   else navigate("/");
 }
+
+import { isNativeApp, minimizeNativeApp } from "./lib/native";
+
+/**
+ * Android back (gesture or button), relayed by MainActivity. Deterministic
+ * where it matters: the gallery ALWAYS returns to the camera in one step —
+ * history.back() could land on dead swipe entries and appear to do nothing
+ * — and at the camera the app hands the screen back to Android. Everywhere
+ * else, contextual history back (viewer returns to the group it came from,
+ * watermark editor to settings, and so on).
+ */
+if (isNativeApp()) {
+  window.addEventListener("gpscamBack", () => {
+    const route = parse(location.hash);
+    if (route.name === "camera") void minimizeNativeApp();
+    else if (route.name === "gallery") navigate("/", { replace: true });
+    else goBack();
+  });
+}

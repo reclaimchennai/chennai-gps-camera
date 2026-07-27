@@ -193,6 +193,13 @@ export function startMeter(cameraStream?: MediaStream | null): void {
 export function stopMeter(): void {
   generation++;
   teardownGraph();
+  // SUSPEND the context, not just the graph. A running AudioContext holds
+  // Android audio focus even with nothing connected, which is why other
+  // apps' audio stayed blocked while this app was minimised. startMeter
+  // resumes it on the way back in.
+  if (audioCtx && audioCtx.state === "running") {
+    void audioCtx.suspend().catch(() => {});
+  }
   // clear the session stats so the next active session starts fresh
   statSum = 0;
   statCount = 0;

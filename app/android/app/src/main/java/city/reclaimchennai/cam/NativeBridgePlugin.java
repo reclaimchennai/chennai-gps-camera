@@ -76,6 +76,17 @@ public class NativeBridgePlugin extends Plugin {
      * above all, where the rocker has to set playback volume for a recorded
      * video — the keys must behave normally.
      */
+    /** Back pressed at the camera root: hand the screen back to Android. */
+    @PluginMethod
+    public void minimizeApp(PluginCall call) {
+        try {
+            getActivity().moveTaskToBack(true);
+        } catch (Exception ignored) {
+            // worst case the app stays up — never crash on a back press
+        }
+        call.resolve();
+    }
+
     @PluginMethod
     public void setShutterKeys(PluginCall call) {
         MainActivity.setShutterKeys(call.getBoolean("enabled", false));

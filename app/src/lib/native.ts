@@ -64,6 +64,7 @@ interface NativeBridgePlugin {
   requestLocationNative(): Promise<{ requested: boolean }>;
   checkMockLocation(): Promise<{ mock: boolean }>;
   setShutterKeys(opts: { enabled: boolean }): Promise<void>;
+  minimizeApp(): Promise<void>;
 }
 
 export interface NativePermStates {
@@ -102,6 +103,17 @@ export async function setShutterKeys(enabled: boolean): Promise<void> {
     await b.setShutterKeys({ enabled });
   } catch {
     // older APK without the method — volume keys keep their old behaviour
+  }
+}
+
+/** Back pressed at the camera root: background the app. */
+export async function minimizeNativeApp(): Promise<void> {
+  const b = bridge();
+  if (!b?.minimizeApp) return;
+  try {
+    await b.minimizeApp();
+  } catch {
+    // stay in the app rather than crash a back press
   }
 }
 
