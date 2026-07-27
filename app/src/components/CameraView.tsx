@@ -144,6 +144,38 @@ export default function CameraView({ active }: { active: boolean }) {
     focusHideTimer.current = window.setTimeout(() => setFocusPos(null), 2500);
   }, []);
 
+  const evDragging = useRef(false);
+  /**
+   * Exposure from a pointer position, projected onto the slider's own axis.
+   * Works at any rotation: the cluster turns with the device, so "along the
+   * slider" is not "along the screen".
+   */
+  const applyEvFromPointer = useCallback(
+    (clientX: number, clientY: number, el: HTMLElement) => {
+      const info = camera.exposureInfo();
+      if (!info) return;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const rot = (useLiveStore.getState().uiRotation * Math.PI) / 180;
+      const ax = Math.cos(rot);
+      const ay = Math.sin(rot);
+      // half the slider's VISUAL length along its own axis
+      const half = (Math.abs(ax) > 0.5 ? r.width : r.height) / 2;
+      if (half <= 0) return;
+      const proj = (clientX - cx) * ax + (clientY - cy) * ay;
+      const t = Math.min(1, Math.max(-1, proj / half));
+      const raw = info.min + ((t + 1) / 2) * (info.max - info.min);
+      const step = info.step || 0.1;
+      const v = Math.round(raw / step) * step;
+      const clamped = Math.min(info.max, Math.max(info.min, v));
+      setEvVal(clamped);
+      void camera.setExposure(clamped);
+      keepFocusUi();
+    },
+    [keepFocusUi]
+  );
+
   const showFocusUi = useCallback(
     (x: number, y: number) => {
       // The group is ring + brightness + zoom stops stacked downward, so
@@ -1674,22 +1706,41 @@ export default function CameraView({ active }: { active: boolean }) {
                       : 0.5,
                 } as React.CSSProperties
               }
-              onPointerDown={(e) => e.stopPropagation()}
-              onPointerMove={(e) => e.stopPropagation()}
-              onPointerUp={(e) => e.stopPropagation()}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+                evDragging.current = true;
+                applyEvFromPointer(e.clientX, e.clientY, e.currentTarget);
+              }}
+              onPointerMove={(e) => {
+                e.stopPropagation();
+                if (evDragging.current)
+                  applyEvFromPointer(e.clientX, e.clientY, e.currentTarget);
+              }}
+              onPointerUp={(e) => {
+                e.stopPropagation();
+                evDragging.current = false;
+              }}
+              onPointerCancel={() => {
+                evDragging.current = false;
+              }}
             >
+              {/* The native range input is display-only here. Its value is
+                  computed by the browser from the pointer's X in the
+                  element's UNROTATED box, so once the focus cluster rotates
+                  for landscape, dragging it became unusable. The pointer is
+                  projected onto the slider's real (rotated) axis instead —
+                  see applyEvFromPointer — and this input just renders the
+                  track and the sun. */}
               <input
                 type="range"
                 min={evInfo.min}
                 max={evInfo.max}
                 step={evInfo.step}
                 value={evVal}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setEvVal(v);
-                  void camera.setExposure(v);
-                  keepFocusUi();
-                }}
+                readOnly
+                tabIndex={-1}
+                style={{ pointerEvents: "none" }}
               />
             </div>
           )}

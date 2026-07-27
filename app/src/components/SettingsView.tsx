@@ -101,6 +101,7 @@ export default function SettingsView() {
   const [lenses, setLenses] = useState<Lens[]>(() =>
     camera.lenses.length > 1 ? camera.lenses : loadLensProfile()
   );
+  const [controls, setControls] = useState<Record<string, string> | null>(null);
   const [calibrating, setCalibrating] = useState(false);
   const [calResult, setCalResult] = useState<string | null>(null);
   useEffect(() => {
@@ -298,6 +299,29 @@ export default function SettingsView() {
                   </div>
                 </>
               )}
+              <div className="row" style={{ display: "block", padding: "10px 0 0" }}>
+                <div className="label">What this camera allows</div>
+                <div className="hint" style={{ margin: "2px 0 8px" }}>
+                  The Android app and Chrome are given different camera
+                  controls on the same phone, which decides what tap-to-focus
+                  and focus lock can do here.
+                </div>
+                <button
+                  className="ghost-btn"
+                  onClick={() => setControls(camera.controlReport())}
+                >
+                  {controls ? "Refresh" : "Check"}
+                </button>
+                {controls && (
+                  <div className="hint" style={{ marginTop: 8, lineHeight: 1.6 }}>
+                    {Object.entries(controls).map(([k, v]) => (
+                      <div key={k}>
+                        <strong style={{ color: "var(--text)" }}>{k}:</strong> {v}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 className="ghost-btn"
                 style={{ marginTop: 10 }}

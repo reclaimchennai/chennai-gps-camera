@@ -1193,12 +1193,67 @@ export class CameraController {
         await track.applyConstraints({
           advanced: [advanced as unknown as MediaTrackConstraintSet],
         });
-        return true;
       } catch {
-        // this pipeline rejects this form — try a simpler one
+        continue; // this pipeline rejects this form — try a simpler one
+      }
+      // An UNSUPPORTED advanced constraint is silently ignored rather than
+      // rejected, so a resolved promise proves nothing. Read back.
+      if (advanced.pointsOfInterest) {
+        const now = (track.getSettings?.() ?? {}) as Record<string, unknown>;
+        const got = now.pointsOfInterest as { x: number }[] | undefined;
+        this.aimSupported = Array.isArray(got) && got.length > 0;
+        if (this.aimSupported) return true;
+        continue;
+      }
+      return true;
+    }
+    // last resort: some pipelines only accept it as a BASIC constraint
+    if (poi) {
+      try {
+        await track.applyConstraints({
+          pointsOfInterest: poi,
+        } as unknown as MediaTrackConstraints);
+        const now = (track.getSettings?.() ?? {}) as Record<string, unknown>;
+        this.aimSupported = Array.isArray(now.pointsOfInterest);
+        return this.aimSupported;
+      } catch {
+        this.aimSupported = false;
       }
     }
     return false;
+  }
+
+  /** Did the camera accept an aim point the last time we sent one? */
+  aimSupported: boolean | null = null;
+
+  /**
+   * What this camera pipeline actually lets us control. Shown in Settings:
+   * the WebView and Chrome expose different sets on the SAME phone, and
+   * guessing from the outside has cost several release cycles.
+   */
+  controlReport(): Record<string, string> {
+    const caps = (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+    const set = (this.track?.getSettings?.() ?? {}) as Record<string, unknown>;
+    const range = (v: unknown) => {
+      const r = v as { min?: number; max?: number } | undefined;
+      return r && typeof r.min === "number" ? `${r.min} – ${r.max}` : "not offered";
+    };
+    return {
+      Camera: String(set.deviceId ?? "default").slice(0, 12),
+      Zoom: range(caps.zoom),
+      "Focus modes": Array.isArray(caps.focusMode)
+        ? (caps.focusMode as string[]).join(", ")
+        : "not offered",
+      "Focus distance": range(caps.focusDistance),
+      "Tap to focus":
+        this.aimSupported === null
+          ? "not tried yet — tap the viewfinder once"
+          : this.aimSupported
+            ? "accepted"
+            : "ignored by this camera",
+      Exposure: range(caps.exposureCompensation),
+      Torch: caps.torch ? "yes" : "not offered",
+    };
   }
 
   /** Exposure-compensation range/value, when the camera exposes it
