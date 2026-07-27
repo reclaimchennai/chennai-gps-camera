@@ -82,6 +82,7 @@ export function goBack(): void {
 }
 
 import { isNativeApp, minimizeNativeApp } from "./lib/native";
+import { viewerOrigin } from "./lib/viewer-order";
 
 /**
  * Android back (gesture or button), relayed by MainActivity. Deterministic
@@ -96,6 +97,13 @@ if (isNativeApp()) {
     const route = parse(location.hash);
     if (route.name === "camera") void minimizeNativeApp();
     else if (route.name === "gallery") navigate("/", { replace: true });
+    else if (route.name === "media")
+      // the viewer rewrites its own history entry on every swipe, so
+      // history.back() from here could land on a replaced entry and look
+      // dead: go straight back to whatever opened it
+      navigate(viewerOrigin(), { replace: true });
+    else if (route.name === "group" || route.name === "map" || route.name === "collage")
+      navigate("/gallery", { replace: true });
     else goBack();
   });
 }

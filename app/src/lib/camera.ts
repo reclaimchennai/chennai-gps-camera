@@ -1198,14 +1198,23 @@ export class CameraController {
       }
       const modes = caps.focusMode as string[] | undefined;
       if (!modes?.includes("manual")) {
-        // some Android WebViews expose a one-shot lock instead of manual
-        if (modes?.includes("single-shot")) {
-          await this.track.applyConstraints({
-            advanced: [
-              { focusMode: "single-shot" } as unknown as MediaTrackConstraintSet,
-            ],
-          });
-          return true;
+        // Don't take a missing or short capability list as proof: Android
+        // WebViews under-report focusMode intermittently, which is why the
+        // lock randomly claimed to be unsupported on a camera that had
+        // just locked fine. Try the modes that exist, in order, and only
+        // report failure if the camera itself rejects all of them.
+        for (const mode of ["single-shot", "manual"]) {
+          if (modes && modes.length && !modes.includes(mode)) continue;
+          try {
+            await this.track.applyConstraints({
+              advanced: [
+                { focusMode: mode } as unknown as MediaTrackConstraintSet,
+              ],
+            });
+            return true;
+          } catch {
+            // try the next mode
+          }
         }
         return false;
       }

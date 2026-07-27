@@ -70,3 +70,21 @@ export function neighbourhoodOrder(
   }
   return out;
 }
+
+/**
+ * Where the viewer was opened from, so back returns there in one step.
+ *
+ * The viewer replaces its own history entry on every swipe, so the browser
+ * history is not a reliable description of "where I came from" — going back
+ * could land on a replaced entry and appear to do nothing. Whoever opens
+ * the viewer records the route to return to.
+ */
+let origin = "/gallery";
+
+export function setViewerOrigin(path: string): void {
+  origin = path;
+}
+
+export function viewerOrigin(): string {
+  return origin;
+}

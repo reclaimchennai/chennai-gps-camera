@@ -12,7 +12,11 @@
  * only when the map opens. Tiles need network; captures don't.
  */
 import { useEffect, useRef } from "react";
-import { setViewerOrder, neighbourhoodOrder } from "../lib/viewer-order";
+import {
+  setViewerOrder,
+  setViewerOrigin,
+  neighbourhoodOrder,
+} from "../lib/viewer-order";
 import L from "leaflet";
 import "leaflet.heat";
 import "leaflet.markercluster";
@@ -116,6 +120,7 @@ export default function PhotoMapView() {
         marker.on("click", () => {
           // swiping in the viewer should walk nearby photos, not the
           // global timeline: build a nearest-neighbourhood chain from here
+          setViewerOrigin("/gallery/map");
           setViewerOrder(
             neighbourhoodOrder(
               items.map((x) => ({

@@ -10,6 +10,7 @@ import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
 import type { MediaRecord } from "../types";
 import { navigate } from "../nav";
+import { setViewerOrigin } from "../lib/viewer-order";
 import { usePeek } from "./peek";
 
 interface Cell {
@@ -66,7 +67,10 @@ export default function VideoGroupView({ id }: { id: string }) {
             key={rec.id}
             className="gallery-cell"
             {...bindPeek(rec)}
-            onClick={() => navigate(`/media/${rec.id}`)}
+            onClick={() => {
+              setViewerOrigin(`/gallery/group/${id}`);
+              navigate(`/media/${rec.id}`);
+            }}
           >
             {url ? (
               <img src={url} alt="" loading="lazy" />

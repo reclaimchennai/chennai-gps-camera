@@ -11,7 +11,7 @@ import {
   rememberScroll,
   recallScroll,
 } from "../lib/thumbcache";
-import { clearViewerOrder } from "../lib/viewer-order";
+import { clearViewerOrder, setViewerOrigin } from "../lib/viewer-order";
 import type { MediaRecord } from "../types";
 import { navigate } from "../nav";
 import { fmtWard } from "../lib/geo/format";
@@ -298,6 +298,7 @@ export default function GalleryView() {
                 // browsing from the grid swipes in gallery order, not in
                 // whatever neighbourhood order the map may have set up
                 clearViewerOrder();
+                setViewerOrigin("/gallery");
                 navigate(
                   rec.kind === "video" && frameCounts.has(rec.id)
                     ? `/gallery/group/${rec.id}`
