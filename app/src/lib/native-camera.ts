@@ -48,11 +48,59 @@ function plugin(): NativeCameraPlugin | undefined {
   return cap?.Plugins?.NativeCamera as NativeCameraPlugin | undefined;
 }
 
-/** Is the experimental native preview switched on? */
+const ATTEMPT = "gpscam-native-attempt";
+
+/**
+ * Is the experimental native preview switched on?
+ *
+ * SELF-DISABLING. An experimental switch that can crash the app must not
+ * be able to trap the user: the flag lives in storage, so a crash on
+ * startup would crash again on every relaunch, with Settings unreachable.
+ * Each attempt writes a marker that is cleared once the app has survived a
+ * few seconds. Finding an uncleared marker at boot means the last attempt
+ * did not survive — so the flag is switched off automatically and the
+ * normal camera comes back.
+ */
 export function nativeCameraEnabled(): boolean {
   if (!isNativeApp()) return false;
   try {
-    return localStorage.getItem(FLAG) === "1" && !!plugin();
+    if (localStorage.getItem(FLAG) !== "1") return false;
+    const pending = localStorage.getItem(ATTEMPT);
+    if (pending) {
+      // the previous run did not get far enough to clear this
+      localStorage.setItem(FLAG, "0");
+      localStorage.removeItem(ATTEMPT);
+      window.setTimeout(() => {
+        window.dispatchEvent(new Event("gpscam:native-camera-recovered"));
+      }, 0);
+      return false;
+    }
+    return !!plugin();
+  } catch {
+    return false;
+  }
+}
+
+/** Mark an attempt as in progress; cleared once the app is clearly alive. */
+export function markNativeAttempt(): void {
+  try {
+    localStorage.setItem(ATTEMPT, String(Date.now()));
+    window.setTimeout(() => {
+      try {
+        localStorage.removeItem(ATTEMPT);
+      } catch {
+        // storage gone; nothing to clear
+      }
+    }, 6000);
+  } catch {
+    // storage unavailable — the guard simply does not apply
+  }
+}
+
+/** True if the last run crashed and the flag was turned off for safety. */
+export function nativeCameraRecovered(): boolean {
+  try {
+    return localStorage.getItem(FLAG) === "0" && !!plugin();
   } catch {
     return false;
   }

@@ -102,10 +102,20 @@ public class NativeCameraPlugin extends Plugin {
                     return;
                 }
                 WebView web = getBridge().getWebView();
-                ViewGroup parent = (ViewGroup) web.getParent();
+                ViewGroup parent = web.getParent() instanceof ViewGroup
+                    ? (ViewGroup) web.getParent()
+                    : null;
+                if (parent == null) {
+                    call.reject("no view parent");
+                    return;
+                }
                 if (previewView == null) {
                     previewView = new PreviewView(getContext());
-                    previewView.setLayoutParams(new FrameLayout.LayoutParams(
+                    // Generic params, positioned with translation. A
+                    // FrameLayout.LayoutParams thrown at a parent that is not
+                    // a FrameLayout is a ClassCastException at layout time —
+                    // i.e. a crash the moment the preview appears.
+                    previewView.setLayoutParams(new ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT));
                     // FIT_CENTER keeps the whole frame visible, matching how
@@ -145,6 +155,10 @@ public class NativeCameraPlugin extends Plugin {
             imageCapture = new ImageCapture.Builder()
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .build();
+            if (!(getActivity() instanceof LifecycleOwner)) {
+                call.reject("activity is not a lifecycle owner");
+                return;
+            }
             camera = provider.bindToLifecycle(
                 (LifecycleOwner) getActivity(),
                 CameraSelector.DEFAULT_BACK_CAMERA,
@@ -152,8 +166,8 @@ public class NativeCameraPlugin extends Plugin {
                 imageCapture);
             running = true;
             call.resolve(capabilities());
-        } catch (Exception e) {
-            call.reject("bind failed: " + e.getMessage());
+        } catch (Throwable e) {
+            call.reject("bind failed: " + e);
         }
     }
 
@@ -200,13 +214,24 @@ public class NativeCameraPlugin extends Plugin {
                 call.resolve();
                 return;
             }
-            float d = getContext().getResources().getDisplayMetrics().density;
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                Math.max(1, (int) (w * d)), Math.max(1, (int) (h * d)));
-            lp.leftMargin = (int) (x * d);
-            lp.topMargin = (int) (y * d);
-            previewView.setLayoutParams(lp);
-            previewView.requestLayout();
+            try {
+                float d = getContext().getResources().getDisplayMetrics().density;
+                ViewGroup.LayoutParams lp = previewView.getLayoutParams();
+                if (lp == null) {
+                    lp = new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+                }
+                lp.width = Math.max(1, (int) (w * d));
+                lp.height = Math.max(1, (int) (h * d));
+                previewView.setLayoutParams(lp);
+                // translation, not margins: works in any parent type
+                previewView.setX((float) (x * d));
+                previewView.setY((float) (y * d));
+                previewView.requestLayout();
+            } catch (Exception ignored) {
+                // a mis-sized preview is survivable; a crash is not
+            }
             call.resolve();
         });
     }

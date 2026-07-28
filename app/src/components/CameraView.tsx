@@ -28,6 +28,8 @@ import {
   nativeSetRect,
   nativeSetZoom,
   nativeFocusAt,
+  markNativeAttempt,
+  setNativeCameraEnabled,
 } from "../lib/native-camera";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
@@ -461,12 +463,22 @@ export default function CameraView({ active }: { active: boolean }) {
   useEffect(() => {
     if (!nativeCameraEnabled() || permState !== "granted") return;
     let alive = true;
+    // record the attempt BEFORE touching the camera: if this run dies, the
+    // next boot finds the marker and disables the experiment itself
+    markNativeAttempt();
     camera.stop();
     void (async () => {
       await new Promise((r) => window.setTimeout(r, 250)); // let it release
       if (!alive) return;
       const caps = await nativeStart();
       if (!alive) return;
+      if (!caps) {
+        // native refused — go back to the camera that works
+        setNativeCameraEnabled(false);
+        showToast("Native camera unavailable on this phone — using the normal camera");
+        void startCam(modeRef.current);
+        return;
+      }
       setNativeCaps(caps);
       await nativeSetRect(boxRef.current);
       setReady(true);
@@ -478,7 +490,7 @@ export default function CameraView({ active }: { active: boolean }) {
       window.removeEventListener("resize", onResize);
       void nativeStop();
     };
-  }, [permState]);
+  }, [permState, startCam, showToast]);
 
   // keep the native surface on the viewfinder as the layout settles
   useEffect(() => {
