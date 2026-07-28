@@ -173,7 +173,12 @@ textarea {
   min-height: 0;
   position: relative;
   display: grid;
-  place-items: center;
+  /* Top-aligned, centred horizontally. A frame whose shape does not match
+     the screen always leaves some space; centring put a black band ABOVE
+     the picture as well as below, which reads as a box around the
+     viewfinder. Pinned to the top, the only leftover sits directly above
+     the controls bar and is indistinguishable from it. */
+  place-items: start center;
   overflow: hidden;
 }
 
