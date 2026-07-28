@@ -1654,6 +1654,16 @@ export class CameraController {
    * Grab a full-resolution frame. Returns an ImageBitmap (fast path for
    * canvas compositing) — never downscaled below the stream resolution.
    */
+  /** Is the live preview taller than it is wide? */
+  previewIsPortrait(): boolean {
+    const v = this.video;
+    if (v && v.videoWidth && v.videoHeight) return v.videoHeight > v.videoWidth;
+    const s = (this.track?.getSettings?.() ?? {}) as Record<string, unknown>;
+    const w = typeof s.width === "number" ? s.width : 0;
+    const h = typeof s.height === "number" ? s.height : 0;
+    return h > w;
+  }
+
   async captureFrame(): Promise<ImageBitmap> {
     const track = this.track;
     if (!track) throw new Error("camera not running");

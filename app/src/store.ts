@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { isInstalledApp, isNativeApp } from "./lib/native";
 import type {
   AppSettings,
   Fix,
@@ -75,7 +76,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   plateOcr: false,
   captureQuality: "auto",
   mirrorFrontPhoto: false,
-  autoSaveToDevice: true,
+  // Off by default for INSTALLED web apps: saving is a browser download,
+  // and Chrome shows a banner for every one — after every photo. In a
+  // plain browser tab it stays on, where that feedback is expected and the
+  // app has no gallery of its own to fall back on.
+  autoSaveToDevice: !isInstalledApp() || isNativeApp(),
   appTheme: "system",
   dateFormat: "DD/MM/YYYY",
   liveFaceBlur: false,

@@ -169,10 +169,27 @@ export async function grabFrame(): Promise<{
   if (mirror) ctx.restore();
   frame.close();
 
+  /**
+   * Stand the sensor frame upright first.
+   *
+   * ImageCapture.takePhoto() hands back the sensor's own frame, which on a
+   * phone is LANDSCAPE however the phone is held — so every photo from the
+   * web app came out 4:3 landscape even when shot upright. The native app
+   * never showed it because at 1x it grabs the preview frame instead,
+   * which is already oriented. Detect the mismatch against the live
+   * preview and rotate to match it, then the landscape handling below
+   * behaves exactly as before.
+   */
+  const upright = camera.previewIsPortrait()
+    ? canvas.width > canvas.height
+      ? rotateFrameCanvas(canvas, -90) // sensor is mounted 90 deg on phones
+      : canvas
+    : canvas;
+
   // held landscape → save a true landscape image (see rotateFrameCanvas)
   const rot = live.uiRotation;
   const outCanvas =
-    rot === 90 || rot === -90 ? rotateFrameCanvas(canvas, rot) : canvas;
+    rot === 90 || rot === -90 ? rotateFrameCanvas(upright, rot) : upright;
   const outW = outCanvas.width;
   const outH = outCanvas.height;
 

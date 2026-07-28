@@ -3,7 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { Screen, Row, Toggle, blurOnEnter } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
-import { isNativeApp } from "../lib/native";
+import { isNativeApp, isInstalledApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 import { qualitySummary } from "../lib/quality";
@@ -90,6 +90,7 @@ export default function SettingsView() {
   const setSettings = useSettingsStore((s) => s.setSettings);
   const liveDb = useLiveStore((s) => s.db);
   const native = isNativeApp();
+  const installed = isInstalledApp();
   // reference level the user is exposing the mic to (dB), for Match
   const [calRef, setCalRef] = useState(60);
   const [advOpen, setAdvOpen] = useState(false);
@@ -155,7 +156,11 @@ export default function SettingsView() {
         {!native && (
           <Row
             label="Auto-save photos to device"
-            hint="Each shot is also saved to your phone (Downloads), so it shows in the gallery app"
+            hint={
+              installed
+                ? "Saves each shot to your phone's Downloads. Because this is a web app, your browser announces every download with a banner — turn this off to stop the banners; photos stay in the app's gallery either way, and you can still share or save any of them individually."
+                : "Each shot is also saved to your phone (Downloads), so it shows in the gallery app"
+            }
           >
             <Toggle
               on={settings.autoSaveToDevice}

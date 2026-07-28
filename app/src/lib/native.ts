@@ -82,6 +82,29 @@ function cap(): CapacitorGlobal | undefined {
   return (window as { Capacitor?: CapacitorGlobal }).Capacitor;
 }
 
+/**
+ * Running as an INSTALLED app (Play Store APK, or a PWA added to the home
+ * screen) rather than a browser tab.
+ *
+ * Matters for auto-saving: writing a photo to the device is a browser
+ * DOWNLOAD, and Chrome announces every download with its own banner —
+ * which the page cannot suppress. In a tab that is reasonable feedback; in
+ * something the user installed and uses as a camera, a download banner
+ * after every shot is noise.
+ */
+export function isInstalledApp(): boolean {
+  if (isNativeApp()) return true;
+  try {
+    return (
+      window.matchMedia?.("(display-mode: standalone)").matches ||
+      window.matchMedia?.("(display-mode: fullscreen)").matches ||
+      (navigator as { standalone?: boolean }).standalone === true
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function isNativeApp(): boolean {
   return cap()?.isNativePlatform?.() ?? false;
 }
