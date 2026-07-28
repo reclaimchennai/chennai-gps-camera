@@ -443,6 +443,30 @@ textarea {
   transition: transform 0.35s cubic-bezier(0.34, 1.2, 0.64, 1);
 }
 
+/* Lens stops in the controls bar: deliberately small, so the viewfinder
+   stays clean and nothing sits over the watermark. */
+.cam-zoomrow {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.cam-zoomrow button {
+  min-width: 34px;
+  height: 24px;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 11.5px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+}
+.cam-zoomrow button[data-active="true"] {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fbbf24;
+}
+
 .cam-controls {
   flex-shrink: 0;
   background: #000;

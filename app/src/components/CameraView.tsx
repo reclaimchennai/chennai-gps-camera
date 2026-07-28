@@ -118,13 +118,10 @@ export default function CameraView({ active }: { active: boolean }) {
   // a permanent chip row would sit on top of the social-handle watermark.
   const [zoomStops, setZoomStops] = useState<number[]>([]);
   const [zoomNow, setZoomNow] = useState(1);
-  const [zoomBar, setZoomBar] = useState(false);
-  const zoomBarTimer = useRef(0);
+  // The stop list itself; the row lives in the controls bar and is always
+  // visible, so there is no longer anything to show and hide.
   const showZoomBar = useCallback(() => {
     setZoomStops(camera.zoomStops());
-    setZoomBar(true);
-    window.clearTimeout(zoomBarTimer.current);
-    zoomBarTimer.current = window.setTimeout(() => setZoomBar(false), 2500);
   }, []);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [flashFx, setFlashFx] = useState(0);
@@ -228,8 +225,6 @@ export default function CameraView({ active }: { active: boolean }) {
       setEvInfo(info ? { min: info.min, max: info.max, step: info.step } : null);
       if (info) setEvVal(info.value);
       keepFocusUi();
-      // one tap brings up focus, brightness AND the zoom stops together
-      showZoomBar();
     },
     [keepFocusUi, showZoomBar]
   );
@@ -398,7 +393,9 @@ export default function CameraView({ active }: { active: boolean }) {
     // music on Android, and a viewfinder sitting idle has no business
     // silencing the user's music. A short reading is taken at capture
     // instead (see doCapture).
-    camera.audioWanted = (_m ?? modeRef.current) === "video";
+    camera.audioWanted =
+      (_m ?? modeRef.current) === "video" ||
+      useSettingsStore.getState().watermark.fields.soundLevel;
     // cover the zone NOW: the old stream's element keeps its last size, so
     // without this the poll still thought the picture was live and the
     // collapsed/stale <video> showed as the white speck on every resume
@@ -472,7 +469,7 @@ export default function CameraView({ active }: { active: boolean }) {
   // ---- live sound meter (watermark "Sound level" field) ---------------
   const soundOn = useSettingsStore((s) => s.watermark.fields.soundLevel);
   useEffect(() => {
-    if (!active || !ready || !soundOn || mode !== "video") {
+    if (!active || !ready || !soundOn) {
       stopMeter();
       return;
     }
@@ -480,7 +477,7 @@ export default function CameraView({ active }: { active: boolean }) {
     // track — one meter attach, stable across photo/video switches
     startMeter(camera.stream);
     return () => stopMeter();
-  }, [active, ready, soundOn, mode]);
+  }, [active, ready, soundOn]);
 
   const switchMode = useCallback(
     (m: Mode) => {
@@ -718,7 +715,10 @@ export default function CameraView({ active }: { active: boolean }) {
     // short reading — started here, NOT awaited, so it never delays the
     // shutter; the capture pipeline reads whatever has landed by the time
     // it stamps the card.
-    if (useSettingsStore.getState().watermark.fields.soundLevel) {
+    if (
+      useSettingsStore.getState().watermark.fields.soundLevel &&
+      !camera.audioWanted
+    ) {
       void sampleNoiseOnce();
     }
     try {
@@ -1138,14 +1138,11 @@ export default function CameraView({ active }: { active: boolean }) {
    *   the rotated bottom edge); chips on the OPPOSITE side of the card, so
    *   pill, chips and card can never cover each other.
    */
-  const [freeBar, setFreeBar] = useState<{ left: number; top: number } | null>(null);
   const [toastPos, setToastPos] = useState<{ left: number; top: number } | null>(null);
   useEffect(() => {
-    const wantBar = zoomBar;
     const wantToast = !!toast || !!zoomLabel || (afLocked && afChip);
-    if (!recording && !wantBar && !wantToast) {
+    if (!recording && !wantToast) {
       setRecPos(null);
-      setFreeBar(null);
       setToastPos(null);
       return;
     }
@@ -1165,7 +1162,6 @@ export default function CameraView({ active }: { active: boolean }) {
       const gap = 8 / ky;
       const M = 12 / kx;
       const PILL_H = 34 / ky;
-      const BAR_H = 40 / ky;
       const toScreen = (u: number, v: number) => {
         let x = u;
         let y = v;
@@ -1220,34 +1216,6 @@ export default function CameraView({ active }: { active: boolean }) {
         );
       }
 
-      // ---- free zoom chips ----
-      if (wantBar && rect) {
-        // Centre of the bar, on the frame's centre line — it used to be
-        // anchored to the CARD's left edge, which is why it never looked
-        // centred. Vertically it still hugs the card so it cannot cover it.
-        const u = (landscape ? h : w) / 2;
-        let v: number;
-        if (!landscape) {
-          // above a bottom card; below the card AND the pill otherwise
-          v = cardIsTop
-            ? rect.y + rect.height + gap + PILL_H + gap
-            : rect.y - gap - BAR_H;
-        } else {
-          // landscape: the free side of the card, toward the centre — the
-          // pill owns the top/bottom edges now, the card owns its own edge
-          v = cardIsTop ? rect.y + rect.height + gap : rect.y - gap - BAR_H;
-        }
-        v = Math.max(M, v + BAR_H / 2); // v was an edge; anchor the centre
-        const b = toScreen(u, v);
-        setFreeBar((p) =>
-          p && Math.abs(p.left - b.left) < 3 && Math.abs(p.top - b.top) < 3
-            ? p
-            : b
-        );
-      } else if (wantBar) {
-        setFreeBar(null);
-      }
-
       // ---- messages ----
       // Always on the edge OPPOSITE the watermark card, centred along it,
       // and below the recording pill when that shares the edge. In
@@ -1279,18 +1247,18 @@ export default function CameraView({ active }: { active: boolean }) {
     tick();
     const t = window.setInterval(tick, 400);
     return () => window.clearInterval(t);
-  }, [recording, zoomBar, focusPos, uiRot, toast, zoomLabel, afLocked, afChip]);
+  }, [recording, focusPos, uiRot, toast, zoomLabel, afLocked, afChip]);
 
   // Acquire or release the microphone as the need changes, without
   // restarting the camera: entering video mode needs it, going back to
   // photo (with the noise field off) hands it back to other apps.
   useEffect(() => {
     if (!active || !ready) return;
-    const need = mode === "video";
+    const need = mode === "video" || soundOn;
     camera.audioWanted = need;
     if (need) void camera.ensureAudio();
     else camera.releaseAudio();
-  }, [active, ready, mode]);
+  }, [active, ready, mode, soundOn]);
 
   // an AF lock does not survive the track it was applied to (a lens switch
   // opens a new one), so drop the padlock rather than show a dead one
@@ -1438,52 +1406,6 @@ export default function CameraView({ active }: { active: boolean }) {
   const fmtRec = (s: number) =>
     `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
-  // One definition, two homes: hanging under the focus group when there is
-  // one (so the stops travel with the tap point), pinned over the bottom of
-  // the picture when zooming without a focus tap.
-  const zoomChips = zoomStops.map((z) => (
-    <button
-      key={z}
-      data-active={Math.abs(z - zoomNow) < 0.05}
-      onClick={(e) => {
-        e.stopPropagation();
-        void camera.setZoom(z).then((got) => {
-          setZoomNow(got);
-          setZoomLabel(fmtZoom(got));
-          // asked for a lens the phone won't hand over: say so once
-          // instead of silently landing somewhere else
-          if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
-            showToast("This phone doesn't let apps use that lens directly");
-          }
-        });
-        showZoomBar();
-        keepFocusUi();
-      }}
-    >
-      {fmtZoom(z)}
-    </button>
-  ));
-  // Free-floating copy: dynamically anchored off the card in either
-  // orientation; falls back to the CSS default before the first card rect.
-  const zoomBarEl = zoomBar && zoomStops.length > 1 && (
-    <div
-      className="cam-zoombar"
-      style={
-        (freeBar
-          ? {
-              left: freeBar.left,
-              top: freeBar.top,
-              bottom: "auto",
-              transform: `translate(-50%, -50%) rotate(${uiRot}deg)`,
-            }
-          : { "--ui-rot": `${uiRot}deg` }) as React.CSSProperties
-      }
-      onPointerDown={(e) => e.stopPropagation()}
-      onPointerUp={(e) => e.stopPropagation()}
-    >
-      {zoomChips}
-    </div>
-  );
   return (
     <div
       className="cam-screen"
@@ -1557,7 +1479,7 @@ export default function CameraView({ active }: { active: boolean }) {
                 resized that strip as they came and went, so the viewfinder
                 kept growing and shrinking. With a focus group on screen
                 they ride along underneath it instead (see below). */}
-          {zoomBarEl}
+
         </div>
 
         {/* Black fill over the whole viewfinder zone until the stream
@@ -1839,6 +1761,30 @@ export default function CameraView({ active }: { active: boolean }) {
 
       {/* Opaque controls bar — below the viewfinder, never over it. */}
       <div className="cam-controls">
+        {/* Lens stops live HERE, not over the picture: always visible,
+            never covering the watermark, and small enough to leave the
+            viewfinder clean. Pinching updates which one is highlighted. */}
+        {zoomStops.length > 1 && (
+          <div className="cam-zoomrow">
+            {zoomStops.map((z) => (
+              <button
+                key={z}
+                data-active={Math.abs(z - zoomNow) < 0.05}
+                disabled={recording && false}
+                onClick={() => {
+                  void camera.setZoom(z).then((got) => {
+                    setZoomNow(got);
+                    if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
+                      showToast("This phone doesn't let apps use that lens directly");
+                    }
+                  });
+                }}
+              >
+                {fmtZoom(z)}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="cam-mode">
           <button
             data-active={mode === "photo"}
