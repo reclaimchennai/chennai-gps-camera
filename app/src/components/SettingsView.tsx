@@ -329,7 +329,7 @@ export default function SettingsView() {
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="ghost-btn"
-                    onClick={() => setControls(camera.controlReport())}
+                    onClick={() => void camera.controlReport().then(setControls)}
                   >
                     {controls ? "Refresh" : "Check"}
                   </button>
@@ -337,13 +337,14 @@ export default function SettingsView() {
                     <button
                       className="ghost-btn"
                       onClick={() => {
-                        const text = Object.entries(camera.controlReport())
-                          .map(([k, v]) => `${k}: ${v}`)
-                          .join("\n");
-                        void navigator.clipboard
-                          ?.writeText(text)
-                          .then(() => setCopied(true))
-                          .catch(() => setCopied(false));
+                        void camera.controlReport().then((r) => {
+                          const text = Object.entries(r)
+                            .map(([k, v]) => `${k}: ${v}`)
+                            .join("\n");
+                          return navigator.clipboard
+                            ?.writeText(text)
+                            .then(() => setCopied(true));
+                        }).catch(() => setCopied(false));
                       }}
                     >
                       {copied ? "Copied" : "Copy for a report"}

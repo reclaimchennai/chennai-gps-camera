@@ -1471,13 +1471,53 @@ export class CameraController {
    * the WebView and Chrome expose different sets on the SAME phone, and
    * guessing from the outside has cost several release cycles.
    */
-  controlReport(): Record<string, string> {
-    return { ...this.controlReportCore() };
+  /**
+   * Capability report for support.
+   *
+   * MUST open a camera if one is not already running: with no live track
+   * every capability reads as "not offered", which is indistinguishable
+   * from a phone that genuinely offers nothing. A report taken from the
+   * Settings screen said exactly that about a Motorola with a working
+   * ultra-wide, and it was wrong — the camera was simply not running.
+   */
+  async controlReport(): Promise<Record<string, string>> {
+    if (this.track) return { ...this.controlReportCore() };
+    let temp: MediaStream | null = null;
+    try {
+      temp = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
+      const t = temp.getVideoTracks()[0];
+      const caps = (t?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+      const set = (t?.getSettings?.() ?? {}) as Record<string, unknown>;
+      const report = this.reportFrom(caps, set);
+      report["Note"] = "measured from a temporary camera (viewfinder was idle)";
+      return report;
+    } catch (e) {
+      return {
+        Camera: "could not be opened",
+        Why: (e as { name?: string })?.name ?? "unknown error",
+        Note: "open the camera screen first, then check again",
+        Runtime: isNativeApp() ? "Android app" : "browser",
+        Build: `${__BUILD_TS__.slice(0, 16).replace("T", " ")} UTC`,
+        Browser: navigator.userAgent.slice(0, 90),
+      };
+    } finally {
+      for (const t of temp?.getTracks() ?? []) t.stop();
+    }
   }
 
   private controlReportCore(): Record<string, string> {
-    const caps = (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
-    const set = (this.track?.getSettings?.() ?? {}) as Record<string, unknown>;
+    return this.reportFrom(
+      (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>,
+      (this.track?.getSettings?.() ?? {}) as Record<string, unknown>
+    );
+  }
+
+  private reportFrom(
+    caps: Record<string, unknown>,
+    set: Record<string, unknown>
+  ): Record<string, string> {
     const range = (v: unknown) => {
       const r = v as { min?: number; max?: number } | undefined;
       return r && typeof r.min === "number" ? `${r.min} – ${r.max}` : "not offered";
