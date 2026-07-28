@@ -269,14 +269,26 @@ export class CameraController {
     // depends on preview size — those captures take the full-sensor
     // ImageCapture path — so this is purely a smoothness dial.
     const plan = qualityPlan();
-    // Ask for a SIZE, not a SHAPE. Forcing 16:9 made the preview narrower
-    // than the phone's screen — the black bars down both sides — and worse,
-    // these sensors are natively 4:3 (the Motorola reports a 4080x3072
-    // maximum), so a 16:9 preview showed LESS than the photo actually
-    // captured. Letting the camera pick its own shape fills the viewfinder
-    // and makes what you see what you get. start() and useDevice() must
-    // stay identical here, or switching lens changes the picture's shape.
-    const size = { width: { ideal: plan.previewLongEdge } };
+    /**
+     * Ask for a standard 16:9 video profile.
+     *
+     * Not about shape any more — the viewfinder crops to fill, so the
+     * frame's aspect no longer decides whether there are black bars. This
+     * is about STABILISATION: phones apply electronic image stabilisation
+     * to their video profiles, and 1440x2560 (what this request produces)
+     * is one. Dropping the height constraint in v1.15.1 let the camera
+     * answer with a stills/preview configuration instead, typically
+     * unstabilised — walking footage went visibly shakier, exactly as
+     * reported.
+     *
+     * start() and useDevice() must stay identical, or switching lens
+     * changes the configuration mid-session.
+     */
+    const size = {
+      width: { ideal: plan.previewLongEdge },
+      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
+      frameRate: { ideal: 30 },
+    };
     // Open the remembered 1x lens DIRECTLY when a profile exists. A profile
     // is only ever saved on phones WITHOUT a logical cross-lens camera
     // (detectLenses skips discovery entirely when the track zooms below 1x
@@ -787,14 +799,13 @@ export class CameraController {
     const audio = this.stream?.getAudioTracks()[0] ?? null;
     const previous = this.activeLensId;
     const plan = qualityPlan();
-    // Ask for a SIZE, not a SHAPE. Forcing 16:9 made the preview narrower
-    // than the phone's screen — the black bars down both sides — and worse,
-    // these sensors are natively 4:3 (the Motorola reports a 4080x3072
-    // maximum), so a 16:9 preview showed LESS than the photo actually
-    // captured. Letting the camera pick its own shape fills the viewfinder
-    // and makes what you see what you get. start() and useDevice() must
-    // stay identical here, or switching lens changes the picture's shape.
-    const size = { width: { ideal: plan.previewLongEdge } };
+    // Same video profile as start() — see the note there. These must stay
+    // identical, or a lens switch changes the stabilisation behaviour.
+    const size = {
+      width: { ideal: plan.previewLongEdge },
+      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
+      frameRate: { ideal: 30 },
+    };
     const wanted = (id: string | null): MediaTrackConstraints =>
       id
         ? { deviceId: { exact: id }, ...size }
