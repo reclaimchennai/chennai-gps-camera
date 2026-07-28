@@ -8,6 +8,11 @@ import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 import { qualitySummary } from "../lib/quality";
 import { camera, loadLensProfile, type Lens } from "../lib/camera";
+import {
+  nativeCameraSupported,
+  nativeCameraEnabled,
+  setNativeCameraEnabled,
+} from "../lib/native-camera";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -103,6 +108,7 @@ export default function SettingsView() {
   );
   const [controls, setControls] = useState<Record<string, string> | null>(null);
   const [copied, setCopied] = useState(false);
+  const [nativeOn, setNativeOn] = useState(() => nativeCameraEnabled());
   const [calibrating, setCalibrating] = useState(false);
   const [calResult, setCalResult] = useState<string | null>(null);
   useEffect(() => {
@@ -319,6 +325,36 @@ export default function SettingsView() {
 
             {/* styled exactly like the other settings rows: bold label,
                 lighter hint at the standard size */}
+              {nativeCameraSupported() && (
+                <div className="row" style={{ display: "block" }}>
+                  <div className="label">
+                    Native camera <span className="exp-chip">Experimental</span>
+                  </div>
+                  <div className="hint" style={{ margin: "2px 0 8px", lineHeight: 1.5 }}>
+                    Uses Android&apos;s own camera instead of the browser&apos;s.
+                    This is what can reach a wide or telephoto lens on phones
+                    where the browser only offers one camera — the reason
+                    &quot;Zoom: not offered&quot; appears below on this device.
+                    <strong style={{ color: "var(--text)" }}>
+                      {" "}Preview only for now: taking photos and video is
+                      disabled while this is on.
+                    </strong>{" "}
+                    Turn it off to go back to the normal camera.
+                  </div>
+                  <Toggle
+                    on={nativeOn}
+                    onChange={(v) => {
+                      setNativeCameraEnabled(v);
+                      setNativeOn(v);
+                      // full reload: the camera is owned by one layer or the
+                      // other, and swapping cleanly is not worth the risk of
+                      // half-torn-down state
+                      window.setTimeout(() => window.location.reload(), 250);
+                    }}
+                  />
+                </div>
+              )}
+
               <div className="row" style={{ display: "block" }}>
                 <div className="label">Camera capabilities</div>
                 <div className="hint" style={{ margin: "2px 0 8px" }}>

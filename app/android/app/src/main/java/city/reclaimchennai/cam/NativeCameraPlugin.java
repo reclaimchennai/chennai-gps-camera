@@ -111,6 +111,12 @@ public class NativeCameraPlugin extends Plugin {
                     // FIT_CENTER keeps the whole frame visible, matching how
                     // the web viewfinder letterboxes it today
                     previewView.setScaleType(PreviewView.ScaleType.FIT_CENTER);
+                    // TextureView, not SurfaceView: a SurfaceView renders in
+                    // its own hardware layer and will not reliably sit UNDER
+                    // a translucent WebView. This is the whole compositing
+                    // trick; do not "optimise" it back to PERFORMANCE.
+                    previewView.setImplementationMode(
+                        PreviewView.ImplementationMode.COMPATIBLE);
                 }
                 if (previewView.getParent() == null) {
                     parent.addView(previewView, 0);
@@ -167,6 +173,41 @@ public class NativeCameraPlugin extends Plugin {
             } catch (Exception e) {
                 call.reject("stop failed: " + e.getMessage());
             }
+        });
+    }
+
+    /**
+     * Put the preview exactly where the web layout's viewfinder is.
+     *
+     * The app letterboxes the picture inside .cam-video-box with the
+     * watermark card anchored to its bottom and an opaque controls bar
+     * below — a full-screen preview would sit behind all of it. The web
+     * layer sends that rectangle in CSS pixels; convert with the display
+     * density.
+     */
+    @PluginMethod
+    public void setPreviewRect(PluginCall call) {
+        final Double x = call.getDouble("x");
+        final Double y = call.getDouble("y");
+        final Double w = call.getDouble("width");
+        final Double h = call.getDouble("height");
+        if (x == null || y == null || w == null || h == null) {
+            call.reject("rect required");
+            return;
+        }
+        getActivity().runOnUiThread(() -> {
+            if (previewView == null) {
+                call.resolve();
+                return;
+            }
+            float d = getContext().getResources().getDisplayMetrics().density;
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                Math.max(1, (int) (w * d)), Math.max(1, (int) (h * d)));
+            lp.leftMargin = (int) (x * d);
+            lp.topMargin = (int) (y * d);
+            previewView.setLayoutParams(lp);
+            previewView.requestLayout();
+            call.resolve();
         });
     }
 
