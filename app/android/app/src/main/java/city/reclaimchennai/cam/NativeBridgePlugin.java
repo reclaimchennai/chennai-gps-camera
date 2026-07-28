@@ -87,6 +87,47 @@ public class NativeBridgePlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * Shutter feedback, straight to the phone's vibrator.
+     *
+     * navigator.vibrate() exists in the WebView but does not reliably fire
+     * there — the owner reported no feedback at all with the web API and
+     * the VIBRATE permission in place. Going through the system service
+     * removes the doubt. `pattern` is the same shape the web API takes:
+     * alternating wait/vibrate milliseconds.
+     */
+    @PluginMethod
+    public void vibrate(PluginCall call) {
+        try {
+            com.getcapacitor.JSArray arr = call.getArray("pattern");
+            long[] pattern;
+            if (arr != null && arr.length() > 0) {
+                pattern = new long[arr.length()];
+                for (int i = 0; i < arr.length(); i++) {
+                    pattern[i] = ((Number) arr.get(i)).longValue();
+                }
+            } else {
+                pattern = new long[] { 0, 35 };
+            }
+            android.os.Vibrator v;
+            if (Build.VERSION.SDK_INT >= 31) {
+                android.os.VibratorManager vm = (android.os.VibratorManager)
+                    getContext().getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                v = vm != null ? vm.getDefaultVibrator() : null;
+            } else {
+                v = (android.os.Vibrator)
+                    getContext().getSystemService(Context.VIBRATOR_SERVICE);
+            }
+            if (v != null && v.hasVibrator()) {
+                // -1: play the pattern once, never repeat
+                v.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1));
+            }
+        } catch (Exception ignored) {
+            // no vibrator, or the user has haptics off — never fail a capture
+        }
+        call.resolve();
+    }
+
     @PluginMethod
     public void setShutterKeys(PluginCall call) {
         MainActivity.setShutterKeys(call.getBoolean("enabled", false));

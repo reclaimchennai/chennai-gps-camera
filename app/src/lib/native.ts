@@ -65,6 +65,7 @@ interface NativeBridgePlugin {
   checkMockLocation(): Promise<{ mock: boolean }>;
   setShutterKeys(opts: { enabled: boolean }): Promise<void>;
   minimizeApp(): Promise<void>;
+  vibrate(opts: { pattern: number[] }): Promise<void>;
 }
 
 export interface NativePermStates {
@@ -126,6 +127,18 @@ export async function setShutterKeys(enabled: boolean): Promise<void> {
     await b.setShutterKeys({ enabled });
   } catch {
     // older APK without the method — volume keys keep their old behaviour
+  }
+}
+
+/** Shutter feedback through the system vibrator. No-op off-device. */
+export function nativeVibrate(pattern: number[]): boolean {
+  const b = bridge();
+  if (!b?.vibrate) return false;
+  try {
+    void b.vibrate({ pattern });
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -396,7 +396,6 @@ export default function CameraView({ active }: { active: boolean }) {
     // silencing the user's music. A short reading is taken at capture
     // instead (see doCapture).
     const forMode = _m ?? modeRef.current;
-    camera.streamFor = forMode === "video" ? "video" : "photo";
     camera.audioWanted =
       forMode === "video" ||
       useSettingsStore.getState().watermark.fields.soundLevel;
@@ -508,17 +507,12 @@ export default function CameraView({ active }: { active: boolean }) {
   const switchMode = useCallback(
     (m: Mode) => {
       if (m === modeRef.current || recording) return;
+      // No camera restart: the shared stream keeps running, so the switch
+      // is instant and torch/zoom/meter state all survive. The owner chose
+      // this over matching the stock app's framing — steady video and an
+      // instant switch matter more than the last 25% of width, since the
+      // saved photo carries more than the viewfinder shows anyway.
       setMode(m);
-      // The two modes want different stream shapes and a stream's shape is
-      // fixed when it opens: photos want the sensor's full 4:3 field of
-      // view, recording wants a 16:9 video profile for stabilisation. So
-      // this one switch does need a restart — behind the held frame, so it
-      // reads as a brief settle rather than a black gap.
-      const want: "photo" | "video" = m === "video" ? "video" : "photo";
-      if (camera.streamFor !== want) {
-        camera.streamFor = want;
-        void startCamRef.current?.(m);
-      }
     },
     [recording]
   );

@@ -12,7 +12,14 @@
  * behaviour — never assume it fired.
  */
 
-function buzz(pattern: number | number[]): void {
+import { nativeVibrate } from "./native";
+
+function buzz(pattern: number[]): void {
+  // Native first: navigator.vibrate exists in the Android WebView but does
+  // not reliably fire there, even with the VIBRATE permission granted —
+  // the shutter gave no feedback at all until this went through the
+  // system vibrator instead.
+  if (nativeVibrate(pattern)) return;
   try {
     navigator.vibrate?.(pattern);
   } catch {
@@ -22,10 +29,10 @@ function buzz(pattern: number | number[]): void {
 
 /** One short pulse: a photo, or a recording starting. */
 export function hapticTap(): void {
-  buzz(35);
+  buzz([0, 35]);
 }
 
 /** Two pulses: a recording stopping. */
 export function hapticDouble(): void {
-  buzz([35, 90, 35]);
+  buzz([0, 35, 90, 35]);
 }

@@ -243,20 +243,6 @@ export class CameraController {
    */
   audioWanted = true;
 
-  /**
-   * Which stream shape to ask the camera for.
-   *
-   * These pull in opposite directions and only the mode knows which
-   * matters:
-   *  - "photo" asks 4:3, the sensor's own shape — the FULL field of view.
-   *    Asking 16:9 of a 4:3 sensor makes it crop 25% of the width, which
-   *    is why 1x looked more zoomed in than the stock camera app.
-   *  - "video" asks 16:9, a standard video profile, because that is what
-   *    phones apply electronic stabilisation to (see start()).
-   * Changing this needs a restart — the shape is fixed when the stream
-   * opens.
-   */
-  streamFor: "photo" | "video" = "photo";
 
   /** Release the microphone without disturbing the picture. */
   releaseAudio(): void {
@@ -301,13 +287,12 @@ export class CameraController {
      */
     const size = {
       width: { ideal: plan.previewLongEdge },
-      height: {
-        ideal: Math.round(
-          this.streamFor === "video"
-            ? (plan.previewLongEdge * 9) / 16 // stabilised video profile
-            : (plan.previewLongEdge * 3) / 4 // full sensor width for stills
-        ),
-      },
+      // 16:9 for BOTH modes. It costs ~25% of the sensor's width, so the
+      // viewfinder is tighter than the stock camera app — the owner's
+      // explicit trade: steady video and an instant photo/video switch
+      // matter more, and the saved photo carries more than was framed
+      // regardless.
+      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
       frameRate: { ideal: 30 },
     };
     // Open the remembered 1x lens DIRECTLY when a profile exists. A profile
@@ -824,13 +809,12 @@ export class CameraController {
     // identical, or a lens switch changes the stabilisation behaviour.
     const size = {
       width: { ideal: plan.previewLongEdge },
-      height: {
-        ideal: Math.round(
-          this.streamFor === "video"
-            ? (plan.previewLongEdge * 9) / 16 // stabilised video profile
-            : (plan.previewLongEdge * 3) / 4 // full sensor width for stills
-        ),
-      },
+      // 16:9 for BOTH modes. It costs ~25% of the sensor's width, so the
+      // viewfinder is tighter than the stock camera app — the owner's
+      // explicit trade: steady video and an instant photo/video switch
+      // matter more, and the saved photo carries more than was framed
+      // regardless.
+      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
       frameRate: { ideal: 30 },
     };
     const wanted = (id: string | null): MediaTrackConstraints =>
