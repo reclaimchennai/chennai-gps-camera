@@ -106,9 +106,6 @@ public class MainActivity extends BridgeActivity {
         // absence as "no registrations".
         wipeRestoredServiceWorkers();
         registerPlugin(NativeBridgePlugin.class);
-        // Native camera (CameraX). Registered but INERT: nothing starts it
-        // until the web layer asks, so the shipping app is untouched.
-        registerPlugin(NativeCameraPlugin.class);
         super.onCreate(savedInstanceState);
         setupBackNavigation();
         setupDeterministicPermissionGrants();

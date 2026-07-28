@@ -1,5 +1,4 @@
 ext {
-    cameraxVersion = '1.4.2'
     minSdkVersion = 24
     compileSdkVersion = 36
     targetSdkVersion = 36

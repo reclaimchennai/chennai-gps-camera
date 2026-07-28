@@ -21,16 +21,6 @@ import {
   setShutterKeys,
 } from "../lib/native";
 import { navigate } from "../nav";
-import {
-  nativeCameraEnabled,
-  nativeStart,
-  nativeStop,
-  nativeSetRect,
-  nativeSetZoom,
-  nativeFocusAt,
-  markNativeAttempt,
-  setNativeCameraEnabled,
-} from "../lib/native-camera";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
 import { detectFaces, type DetectedBox } from "../lib/detect/faces";
@@ -452,55 +442,8 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => window.clearInterval(t);
   }, [active, ready, permState, startCam]);
 
-  /**
-   * EXPERIMENTAL native preview. While on, CameraX owns the camera (only
-   * one holder is allowed), so the web viewfinder stays stopped. Capture
-   * is disabled in this stage — the point is to find out whether the
-   * ultra-wide the WebView hides is reachable, and whether a native
-   * surface composites correctly under this UI.
-   */
-  const [nativeCaps, setNativeCaps] = useState<{ minZoom?: number; maxZoom?: number } | null>(null);
-  useEffect(() => {
-    if (!nativeCameraEnabled() || permState !== "granted") return;
-    let alive = true;
-    // record the attempt BEFORE touching the camera: if this run dies, the
-    // next boot finds the marker and disables the experiment itself
-    markNativeAttempt();
-    camera.stop();
-    void (async () => {
-      await new Promise((r) => window.setTimeout(r, 250)); // let it release
-      if (!alive) return;
-      const caps = await nativeStart();
-      if (!alive) return;
-      if (!caps) {
-        // native refused — go back to the camera that works
-        setNativeCameraEnabled(false);
-        showToast("Native camera unavailable on this phone — using the normal camera");
-        void startCam(modeRef.current);
-        return;
-      }
-      setNativeCaps(caps);
-      await nativeSetRect(boxRef.current);
-      setReady(true);
-    })();
-    const onResize = () => void nativeSetRect(boxRef.current);
-    window.addEventListener("resize", onResize);
-    return () => {
-      alive = false;
-      window.removeEventListener("resize", onResize);
-      void nativeStop();
-    };
-  }, [permState, startCam, showToast]);
-
-  // keep the native surface on the viewfinder as the layout settles
-  useEffect(() => {
-    if (!nativeCameraEnabled() || !nativeCaps) return;
-    void nativeSetRect(boxRef.current);
-  }, [nativeCaps, uiRot, active]);
-
   useEffect(() => {
     if (permState !== "granted") return;
-    if (nativeCameraEnabled()) return; // the native preview owns the camera
     void startCam(modeRef.current);
     const onVis = () => {
       if (document.hidden) {
@@ -1144,18 +1087,6 @@ export default function CameraView({ active }: { active: boolean }) {
 
   // calibration finished renaming a lens (.6x vs .5x, 3x vs 5x): refresh
   // the stop chips so they read what this phone actually has
-  // native preview: build the stops from the REAL hardware zoom range —
-  // this is where a phone's hidden ultra-wide finally shows up
-  useEffect(() => {
-    if (!nativeCaps?.minZoom) return;
-    const min = nativeCaps.minZoom;
-    const max = Math.min(nativeCaps.maxZoom ?? 3, 10);
-    const stops = [min, 1, 2, 3].filter(
-      (z, i, a) => z >= min - 1e-6 && z <= max + 1e-6 && a.indexOf(z) === i
-    );
-    setZoomStops(stops);
-  }, [nativeCaps]);
-
   useEffect(() => {
     const onLenses = () => setZoomStops(camera.zoomStops());
     window.addEventListener("gpscam:lenses-updated", onLenses);
@@ -1450,11 +1381,7 @@ export default function CameraView({ active }: { active: boolean }) {
               if (camera.facing === "user") nx = 1 - nx; // preview is mirrored
               point = { x: nx, y: ny };
             }
-            if (nativeCameraEnabled()) {
-              if (point) void nativeFocusAt(point.x, point.y);
-            } else {
-              void camera.focusAt(point);
-            }
+            void camera.focusAt(point);
           }
         }
         tapCandidate.current = null;
@@ -1845,11 +1772,6 @@ export default function CameraView({ active }: { active: boolean }) {
                 data-active={Math.abs(z - zoomNow) < 0.05}
                 disabled={recording && false}
                 onClick={() => {
-                  if (nativeCameraEnabled()) {
-                    void nativeSetZoom(z);
-                    setZoomNow(z);
-                    return;
-                  }
                   void camera.setZoom(z).then((got) => {
                     setZoomNow(got);
                     if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
