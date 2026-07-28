@@ -317,12 +317,14 @@ textarea {
 
 .cam-video-box video {
   display: block;
-  /* measured by CameraView's ResizeObserver — never overflows the
-     viewfinder zone regardless of screen / system-bar sizes */
-  max-width: var(--vpw, 100vw);
-  max-height: var(--vph, 70vh);
-  width: auto;
-  height: auto;
+  /* FILL the viewfinder zone, cropping whatever does not fit.
+     The owner's call, and the right one for this app: the saved photo
+     keeps the full sensor frame, so a filled preview means the photo
+     contains MORE than was framed, never less. Fitting instead left black
+     bars, which is what the viewfinder used to look like. */
+  width: var(--vpw, 100vw);
+  height: var(--vph, 70vh);
+  object-fit: cover;
   /* a black poster + black backdrop means the pre-stream gap and every
      mode switch render fully dark — never the WebView's play-button
      overlay (which a paused <video> shows only when it has no poster) */

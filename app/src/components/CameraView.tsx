@@ -21,6 +21,7 @@ import {
   setShutterKeys,
 } from "../lib/native";
 import { navigate } from "../nav";
+import { hapticTap, hapticDouble } from "../lib/haptics";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
 import { detectFaces, type DetectedBox } from "../lib/detect/faces";
@@ -380,6 +381,7 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
 
   const camStarting = useRef(false);
+  const startCamRef = useRef<((m?: Mode) => Promise<void>) | null>(null);
   const startCam = useCallback(async (_m?: Mode) => {
     if (camStarting.current) return;
     camStarting.current = true;
@@ -409,13 +411,34 @@ export default function CameraView({ active }: { active: boolean }) {
       setAfLocked(false);
       setFocusPos(null);
     } catch (e) {
-      // A refusal means the app does NOT hold the permission, whatever the
-      // bridge reported earlier — put the gate back so the user has a way
-      // to grant it, instead of a dead viewfinder and a retry that can
-      // never succeed.
       const name = (e as { name?: string })?.name;
       if (name === "NotAllowedError" || name === "SecurityError") {
-        setPermState((p) => (p === "granted" ? "needed" : p));
+        // A refusal USUALLY means the permission is not held — that is why
+        // the gate reappears here (v1.12.7, where a fresh install could
+        // otherwise never be granted anything). But the browser also
+        // refuses transiently: a tab reopened before the previous camera
+        // has been released answers NotAllowedError once and succeeds a
+        // moment later. Flipping straight to the gate on that made the web
+        // app demand "Enable camera" on every launch when the permission
+        // was already granted. So ask the browser what it actually holds
+        // before concluding anything.
+        let held = false;
+        try {
+          const st = await navigator.permissions?.query({
+            name: "camera" as PermissionName,
+          });
+          held = st?.state === "granted";
+        } catch {
+          // no Permissions API for camera — trust the error
+        }
+        if (held) {
+          // transient: retry shortly, do not accuse the user of a denial
+          window.setTimeout(() => {
+            if (!camStarting.current) void startCamRef.current?.(modeRef.current);
+          }, 400);
+        } else {
+          setPermState((p) => (p === "granted" ? "needed" : p));
+        }
       } else {
         setCamError(
           "Camera unavailable. Check that permission is granted and no other app is using it."
@@ -425,6 +448,7 @@ export default function CameraView({ active }: { active: boolean }) {
       camStarting.current = false;
     }
   }, [armLivePoll]);
+  startCamRef.current = startCam;
 
   // Self-heal: transient start failures (camera busy after a phone call,
   // slow HAL) retry quietly. Only runs once permissions are held, so it
@@ -709,6 +733,7 @@ export default function CameraView({ active }: { active: boolean }) {
   const doCapture = useCallback(async () => {
     if (grabbing.current || !ready) return;
     grabbing.current = true;
+    hapticTap(); // confirm the shutter fired, before any of the slow work
     setFlashFx((k) => k + 1);
     // Photo mode keeps the microphone released so other apps can keep
     // playing audio. If the watermark carries a noise level, take one
@@ -741,6 +766,7 @@ export default function CameraView({ active }: { active: boolean }) {
 
   // ---- video record -------------------------------------------------------
   const stopRecording = useCallback(() => {
+    hapticDouble(); // two pulses: stopping, distinct from starting
     recorderRef.current?.stop();
   }, []);
 
@@ -1023,6 +1049,7 @@ export default function CameraView({ active }: { active: boolean }) {
       })();
     };
     recStartRef.current = Date.now();
+    hapticTap(); // recording is starting
     rec.start(1000);
     recorderRef.current = rec;
     setRecording(true);
