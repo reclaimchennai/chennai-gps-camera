@@ -269,10 +269,14 @@ export class CameraController {
     // depends on preview size — those captures take the full-sensor
     // ImageCapture path — so this is purely a smoothness dial.
     const plan = qualityPlan();
-    const size = {
-      width: { ideal: plan.previewLongEdge },
-      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
-    };
+    // Ask for a SIZE, not a SHAPE. Forcing 16:9 made the preview narrower
+    // than the phone's screen — the black bars down both sides — and worse,
+    // these sensors are natively 4:3 (the Motorola reports a 4080x3072
+    // maximum), so a 16:9 preview showed LESS than the photo actually
+    // captured. Letting the camera pick its own shape fills the viewfinder
+    // and makes what you see what you get. start() and useDevice() must
+    // stay identical here, or switching lens changes the picture's shape.
+    const size = { width: { ideal: plan.previewLongEdge } };
     // Open the remembered 1x lens DIRECTLY when a profile exists. A profile
     // is only ever saved on phones WITHOUT a logical cross-lens camera
     // (detectLenses skips discovery entirely when the track zooms below 1x
@@ -782,14 +786,15 @@ export class CameraController {
   private async useDevice(deviceId: string | null): Promise<boolean> {
     const audio = this.stream?.getAudioTracks()[0] ?? null;
     const previous = this.activeLensId;
-    // Same width AND height as start(): asking for width alone let the new
-    // lens come back 4:3 where the old one was 16:9, so the viewfinder box
-    // visibly shrank every time the lens changed.
     const plan = qualityPlan();
-    const size = {
-      width: { ideal: plan.previewLongEdge },
-      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
-    };
+    // Ask for a SIZE, not a SHAPE. Forcing 16:9 made the preview narrower
+    // than the phone's screen — the black bars down both sides — and worse,
+    // these sensors are natively 4:3 (the Motorola reports a 4080x3072
+    // maximum), so a 16:9 preview showed LESS than the photo actually
+    // captured. Letting the camera pick its own shape fills the viewfinder
+    // and makes what you see what you get. start() and useDevice() must
+    // stay identical here, or switching lens changes the picture's shape.
+    const size = { width: { ideal: plan.previewLongEdge } };
     const wanted = (id: string | null): MediaTrackConstraints =>
       id
         ? { deviceId: { exact: id }, ...size }
