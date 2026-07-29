@@ -106,6 +106,29 @@ interface SettingsState {
   setProfile(profile: Profile): void;
 }
 
+/**
+ * Existing installed web apps: stop the download banner after every photo.
+ *
+ * v1.16.2 made auto-save default OFF for installed web apps, but a default
+ * only applies to a fresh profile — and reinstalling a home-screen app
+ * keeps the site's storage, so anyone who already had it on kept getting
+ * a download prompt per shot. Turn it off once, and remember that we did,
+ * so a deliberate re-enable is never overridden.
+ */
+function migrateAutoSaveForInstalledApps(): void {
+  try {
+    if (isNativeApp() || !isInstalledApp()) return;
+    if (localStorage.getItem("gpscam-autosave-migrated") === "1") return;
+    localStorage.setItem("gpscam-autosave-migrated", "1");
+    const st = useSettingsStore.getState();
+    if (st.settings.autoSaveToDevice) {
+      st.setSettings({ autoSaveToDevice: false });
+    }
+  } catch {
+    // storage unavailable — nothing to migrate
+  }
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   hydrated: false,
   settings: DEFAULT_SETTINGS,
@@ -145,3 +168,6 @@ export async function hydrateSettings(): Promise<void> {
     profile: { ...DEFAULT_PROFILE, ...profile },
   });
 }
+
+// run once the store exists
+migrateAutoSaveForInstalledApps();
