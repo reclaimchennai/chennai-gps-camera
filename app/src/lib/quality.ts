@@ -74,7 +74,15 @@ export function qualityPlan(): QualityPlan {
   switch (cachedTier) {
     case "high":
       return {
-        previewLongEdge: 2560,
+        // Preview MATCHES the recording size. It used to ask for 2560
+        // while recording 1920, so every frame of a recording was rescaled
+        // 1.78x down while being composited — 3.7 MP in, 2.1 MP out, thirty
+        // times a second, on top of the watermark render. That uneven work
+        // per frame is judder, and judder reads as camera shake: handheld
+        // clips came back visibly less steady than the same walk recorded
+        // at 720p. Nothing is lost by dropping it — the viewfinder is a
+        // phone screen, and stills come from the full sensor either way.
+        previewLongEdge: 1920,
         recordLongEdge: 1920,
         videoBitsPerSecond: 10_000_000,
         tier: cachedTier,
