@@ -380,6 +380,8 @@ export default function CameraView({ active }: { active: boolean }) {
     }
   }, []);
 
+  const pendingShots = useRef(0);
+  const doCaptureRef = useRef<(() => Promise<void>) | null>(null);
   const camStarting = useRef(false);
   const startCamRef = useRef<((m?: Mode) => Promise<void>) | null>(null);
   const startCam = useCallback(async (_m?: Mode) => {
@@ -735,7 +737,15 @@ export default function CameraView({ active }: { active: boolean }) {
   // shutter is ready again almost immediately.
   const grabbing = useRef(false);
   const doCapture = useCallback(async () => {
-    if (grabbing.current || !ready) return;
+    if (!ready) return;
+    // BURST: a tap landing while the previous capture is still grabbing
+    // used to be thrown away, so hammering the shutter silently lost half
+    // the shots. Remember it instead and fire it the moment the camera is
+    // free. Bounded, so a stuck finger cannot queue a hundred frames.
+    if (grabbing.current) {
+      if (pendingShots.current < 4) pendingShots.current += 1;
+      return;
+    }
     grabbing.current = true;
     hapticTap(); // confirm the shutter fired, before any of the slow work
     setFlashFx((k) => k + 1);
@@ -762,8 +772,14 @@ export default function CameraView({ active }: { active: boolean }) {
       showToast("Capture failed. Try again");
     } finally {
       grabbing.current = false;
+      if (pendingShots.current > 0) {
+        pendingShots.current -= 1;
+        // let the queue drain without recursing into a deep stack
+        window.setTimeout(() => void doCaptureRef.current?.(), 0);
+      }
     }
   }, [ready, showToast, updateThumb]);
+  doCaptureRef.current = doCapture;
 
   // "saving" pulse reflects the background queue depth
   useEffect(() => onPendingChange(setSaving), []);

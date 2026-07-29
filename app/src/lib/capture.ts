@@ -79,37 +79,6 @@ export interface CaptureResult {
   thumb: Blob;
 }
 
-/**
- * Bake the physical device rotation into the pixels: when the phone is
- * held landscape the saved photo becomes a true landscape image (world
- * upright, card along its bottom) — like native camera apps, and with no
- * reliance on EXIF orientation flags that many viewers ignore.
- */
-function rotateFrameCanvas(
-  src: HTMLCanvasElement,
-  rot: 90 | -90
-): HTMLCanvasElement {
-  const out = document.createElement("canvas");
-  out.width = src.height;
-  out.height = src.width;
-  const octx = out.getContext("2d");
-  if (!octx) return src;
-  if (rot === 90) {
-    // device turned counter-clockwise → world-up lies along the frame's
-    // +x; rotate the content CCW to stand it upright
-    octx.translate(0, out.height);
-    octx.rotate(-Math.PI / 2);
-  } else {
-    octx.translate(out.width, 0);
-    octx.rotate(Math.PI / 2);
-  }
-  octx.drawImage(src, 0, 0);
-  // CRITICAL: this same context is what the pipeline draws the watermark
-  // (and face blur) on next — leave it with the identity transform, or
-  // everything after the frame renders rotated/off-canvas.
-  octx.setTransform(1, 0, 0, 1, 0, 0);
-  return out;
-}
 
 /** A grabbed frame plus the world-state snapshot at the shutter moment —
  *  everything the background pipeline needs to finish the photo without
@@ -143,18 +112,45 @@ export async function grabFrame(): Promise<{
   const w = frame.width;
   const h = frame.height;
 
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext("2d");
+  /**
+   * ONE pass, not three.
+   *
+   * Two rotations can apply to a capture: standing the sensor frame
+   * upright (ImageCapture hands back the sensor's own landscape frame
+   * however the phone is held), and turning it for a phone held sideways.
+   * Doing each as its own canvas meant up to THREE full-resolution
+   * allocations and draws per shot — around 12 MP each — which is what
+   * put the lag between photos when the shutter is held down. They
+   * compose into a single quarter-turn, so compose them and draw once.
+   *
+   * Quarter turns, clockwise-positive:
+   *   upright  = +90 when the preview is portrait but the frame is not
+   *   held UI  = -90 for uiRotation 90, +90 for -90 (see the old helper)
+   */
+  const uprightQ = camera.previewIsPortrait() && w > h ? 1 : 0;
+  const uiQ = live.uiRotation === 90 ? -1 : live.uiRotation === -90 ? 1 : 0;
+  const q = (((uprightQ + uiQ) % 4) + 4) % 4; // 0..3 clockwise quarter turns
+
+  const swap = q === 1 || q === 3;
+  const outW = swap ? h : w;
+  const outH = swap ? w : h;
+
+  const outCanvas = document.createElement("canvas");
+  outCanvas.width = outW;
+  outCanvas.height = outH;
+  const ctx = outCanvas.getContext("2d");
   if (!ctx) {
     frame.close();
     throw new Error("2d context unavailable");
   }
 
+  ctx.save();
+  // rotation about the output centre
+  ctx.translate(outW / 2, outH / 2);
+  ctx.rotate((q * Math.PI) / 2);
+  ctx.translate(-w / 2, -h / 2);
   const mirror = camera.facing === "user" && settings.mirrorFrontPhoto;
   if (mirror) {
-    ctx.save();
     ctx.translate(w, 0);
     ctx.scale(-1, 1);
   }
@@ -166,32 +162,10 @@ export async function grabFrame(): Promise<{
   } else {
     ctx.drawImage(frame, 0, 0);
   }
-  if (mirror) ctx.restore();
+  ctx.restore();
   frame.close();
-
-  /**
-   * Stand the sensor frame upright first.
-   *
-   * ImageCapture.takePhoto() hands back the sensor's own frame, which on a
-   * phone is LANDSCAPE however the phone is held — so every photo from the
-   * web app came out 4:3 landscape even when shot upright. The native app
-   * never showed it because at 1x it grabs the preview frame instead,
-   * which is already oriented. Detect the mismatch against the live
-   * preview and rotate to match it, then the landscape handling below
-   * behaves exactly as before.
-   */
-  const upright = camera.previewIsPortrait()
-    ? canvas.width > canvas.height
-      ? rotateFrameCanvas(canvas, -90) // sensor is mounted 90 deg on phones
-      : canvas
-    : canvas;
-
-  // held landscape → save a true landscape image (see rotateFrameCanvas)
-  const rot = live.uiRotation;
-  const outCanvas =
-    rot === 90 || rot === -90 ? rotateFrameCanvas(upright, rot) : upright;
-  const outW = outCanvas.width;
-  const outH = outCanvas.height;
+  // CRITICAL: the watermark and face blur draw on this same context next —
+  // leave it with the identity transform (ctx.restore above does that).
 
   // tiny preview for the fly-to-gallery animation (no watermark needed)
   let preview = "";
