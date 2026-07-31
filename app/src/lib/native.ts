@@ -5,7 +5,7 @@
  * `window.Capacitor` simply doesn't exist and every helper here is a
  * cheap no-op. Inside the APK, Capacitor injects the bridge and the
  * custom NativeBridge plugin (android/…/NativeBridgePlugin.java) exposes:
- *  - reverseGeocode: android.location.Geocoder with Locale.ENGLISH —
+ *  - reverseGeocode: android.location.Geocoder in the requested locale —
  *    human-readable English addresses straight from the OS, no network
  *    service of ours involved.
  *  - saveToGallery: MediaStore insert, because <a download> with a
@@ -13,7 +13,7 @@
  */
 
 interface NativeBridgePlugin {
-  reverseGeocode(opts: { lat: number; lng: number }): Promise<{
+  reverseGeocode(opts: { lat: number; lng: number; lang?: string }): Promise<{
     ok: boolean;
     addressLine?: string;
     subLocality?: string;
@@ -253,12 +253,13 @@ export interface NativeAddress {
 /** OS reverse geocode (English). Null in the browser or on failure. */
 export async function nativeReverseGeocode(
   lat: number,
-  lng: number
+  lng: number,
+  lang = "en"
 ): Promise<NativeAddress | null> {
   const b = bridge();
   if (!b) return null;
   try {
-    const r = await b.reverseGeocode({ lat, lng });
+    const r = await b.reverseGeocode({ lat, lng, lang });
     if (!r.ok || !r.addressLine) return null;
     return {
       addressLine: r.addressLine,

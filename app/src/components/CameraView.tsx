@@ -13,6 +13,7 @@ import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { renderLocationQr } from "../lib/watermark/qr";
+import { ensureChennaiLogos } from "../lib/watermark/chennaiAssets";
 import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
 import {
@@ -711,6 +712,14 @@ export default function CameraView({ active }: { active: boolean }) {
         );
       } else {
         assetsRef.current.qr = null;
+      }
+      // the Chennai plate's emblems, resolved on the same cadence so the
+      // live card matches what a capture will burn
+      if (watermark.preset === "chennai") {
+        void ensureChennaiLogos().then(({ gcc, singara }) => {
+          assetsRef.current.gccEmblem = gcc;
+          assetsRef.current.singaraLogo = singara;
+        });
       }
     };
 

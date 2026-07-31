@@ -3,7 +3,7 @@ import { Screen, Row, Toggle, blurOnEnter } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
-import { collectWatermarkData, getProfilePhoto } from "../lib/capture";
+import { chennaiSignAssets, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { FIELD_META, LANG_META, PRESET_META } from "../lib/watermark/presets";
 import { fmtDateOnly } from "../lib/geo/format";
 import ProfileFields from "./ProfileFields";
@@ -99,6 +99,7 @@ export default function WatermarkEditorView() {
         if (m) assetsRef.current.miniMap = m;
       }
       assetsRef.current.profilePhoto = await getProfilePhoto();
+      Object.assign(assetsRef.current, await chennaiSignAssets(config, data));
       if (cancelled) return;
 
       const canvas = canvasRef.current;

@@ -64,6 +64,13 @@ export function fontFor(lang: unknown): string {
  * stamping boxes into somebody's photo.
  */
 const scriptCache = new Map<string, boolean>();
+
+/** Drop cached probe results — call once webfonts finish loading, or a
+ *  probe that ran before the Tamil face arrived stays "unavailable" for
+ *  the whole session. */
+export function resetScriptCache(): void {
+  scriptCache.clear();
+}
 export function scriptAvailable(
   // kept for call-site symmetry with stringsFor(); the probe rasterises on
   // its own offscreen canvas so it can read pixels back without disturbing
@@ -228,100 +235,4 @@ export function isChennai(data: WatermarkData): boolean {
   return /greater chennai/i.test(j.corporation ?? "");
 }
 
-/** Height the board will occupy above the card. */
-export function signHeight(s: number, twoScripts: boolean): number {
-  return Math.round((twoScripts ? 96 : 62) * s);
-}
-
-/**
- * Draw the street-sign tab. `x`/`w` match the card below it; `bottom` is
- * the card's top edge, and the board is drawn upward from there.
- *
- * The locality is shown the way a real board shows it — Tamil above,
- * English below — with the corporation named underneath in small caps so
- * the photo states which body the complaint belongs to. That is routing
- * information, not a claim of endorsement, and it is worded "For:" rather
- * than "Issued by" for exactly that reason.
- */
-export function renderSignboard(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  bottom: number,
-  w: number,
-  s: number,
-  data: WatermarkData,
-  langIn: unknown
-): number {
-  const lang = langOf(langIn);
-  // The board always carries Tamil when the device can draw it — a
-  // Chennai street sign without Tamil is not a Chennai street sign — and
-  // the chosen language decides the second line.
-  const tamilOk = scriptAvailable(ctx, "ta");
-  const second = lang === "ta" ? null : lang;
-  const twoScripts = tamilOk;
-  const h = signHeight(s, twoScripts);
-  const y = bottom - h;
-  const r = Math.round(14 * s);
-
-  ctx.save();
-  // folder tab: rounded on top, square into the card
-  ctx.beginPath();
-  ctx.moveTo(x, y + h);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h);
-  ctx.closePath();
-  ctx.fillStyle = SIGN_BG;
-  ctx.fill();
-
-  // white keyline, inset like the real boards (open at the bottom so the
-  // tab reads as joined to the card rather than as a separate plate)
-  const i = Math.round(6 * s);
-  ctx.beginPath();
-  ctx.moveTo(x + i, y + h);
-  ctx.lineTo(x + i, y + r);
-  ctx.arcTo(x + i, y + i, x + r, y + i, r - i * 0.4);
-  ctx.lineTo(x + w - r, y + i);
-  ctx.arcTo(x + w - i, y + i, x + w - i, y + r, r - i * 0.4);
-  ctx.lineTo(x + w - i, y + h);
-  ctx.strokeStyle = SIGN_LINE;
-  ctx.lineWidth = Math.max(1, Math.round(2.2 * s));
-  ctx.stroke();
-
-  const pad = Math.round(20 * s);
-  const cx = x + w / 2;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  ctx.fillStyle = SIGN_TEXT;
-
-  const locality = (data.locality ?? data.jurisdiction?.city ?? "Chennai")
-    .split(",")[0]
-    .trim();
-
-  let ty = y + i + Math.round(9 * s);
-  if (twoScripts) {
-    const taPx = Math.round(30 * s);
-    ctx.font = `700 ${taPx}px ${TAMIL}`;
-    ctx.fillText(SIGN.ta.authority, cx, ty, w - pad * 2);
-    ty += Math.round(taPx * 1.18);
-  }
-  const enPx = Math.round((twoScripts ? 23 : 27) * s);
-  const secondLang: WatermarkLang = second ?? "en";
-  const label =
-    lang === "ta" && twoScripts ? locality : SIGN[secondLang].authority;
-  ctx.font = `600 ${enPx}px ${fontFor(secondLang)}`;
-  ctx.fillText(label, cx, ty, w - pad * 2);
-  ty += Math.round(enPx * 1.12);
-
-  // routing line — small, spaced, unmistakably a "for whom" line
-  const smPx = Math.round(16 * s);
-  ctx.font = `500 ${smPx}px ${LATIN}`;
-  ctx.fillStyle = "rgba(255,255,255,0.78)";
-  ctx.fillText(locality.toUpperCase(), cx, ty, w - pad * 2);
-
-  ctx.restore();
-  ctx.textAlign = "left";
-  return h;
-}
+export { SIGN, SIGN_BG, SIGN_LINE, SIGN_TEXT, LATIN, TAMIL };

@@ -37,10 +37,11 @@ import java.util.UUID;
 
 /**
  * Native services the WebView cannot provide:
- *  - reverseGeocode: android.location.Geocoder with Locale.ENGLISH, so
- *    addresses come back human-readable in English regardless of the
- *    device language. Runs off the bridge thread (the sync Geocoder call
- *    can block on a network round-trip).
+ *  - reverseGeocode: android.location.Geocoder in the locale the caller
+ *    asks for ("lang": en/ta/hi), defaulting to English rather than the
+ *    device language — the watermark's language is a per-card setting, not
+ *    whatever the phone happens to be set to. Runs off the bridge thread
+ *    (the sync Geocoder call can block on a network round-trip).
  *  - saveToGallery (begin/chunk/end): streamed MediaStore insert into
  *    DCIM/GPS Camera. Streaming matters: a single-message base64 of a
  *    full-sensor photo took seconds to cross the JS bridge, and a long
@@ -283,6 +284,7 @@ public class NativeBridgePlugin extends Plugin {
     public void reverseGeocode(PluginCall call) {
         final double lat = call.getDouble("lat", 0.0);
         final double lng = call.getDouble("lng", 0.0);
+        final String lang = call.getString("lang", "en");
         final Context ctx = getContext();
         new Thread(() -> {
             JSObject out = new JSObject();
@@ -292,7 +294,11 @@ public class NativeBridgePlugin extends Plugin {
                     call.resolve(out);
                     return;
                 }
-                Geocoder geocoder = new Geocoder(ctx, Locale.ENGLISH);
+                Locale locale;
+                if ("ta".equals(lang)) locale = new Locale("ta", "IN");
+                else if ("hi".equals(lang)) locale = new Locale("hi", "IN");
+                else locale = Locale.ENGLISH;
+                Geocoder geocoder = new Geocoder(ctx, locale);
                 @SuppressWarnings("deprecation")
                 List<Address> results = geocoder.getFromLocation(lat, lng, 1);
                 if (results == null || results.isEmpty()) {

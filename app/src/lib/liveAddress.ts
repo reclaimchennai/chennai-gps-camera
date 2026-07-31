@@ -14,6 +14,7 @@ const MIN_MOVE_METERS = 120;
 let started = false;
 let lastAt = 0;
 let lastPos: { lat: number; lng: number } | null = null;
+let lastLang = "";
 let inFlight = false;
 
 function moved(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
@@ -27,9 +28,17 @@ async function maybeGeocode(): Promise<void> {
   const { fix } = useLiveStore.getState();
   const { settings } = useSettingsStore.getState();
   if (!fix || settings.geocoder === "off") return;
+  // Switching the card's language makes the cached address the wrong
+  // language, not merely stale — the distance/interval throttle exists to
+  // spare the geocoder, not to make the user walk 120 m to see Tamil.
+  const lang = useSettingsStore.getState().watermark.language ?? "en";
+  const langChanged = lang !== lastLang;
   const now = Date.now();
-  if (now - lastAt < MIN_INTERVAL_MS) return;
-  if (lastPos && moved(lastPos, fix) < MIN_MOVE_METERS) return;
+  if (!langChanged) {
+    if (now - lastAt < MIN_INTERVAL_MS) return;
+    if (lastPos && moved(lastPos, fix) < MIN_MOVE_METERS) return;
+  }
+  lastLang = lang;
 
   inFlight = true;
   lastAt = now;
@@ -50,6 +59,9 @@ export function startLiveAddress(): void {
   if (started) return;
   started = true;
   useLiveStore.subscribe(() => void maybeGeocode());
+  // and on a settings change, so switching language re-geocodes without
+  // waiting for the next GPS fix to arrive
+  useSettingsStore.subscribe(() => void maybeGeocode());
   window.addEventListener("online", () => {
     lastAt = 0;
     void maybeGeocode();

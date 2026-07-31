@@ -10,6 +10,19 @@ import { camera } from "./camera";
 import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
 import { renderLocationQr } from "./watermark/qr";
+import { ensureChennaiLogos } from "./watermark/chennaiAssets";
+import { isChennai } from "./watermark/signboard";
+
+/** Emblems for the Chennai plate — resolved once, then handed to the
+ *  renderer through `assets` so no draw path depends on load order. */
+export async function chennaiSignAssets(
+  config: { preset: string },
+  data: { jurisdiction?: unknown }
+): Promise<Partial<WatermarkAssets>> {
+  if (config.preset !== "chennai" || !isChennai(data as never)) return {};
+  const { gcc, singara } = await ensureChennaiLogos();
+  return { gccEmblem: gcc, singaraLogo: singara };
+}
 import { writeExif } from "./exif";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";
 import { newId, putBlob, putMedia, getBlob } from "./db";
@@ -250,6 +263,7 @@ export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
   }
 
   const assets: WatermarkAssets = {};
+  Object.assign(assets, await chennaiSignAssets(config, data));
   if (config.fields.miniMap && data.fix) {
     assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, lookupResult);
   }
@@ -318,6 +332,7 @@ export async function recompositePhoto(
 
   const { profile } = useSettingsStore.getState();
   const assets: WatermarkAssets = { ...extraAssets };
+  Object.assign(assets, await chennaiSignAssets(record.config, data));
   if (record.config.fields.miniMap && data.fix && !assets.miniMap) {
     assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, null);
   }

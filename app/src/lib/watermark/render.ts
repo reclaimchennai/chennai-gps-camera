@@ -23,20 +23,18 @@ import {
 } from "../geo/format";
 import { renderSocialStrip } from "./socialStrip";
 import { latLngToDigipin } from "../geo/digipin";
-import {
-  isChennai,
-  renderSignboard,
-  scriptAvailable,
-  signHeight,
-  stringsFor,
-  fontFor,
-  type CardStrings,
-} from "./signboard";
+import { isChennai, stringsFor, fontFor, type CardStrings } from "./signboard";
+import { renderChennaiSign } from "./chennaiSign";
 
 export interface WatermarkAssets {
   miniMap?: CanvasImageSource | null;
   /** location QR, drawn in the same right-hand column as the map */
   qr?: CanvasImageSource | null;
+  /** Chennai street-sign emblems. Passed in like every other image the
+   *  renderer draws, rather than read from a module singleton — the
+   *  renderer must stay a pure function of (data, config, assets). */
+  gccEmblem?: CanvasImageSource | null;
+  singaraLogo?: CanvasImageSource | null;
   /** true only when the thumb is genuine Google imagery (§5.4 attribution) */
   miniMapIsGoogle?: boolean;
   profilePhoto?: CanvasImageSource | null;
@@ -405,8 +403,9 @@ export function renderWatermark(
   // width rules keep working identically under it — nothing forked.
   const detailed = preset === "detailed" || preset === "chennai";
   const t = stringsFor(ctx, config.language);
+  // The Chennai template is a whole plate, not a header on the normal
+  // card — it carries its own place name, data rows and ward strip.
   const signOn = preset === "chennai" && isChennai(data);
-  const signH = signOn ? signHeight(s, scriptAvailable(ctx, "ta")) : 0;
   const margin = Math.round(base * 0.025);
   const pad = Math.round(18 * s);
   // landscape: compact card (portrait-like width) instead of a full-bleed
@@ -414,6 +413,27 @@ export function renderWatermark(
   const panelW = landscape
     ? Math.min(width - margin * 2, Math.round(height * 1.25))
     : width - margin * 2;
+  if (signOn) {
+    const signW = panelW;
+    const m = renderChennaiSign(
+      ctx, 0, 0, signW, s, data, config, null,
+      assets.gccEmblem ?? null,
+      assets.singaraLogo ?? null,
+      true
+    );
+    const sx = panelXFor(config.position, width, signW, margin);
+    const sy = positionIsTop(config.position)
+      ? margin
+      : height - margin - m.height;
+    renderChennaiSign(
+      ctx, sx, sy, signW, s, data, config,
+      config.fields.qrCode ? (assets.qr ?? null) : null,
+      assets.gccEmblem ?? null,
+      assets.singaraLogo ?? null
+    );
+    return finish({ x: sx, y: sy, width: signW, height: m.height });
+  }
+
   const bodyPx = Math.max(10, Math.round((detailed ? 26 : 24) * s));
   const lineGap = Math.round(bodyPx * 0.45);
 
@@ -431,7 +451,7 @@ export function renderWatermark(
   const textW = panelW - pad * 2 - colW - mapGap;
 
   const lines = buildLines(
-    ctx, data, config, theme, bodyPx, textW, detailed, t, signOn
+    ctx, data, config, theme, bodyPx, textW, detailed, t, false
   );
   if (!lines.length && !mapSize) return finish(null);
 
@@ -461,15 +481,8 @@ export function renderWatermark(
   // the tab is drawn upward from the card's top edge, so a top-anchored
   // card moves down by the tab's height to keep the whole thing on-photo
   const panelY = positionIsTop(config.position)
-    ? margin + signH
+    ? margin
     : height - margin - panelH;
-
-  // ---- street-sign tab (Chennai template) -----------------------------
-  // Drawn BEFORE the panel so the panel's rounded top corners overlap the
-  // tab's square bottom edge, welding the two into one shape.
-  if (signOn) {
-    renderSignboard(ctx, panelX, panelY, fitW, s, data, config.language);
-  }
 
   // ---- panel ---------------------------------------------------------
   ctx.save();
@@ -560,14 +573,7 @@ export function renderWatermark(
     ty += asc + lineGap;
   }
   ctx.restore();
-  // report the tab as part of the card so the viewfinder's edit button and
-  // the social strip clear the whole thing, not just the panel
-  return finish({
-    x: panelX,
-    y: panelY - signH,
-    width: fitW,
-    height: panelH + signH,
-  });
+  return finish({ x: panelX, y: panelY, width: fitW, height: panelH });
 }
 
 function renderMinimal(

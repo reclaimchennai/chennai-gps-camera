@@ -1,3 +1,19 @@
+/* Tamil for the watermark card and the Chennai street sign.
+ *
+ * Bundled rather than relying on the device: the source strings were
+ * verified correct while still rendering as mangled clusters, because the
+ * fallback font could not SHAPE Tamil — a wrong-looking corporation name
+ * burned into a citizen's complaint photo. A variable subset covering
+ * U+0B82-0BFA, ~49 KB, serves every weight. */
+@font-face {
+  font-family: "Noto Sans Tamil";
+  src: url("./assets/noto-sans-tamil.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0964-0965, U+0B82-0BFA, U+200C-200D, U+20B9, U+25CC;
+}
+
 :root {
   --bg: #0b0f14;
   --surface: #151b23;

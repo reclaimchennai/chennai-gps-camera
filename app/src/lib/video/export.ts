@@ -10,9 +10,9 @@
  * MediaRecorder does.
  */
 import type { VideoRecord, WatermarkData } from "../../types";
-import { renderWatermark } from "../watermark/render";
+import { renderWatermark, type WatermarkAssets } from "../watermark/render";
 import { renderMiniMap } from "../watermark/minimap";
-import { getProfilePhoto } from "../capture";
+import { chennaiSignAssets, getProfilePhoto } from "../capture";
 import { useSettingsStore } from "../../store";
 import {
   makeMosaic,
@@ -96,15 +96,16 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
   wmCanvas.width = outW;
   wmCanvas.height = outH;
   const wmCtx = wmCanvas.getContext("2d")!;
-  const assets: {
-    miniMap?: CanvasImageSource | null;
-    profilePhoto?: CanvasImageSource | null;
-  } = {};
+  const assets: WatermarkAssets = {};
   if (!alreadyWatermarked && config.fields.miniMap && data.fix) {
     assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, null);
   }
   if (!alreadyWatermarked && config.fields.profilePhoto) {
     assets.profilePhoto = await getProfilePhoto();
+  }
+  if (!alreadyWatermarked) {
+    // exported videos get the same Chennai plate as the stills
+    Object.assign(assets, await chennaiSignAssets(config, data));
   }
   // Source time 0 is the moment recording started, so the burned clock
   // ticks in step with the original wall-clock time (§ item: live
