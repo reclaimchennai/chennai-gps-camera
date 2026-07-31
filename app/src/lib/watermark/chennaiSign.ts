@@ -20,6 +20,7 @@
 import type { WatermarkConfig, WatermarkData } from "../../types";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../geo/format";
 import { latLngToDigipin } from "../geo/digipin";
+import { tamilStation, tamilPlace } from "../geo/tamil-places";
 import { langOf, scriptAvailable, stringsFor, fontFor } from "./signboard";
 
 const BLUE = "#0056b3";
@@ -35,6 +36,12 @@ function aspect(img: CanvasImageSource, fallback: number): number {
   return w && h ? w / h : fallback;
 }
 
+
+/** Localise a data value (station, zone name) when the card is Tamil. */
+function loc(lang: string, v: string | undefined): string | undefined {
+  return v && lang === "ta" ? tamilStation(v) : v;
+}
+
 /** Pull a 6-digit Indian pincode out of the reverse-geocoded address. */
 function pincodeOf(data: WatermarkData): string | null {
   const m = /\b([1-9]\d{5})\b/.exec(data.address ?? "");
@@ -42,10 +49,12 @@ function pincodeOf(data: WatermarkData): string | null {
 }
 
 /** Place name for the big line — first segment, no ", Chennai" tail. */
-function placeName(data: WatermarkData): string {
+function placeName(data: WatermarkData, lang: string): string {
   const raw = data.locality ?? data.jurisdiction?.city ?? "Chennai";
-  const head = raw.split(",")[0].trim();
-  return head || "Chennai";
+  const head = raw.split(",")[0].trim() || "Chennai";
+  // the geocoder usually answers in Tamil already; this covers the
+  // offline path, where the locality comes from the English pack
+  return (lang === "ta" ? tamilPlace(head) : null) ?? head;
 }
 
 function fitText(
@@ -101,7 +110,7 @@ export function renderChennaiSign(
   const authPx = Math.round(19 * s);
 
   // ---- place name ---------------------------------------------------
-  const place = placeName(data);
+  const place = placeName(data, lang);
   const placePx = fitText(ctx, place, Math.round(46 * s), fontFor(lang), contentW);
 
   // ---- technical rows -----------------------------------------------
@@ -122,8 +131,8 @@ export function renderChennaiSign(
   const j = data.jurisdiction;
   // Police is ONE row, same rule the detailed card follows: club L&O and
   // Traffic when the station is the same rather than printing it twice.
-  const lo = f.loStation ? j?.loStation : undefined;
-  const traffic = f.trafficStation ? j?.trafficStation : undefined;
+  const lo = loc(lang, f.loStation ? j?.loStation : undefined);
+  const traffic = loc(lang, f.trafficStation ? j?.trafficStation : undefined);
   if (lo && traffic) {
     rows.push(
       lo === traffic
@@ -144,7 +153,16 @@ export function renderChennaiSign(
   if (f.ward && j?.ward && !j.wardPending) {
     footBits.push(`${t.ward} : ${fmtWard(j.ward)}`);
   }
-  if (f.zone && j?.zone) footBits.push(`${t.zone} : ${fmtZone(j.zone)}`);
+  if (f.zone && j?.zone) {
+    // the real boards print "\u0bae\u0ba3\u0bcd\u0b9f\u0bb2\u0bae\u0bcd : 12" — label then number. fmtZone()
+    // returns "Zone 5 (Royapuram)", which behind a "Zone :" label read
+    // "Zone : Zone 5 (Royapuram)"; that duplication was on the English
+    // card too. Take the number, and only fall back to the full string
+    // when a pack has no zone number to take.
+    const z = fmtZone(j.zone);
+    const num = /(\d+)/.exec(z);
+    footBits.push(`${t.zone} : ${num ? num[1] : z}`);
+  }
   const pin = pincodeOf(data);
   if (pin) footBits.push(`${lang === "ta" ? "அஞ்சல் குறியீடு" : "PIN"} : ${pin}`);
   const footH = footBits.length ? Math.round(40 * s) : 0;

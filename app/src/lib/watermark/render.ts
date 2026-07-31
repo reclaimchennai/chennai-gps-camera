@@ -23,6 +23,7 @@ import {
 } from "../geo/format";
 import { renderSocialStrip } from "./socialStrip";
 import { latLngToDigipin } from "../geo/digipin";
+import { tamilStation } from "../geo/tamil-places";
 import { isChennai, stringsFor, fontFor, type CardStrings } from "./signboard";
 import { renderChennaiSign } from "./chennaiSign";
 
@@ -254,6 +255,10 @@ function buildLines(
   // next; police as one line, clubbing L&O + Traffic when they are the
   // same station.
   if (j && j.scope !== "out") {
+    // declared before the ward/zone rows below use it — the police block
+    // further down is not the first caller
+    const ta = config.language === "ta";
+    const tr = (v: string | undefined) => (v && ta ? tamilStation(v) : v);
     const wardPending = j.wardPending || j.scope === "avadi";
     let firstJurLine = true;
     const pushJur = (text: string, wrapMax = 2) => {
@@ -295,8 +300,8 @@ function buildLines(
       }
     }
 
-    const lo = f.loStation ? j.loStation : undefined;
-    const traffic = f.trafficStation ? j.trafficStation : undefined;
+    const lo = tr(f.loStation ? j.loStation : undefined);
+    const traffic = tr(f.trafficStation ? j.trafficStation : undefined);
     if (lo && traffic) {
       if (lo === traffic) pushJur(`${t.policeBoth}: ${lo}`);
       else pushJur(`${t.policeLo} – ${lo} · ${t.traffic} – ${traffic}`, 3);
