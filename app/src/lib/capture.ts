@@ -9,6 +9,7 @@
 import { camera } from "./camera";
 import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
+import { renderLocationQr } from "./watermark/qr";
 import { writeExif } from "./exif";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";
 import { newId, putBlob, putMedia, getBlob } from "./db";
@@ -252,6 +253,13 @@ export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
   if (config.fields.miniMap && data.fix) {
     assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, lookupResult);
   }
+  if (config.fields.qrCode && data.fix && !assets.qr) {
+    assets.qr = await renderLocationQr({
+      lat: data.fix.lat,
+      lng: data.fix.lng,
+      digipin: data.digipin,
+    });
+  }
   if (config.fields.profilePhoto) {
     assets.profilePhoto = await getProfilePhoto();
   }
@@ -312,6 +320,14 @@ export async function recompositePhoto(
   const assets: WatermarkAssets = { ...extraAssets };
   if (record.config.fields.miniMap && data.fix && !assets.miniMap) {
     assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, null);
+  }
+  // independent of the map: the QR must appear even with the map off
+  if (record.config.fields.qrCode && data.fix && !assets.qr) {
+    assets.qr = await renderLocationQr({
+      lat: data.fix.lat,
+      lng: data.fix.lng,
+      digipin: data.digipin,
+    });
   }
   if (record.config.fields.profilePhoto && !assets.profilePhoto) {
     assets.profilePhoto = (await getProfilePhoto()) ?? undefined;

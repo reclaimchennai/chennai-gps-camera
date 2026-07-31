@@ -26,6 +26,8 @@ import { latLngToDigipin } from "../geo/digipin";
 
 export interface WatermarkAssets {
   miniMap?: CanvasImageSource | null;
+  /** location QR, drawn in the same right-hand column as the map */
+  qr?: CanvasImageSource | null;
   /** true only when the thumb is genuine Google imagery (§5.4 attribution) */
   miniMapIsGoogle?: boolean;
   profilePhoto?: CanvasImageSource | null;
@@ -394,8 +396,15 @@ export function renderWatermark(
   const mapSize = detailed && config.fields.miniMap && assets.miniMap
     ? Math.round(Math.min(220 * s, panelW * 0.3))
     : 0;
-  const mapGap = mapSize ? pad : 0;
-  const textW = panelW - pad * 2 - mapSize - mapGap;
+  // The QR shares the map's column. With the map off it takes the column
+  // on its own, so turning the map off widens nothing and turning the QR
+  // off gives the text its full width back — the layout adjusts itself.
+  const qrSize = config.fields.qrCode && assets.qr
+    ? Math.round(Math.min(200 * s, panelW * 0.28))
+    : 0;
+  const colW = Math.max(mapSize, qrSize);
+  const mapGap = colW ? pad : 0;
+  const textW = panelW - pad * 2 - colW - mapGap;
 
   const lines = buildLines(
     ctx, data, config, theme, bodyPx, textW, detailed
@@ -435,7 +444,7 @@ export function renderWatermark(
   ctx.fillStyle = theme.panel(config.opacity);
   ctx.fill();
 
-  // ---- mini-map ---------------------------------------------------------
+  // ---- right column: mini-map and/or QR ---------------------------------
   const contentY = panelY + pad;
   if (mapSize && assets.miniMap) {
     const mx = panelX + pad;
@@ -477,6 +486,30 @@ export function renderWatermark(
       ctx.textBaseline = "bottom";
       ctx.fillText("Google", mx + 6 * s, my + mapH - 4 * s);
     }
+    ctx.restore();
+  }
+
+  // ---- location QR -------------------------------------------------------
+  // Shares the column with the map: stacked underneath when both are on,
+  // centred on its own when the map is off. White plate behind it so it
+  // stays scannable whatever the card theme is.
+  if (qrSize && assets.qr) {
+    const qx = panelX + pad + Math.round((colW - qrSize) / 2);
+    const qy = mapSize
+      ? contentY + Math.min(Math.max(contentH, mapSize), mapSize * 2.4) + pad
+      : contentY + Math.max(0, Math.round((contentH - qrSize) / 2));
+    ctx.save();
+    roundRect(ctx, qx, qy, qrSize, qrSize, Math.round(6 * s));
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    const inset = Math.round(qrSize * 0.06);
+    ctx.drawImage(
+      assets.qr,
+      qx + inset,
+      qy + inset,
+      qrSize - inset * 2,
+      qrSize - inset * 2
+    );
     ctx.restore();
   }
 

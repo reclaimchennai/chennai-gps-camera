@@ -12,6 +12,8 @@ import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture
 import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
+import { renderLocationQr } from "../lib/watermark/qr";
+import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
 import {
   isNativeApp,
@@ -691,10 +693,25 @@ export default function CameraView({ active }: { active: boolean }) {
     const refreshMap = () => {
       const { fix, lookupResult } = useLiveStore.getState();
       const { watermark } = useSettingsStore.getState();
-      if (!fix || !watermark.fields.miniMap) return;
-      void renderMiniMap(fix.lat, fix.lng, lookupResult).then((m) => {
-        if (m) assetsRef.current.miniMap = m;
-      });
+      if (!fix) return;
+      if (watermark.fields.miniMap) {
+        void renderMiniMap(fix.lat, fix.lng, lookupResult).then((m) => {
+          if (m) assetsRef.current.miniMap = m;
+        });
+      }
+      if (watermark.fields.qrCode) {
+        void renderLocationQr({
+          lat: fix.lat,
+          lng: fix.lng,
+          digipin: latLngToDigipin(fix.lat, fix.lng) ?? undefined,
+        }).then(
+          (q) => {
+            if (q) assetsRef.current.qr = q;
+          }
+        );
+      } else {
+        assetsRef.current.qr = null;
+      }
     };
 
     refreshMap();

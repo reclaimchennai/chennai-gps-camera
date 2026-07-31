@@ -58,6 +58,8 @@ export interface WatermarkFields {
   loStation: boolean;
   trafficStation: boolean;
   miniMap: boolean;
+  /** location QR (maps link + DIGIPIN) on the card */
+  qrCode: boolean;
   compass: boolean;
   /** Live ambient sound level (approximate dB) from the microphone. */
   soundLevel: boolean;
