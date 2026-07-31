@@ -453,6 +453,11 @@ export function renderWatermark(
     : 0;
   const colW = Math.max(mapSize, qrSize);
   const mapGap = colW ? pad : 0;
+  // Height the right-hand column needs. With BOTH the map and the QR on,
+  // the QR sits under the map, and that stack was not counted in the
+  // panel height — so the code hung out below the card. The column is
+  // now measured before the panel is sized.
+  const colH = mapSize && qrSize ? mapSize + pad + qrSize : Math.max(mapSize, qrSize);
   const textW = panelW - pad * 2 - colW - mapGap;
 
   const lines = buildLines(
@@ -480,7 +485,7 @@ export function renderWatermark(
   const fitW = pad * 2 + mapSize + mapGap + usedTextW;
 
   // Branding-free card: no app badge, just the clean address panel.
-  const contentH = Math.max(textH, mapSize);
+  const contentH = Math.max(textH, colH);
   const panelH = pad * 2 + contentH;
   const panelX = panelXFor(config.position, width, fitW, margin);
   // the tab is drawn upward from the card's top edge, so a top-anchored
@@ -503,10 +508,10 @@ export function renderWatermark(
     // square map, the map grows vertically to fill (cover-cropped from
     // the square source so nothing distorts), capped at ~2.4× so a very
     // long card doesn't produce a sliver-thin map view
-    const mapH = Math.round(
-      Math.min(Math.max(contentH, mapSize), mapSize * 2.4)
-    );
-    const my = contentY + (contentH - mapH) / 2;
+    const mapH = qrSize
+      ? mapSize // square: the QR below it owns the rest of the column
+      : Math.round(Math.min(Math.max(contentH, mapSize), mapSize * 2.4));
+    const my = contentY + (contentH - (qrSize ? colH : mapH)) / 2;
     ctx.save();
     roundRect(ctx, mx, my, mapSize, mapH, Math.round(10 * s));
     ctx.clip();
@@ -547,7 +552,7 @@ export function renderWatermark(
   if (qrSize && assets.qr) {
     const qx = panelX + pad + Math.round((colW - qrSize) / 2);
     const qy = mapSize
-      ? contentY + Math.min(Math.max(contentH, mapSize), mapSize * 2.4) + pad
+      ? contentY + Math.round((contentH - colH) / 2) + mapSize + pad
       : contentY + Math.max(0, Math.round((contentH - qrSize) / 2));
     ctx.save();
     roundRect(ctx, qx, qy, qrSize, qrSize, Math.round(6 * s));

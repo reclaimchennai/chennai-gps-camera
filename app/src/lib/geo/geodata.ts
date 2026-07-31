@@ -63,6 +63,12 @@ let indexCache: PackIndex | null = null;
 let indexPromise: Promise<PackIndex | null> | null = null;
 let current: GeoPack | null = null;
 
+/** Id of the pack covering the user's position, once one has loaded.
+ *  Drives which card languages Settings offers. */
+export function currentPackId(): string | null {
+  return current?.id ?? null;
+}
+
 async function loadIndex(): Promise<PackIndex | null> {
   if (indexCache) return indexCache;
   indexPromise ??= (async () => {

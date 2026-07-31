@@ -1,3 +1,37 @@
+
+/* Card scripts. Bundled, not device-dependent: the Tamil source strings
+ * were correct while still rendering as mangled clusters because the
+ * fallback font could not SHAPE the script — a wrong-looking corporation
+ * name burned into a citizen's complaint photo.
+ *
+ * `unicode-range` means a browser downloads only the script it actually
+ * paints, so an English card fetches none of these. The APK carries all
+ * of them (~500 KB) but decodes only the one in use. */
+@font-face {
+  font-family: "Noto Sans Devanagari";
+  src: url("./assets/noto-hi.woff2") format("woff2");
+  font-weight: 100 900; font-display: swap;
+  unicode-range: U+0900-097F, U+1CD0-1CF9, U+200C-200D, U+20A8, U+20B9, U+25CC, U+A830-A839;
+}
+@font-face {
+  font-family: "Noto Sans Kannada";
+  src: url("./assets/noto-kn.woff2") format("woff2");
+  font-weight: 100 900; font-display: swap;
+  unicode-range: U+0951-0952, U+0964-0965, U+0C80-0CF3, U+200C-200D, U+20B9, U+25CC;
+}
+@font-face {
+  font-family: "Noto Sans Telugu";
+  src: url("./assets/noto-te.woff2") format("woff2");
+  font-weight: 100 900; font-display: swap;
+  unicode-range: U+0951-0952, U+0964-0965, U+0C00-0C7F, U+200C-200D, U+20B9, U+25CC;
+}
+@font-face {
+  font-family: "Noto Sans Bengali";
+  src: url("./assets/noto-bn.woff2") format("woff2");
+  font-weight: 100 900; font-display: swap;
+  unicode-range: U+0951-0952, U+0964-0965, U+0980-09FE, U+200C-200D, U+20B9, U+25CC;
+}
+
 /* Tamil for the watermark card and the Chennai street sign.
  *
  * Bundled rather than relying on the device: the source strings were

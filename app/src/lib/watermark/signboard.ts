@@ -18,33 +18,26 @@
  */
 import type { WatermarkData } from "../../types";
 
-export type WatermarkLang = "en" | "ta" | "hi";
+import {
+  LANGS,
+  langOf as registryLangOf,
+  type CardLang,
+  type CardStrings,
+} from "../i18n/languages";
 
-/** GCC street-board palette. */
-const SIGN_BG = "#123a6d";
-const SIGN_LINE = "rgba(255,255,255,0.92)";
-const SIGN_TEXT = "#ffffff";
-
-const LATIN =
-  "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
-/** Tamil/Devanagari need their own stacks — the Latin one silently tofus. */
-const TAMIL = `'Noto Sans Tamil', 'Latha', 'Tamil Sangam MN', ${LATIN}`;
-const DEVA = `'Noto Sans Devanagari', 'Nirmala UI', 'Kohinoor Devanagari', ${LATIN}`;
+export type WatermarkLang = CardLang;
+export type { CardStrings };
 
 /**
- * Every config stored before this release has NO `language` field, and
- * photos re-composited from those records replay them verbatim. Anything
- * unrecognised — undefined included — resolves to English, so an old card
- * renders exactly as it always did instead of throwing on a missing
- * string table.
+ * Every config stored before card languages existed has no `language`
+ * field, and photos re-composited from those records replay them verbatim
+ * without the store's default-merge. Anything unrecognised resolves to
+ * English rather than throwing on a missing string table.
  */
-export function langOf(lang: unknown): WatermarkLang {
-  return lang === "ta" || lang === "hi" ? lang : "en";
-}
+export const langOf = registryLangOf;
 
 export function fontFor(lang: unknown): string {
-  const l = langOf(lang);
-  return l === "ta" ? TAMIL : l === "hi" ? DEVA : LATIN;
+  return LANGS[registryLangOf(lang)].font;
 }
 
 /**
@@ -121,110 +114,13 @@ export function scriptAvailable(
   return ok;
 }
 
-/** Board wording per language. `authority` is the routing line. */
-interface SignStrings {
-  authority: string;
-  complaint: string;
-}
-const SIGN: Record<WatermarkLang, SignStrings> = {
-  en: {
-    authority: "Greater Chennai Corporation",
-    complaint: "Civic report",
-  },
-  ta: {
-    authority: "பெருநகர சென்னை மாநகராட்சி",
-    complaint: "குடிமைப் புகார்",
-  },
-  hi: {
-    authority: "बृहत् चेन्नई नगर निगम",
-    complaint: "नागरिक शिकायत",
-  },
-};
-
-/** Card field labels, so the whole card follows the chosen language. */
-export interface CardStrings {
-  digipin: string;
-  ward: string;
-  zone: string;
-  block: string;
-  district: string;
-  policeBoth: string;
-  policeLo: string;
-  traffic: string;
-  noise: string;
-  avg: string;
-  min: string;
-  max: string;
-  facing: string;
-  acquiring: string;
-  wardPending: string;
-  mock: string;
-}
-
-const STRINGS: Record<WatermarkLang, CardStrings> = {
-  en: {
-    digipin: "DIGIPIN",
-    ward: "Ward",
-    zone: "Zone",
-    block: "Block",
-    district: "District",
-    policeBoth: "Police (L&O & Traffic)",
-    policeLo: "Police (L&O)",
-    traffic: "Traffic",
-    noise: "Noise",
-    avg: "Avg",
-    min: "Min",
-    max: "Max",
-    facing: "Facing",
-    acquiring: "GPS: acquiring…",
-    wardPending: "Ward: not yet available",
-    mock: "⚠ Mock location — GPS may be spoofed",
-  },
-  ta: {
-    digipin: "டிஜிபின்",
-    ward: "வார்டு",
-    zone: "மண்டலம்",
-    block: "ஒன்றியம்",
-    district: "மாவட்டம்",
-    policeBoth: "காவல் (சட்டம் மற்றும் போக்குவரத்து)",
-    policeLo: "காவல் நிலையம்",
-    traffic: "போக்குவரத்து",
-    noise: "ஒலி அளவு",
-    avg: "சராசரி",
-    min: "குறைந்தது",
-    max: "அதிகபட்சம்",
-    facing: "திசை",
-    acquiring: "GPS: பெறப்படுகிறது…",
-    wardPending: "வார்டு: இன்னும் கிடைக்கவில்லை",
-    mock: "⚠ போலி இருப்பிடம் — GPS தவறாக இருக்கலாம்",
-  },
-  hi: {
-    digipin: "डिजिपिन",
-    ward: "वार्ड",
-    zone: "क्षेत्र",
-    block: "प्रखंड",
-    district: "जिला",
-    policeBoth: "पुलिस (कानून एवं यातायात)",
-    policeLo: "पुलिस थाना",
-    traffic: "यातायात",
-    noise: "ध्वनि स्तर",
-    avg: "औसत",
-    min: "न्यूनतम",
-    max: "अधिकतम",
-    facing: "दिशा",
-    acquiring: "GPS: प्राप्त किया जा रहा है…",
-    wardPending: "वार्ड: अभी उपलब्ध नहीं",
-    mock: "⚠ नकली स्थान — GPS गलत हो सकता है",
-  },
-};
-
-/** Labels for `lang`, falling back to English when the script can't draw. */
+/** Labels for `lang`, falling back to English when the script cannot draw. */
 export function stringsFor(
   ctx: CanvasRenderingContext2D,
   langIn: unknown
 ): CardStrings {
-  const lang = langOf(langIn);
-  return STRINGS[scriptAvailable(ctx, lang) ? lang : "en"];
+  const lang = registryLangOf(langIn);
+  return LANGS[scriptAvailable(ctx, lang) ? lang : "en"].strings;
 }
 
 /** Is this capture inside Greater Chennai Corporation? */
@@ -235,4 +131,3 @@ export function isChennai(data: WatermarkData): boolean {
   return /greater chennai/i.test(j.corporation ?? "");
 }
 
-export { SIGN, SIGN_BG, SIGN_LINE, SIGN_TEXT, LATIN, TAMIL };

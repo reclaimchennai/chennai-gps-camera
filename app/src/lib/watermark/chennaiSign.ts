@@ -180,7 +180,13 @@ export function renderChennaiSign(
   const DIAMOND_MID = 0.426;
   const singaraH = singara ? Math.round(112 * s) : 0;
   const overhang = singara ? Math.round(singaraH * (1 - DIAMOND_MID)) : 0;
-  const qrSize = qr ? Math.round(78 * s) : 0;
+  // Sized off the PLATE, not just the font scale. At 78*s a landscape
+  // shot produced a ~57 px code — roughly 1.5 device pixels per module,
+  // which decoded as an empty string on one card and not at all on the
+  // other. It has to stay big enough to survive being photographed.
+  const qrSize = qr
+    ? Math.round(Math.max(78 * s, Math.min(contentW * 0.1, 170)))
+    : 0;
   const qrTop = qr ? Math.round(8 * s) : 0;
   const badgeH = Math.max(overhang, qrTop + qrSize);
 
@@ -216,9 +222,17 @@ export function renderChennaiSign(
     ctx.lineTo(ax, bt);
     ctx.closePath();
   };
+  // The plate honours the card's opacity like every other layout, so the
+  // photo stays visible behind it — a solid board hid the very thing the
+  // photo was taken to show. Only the BACKGROUND fades: the keyline, the
+  // text, the emblems and the QR stay fully opaque, because a translucent
+  // QR does not scan and a translucent address is not evidence.
   plate(0);
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, Math.max(0.35, config.opacity));
   ctx.fillStyle = BLUE;
   ctx.fill();
+  ctx.restore();
   ctx.lineJoin = "round";
   ctx.strokeStyle = WHITE;
   ctx.lineWidth = Math.max(2, Math.round(4 * s));
@@ -230,8 +244,13 @@ export function renderChennaiSign(
   let cy = y + pad;
 
   // ---- white header strip -------------------------------------------
+  // slightly more opaque than the plate: blue-on-translucent-white is the
+  // first thing to become unreadable as opacity drops
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
   ctx.fillStyle = WHITE;
   ctx.fillRect(x + inner, cy, contentW, bandH);
+  ctx.restore();
 
   let hx = x + inner + Math.round(8 * s);
   if (gcc) {
@@ -275,7 +294,12 @@ export function renderChennaiSign(
       ctx.fillStyle = WHITE;
       ctx.fillRect(qx, qy, qrSize, qrSize);
       const ins = Math.round(qrSize * 0.06);
+      // nearest-neighbour: smoothing greys the module edges and is the
+      // difference between a code that scans and one that only looks right
+      const smooth = ctx.imageSmoothingEnabled;
+      ctx.imageSmoothingEnabled = false;
       ctx.drawImage(qr, qx + ins, qy + ins, qrSize - ins * 2, qrSize - ins * 2);
+      ctx.imageSmoothingEnabled = smooth;
     }
     cy = bandBottom + badgeH;
   }
@@ -306,8 +330,11 @@ export function renderChennaiSign(
   // ---- white footer strip ---------------------------------------------
   if (footH) {
     cy += gapS;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
     ctx.fillStyle = WHITE;
     ctx.fillRect(x + inner, cy, contentW, footH);
+    ctx.restore();
     const line = footBits.join("  ·  ");
     const fpx = fitText(
       ctx,

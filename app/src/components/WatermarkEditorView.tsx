@@ -4,7 +4,8 @@ import { useLiveStore, useSettingsStore } from "../store";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { chennaiSignAssets, collectWatermarkData, getProfilePhoto } from "../lib/capture";
-import { FIELD_META, LANG_META, PRESET_META } from "../lib/watermark/presets";
+import { FIELD_META, langMeta, PRESET_META } from "../lib/watermark/presets";
+import { currentPackId } from "../lib/geo/geodata";
 import { fmtDateOnly } from "../lib/geo/format";
 import ProfileFields from "./ProfileFields";
 import type { DateFormat, WatermarkData } from "../types";
@@ -199,7 +200,7 @@ export default function WatermarkEditorView() {
             Falls back to English if your phone has no font for the script
           </div>
           <div className="seg">
-            {LANG_META.map((l) => (
+            {langMeta(currentPackId()).map((l) => (
               <button
                 key={l.key}
                 data-active={config.language === l.key}

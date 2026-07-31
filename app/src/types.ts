@@ -45,7 +45,7 @@ export interface Jurisdiction {
 export type LayoutPreset = "detailed" | "compact" | "minimal" | "chennai";
 
 /** Watermark text language. English is the default everywhere. */
-export type WatermarkLang = "en" | "ta" | "hi";
+export type WatermarkLang = "en" | "ta" | "hi" | "kn" | "te" | "mr" | "bn";
 export type WatermarkTheme = "dark" | "light" | "brand";
 
 export interface WatermarkFields {

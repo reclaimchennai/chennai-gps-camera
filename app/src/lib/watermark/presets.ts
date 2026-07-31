@@ -1,4 +1,5 @@
 import type { WatermarkConfig, WatermarkFields, WatermarkLang } from "../../types";
+import { LANGS, langsFor } from "../i18n/languages";
 
 export const APP_NAME = "Chennai GPS Camera"; // working name — final branding TBD by owner
 
@@ -72,8 +73,14 @@ export const PRESET_META: { key: WatermarkConfig["preset"]; label: string; hint:
   },
 ];
 
-export const LANG_META: { key: WatermarkLang; label: string }[] = [
-  { key: "en", label: "English" },
-  { key: "ta", label: "தமிழ் Tamil" },
-  { key: "hi", label: "हिन्दी Hindi" },
-];
+/**
+ * Languages to show, for wherever the user currently is. English first,
+ * then the state's language, then Hindi. The card language is offered on
+ * EVERY city we cover, not only the ones with a bespoke street sign —
+ * a Kolkata user gets a Bengali card on the standard layout.
+ */
+export function langMeta(
+  packId: string | null
+): { key: WatermarkLang; label: string }[] {
+  return langsFor(packId).map((key) => ({ key, label: LANGS[key].label }));
+}

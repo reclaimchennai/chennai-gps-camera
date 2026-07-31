@@ -1,6 +1,7 @@
 /** Display formatting for coordinates, dates, and jurisdiction lines. */
 import { useSettingsStore } from "../../store";
 import { tamilPlace } from "./tamil-places";
+import { LANGS, langOf, type CardLang } from "../i18n/languages";
 
 export function fmtLat(lat: number): string {
   return `${Math.abs(lat).toFixed(6)}°${lat >= 0 ? "N" : "S"}`;
@@ -18,25 +19,12 @@ export function fmtLng(lng: number): string {
  * and month. A full Tamil date pushed the row past the plate and got
  * shrunk to the point of being harder to read than the abbreviation.
  */
-const LOCALE: Record<string, string> = {
-  en: "en-IN",
-  ta: "ta-IN",
-  hi: "hi-IN",
-};
-
-function cardLang(): string {
-  const l = useSettingsStore.getState().watermark?.language;
-  return l === "ta" || l === "hi" ? l : "en";
+function cardLang(): CardLang {
+  return langOf(useSettingsStore.getState().watermark?.language);
 }
 
-const COORD_LABELS: Record<string, { lat: string; lng: string }> = {
-  en: { lat: "Lat", lng: "Long" },
-  ta: { lat: "அட்சம்", lng: "நீளம்" },
-  hi: { lat: "अक्षांश", lng: "देशांतर" },
-};
-
 export function fmtCoordsLine(lat: number, lng: number): string {
-  const l = COORD_LABELS[cardLang()] ?? COORD_LABELS.en;
+  const l = LANGS[cardLang()].coords;
   return `${l.lat} ${lat.toFixed(6)}°  ${l.lng} ${lng.toFixed(6)}°`;
 }
 
@@ -85,20 +73,16 @@ export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
   const format = useSettingsStore.getState().settings.dateFormat;
   const lang = cardLang();
   if (lang !== "en") {
-    const loc = LOCALE[lang];
+    const loc = LANGS[lang].locale;
     let wd: string, dm: string, mer: string;
     try {
       wd = new Intl.DateTimeFormat(loc, { weekday: "short" }).format(d);
       dm = new Intl.DateTimeFormat(loc, {
         day: "numeric", month: "short", year: "numeric",
       }).format(d);
-      // ICU returns Latin "AM"/"PM" for ta-IN, so use the Tamil/Hindi
-      // abbreviations directly rather than shipping a half-Tamil clock
-      const MER: Record<string, [string, string]> = {
-        ta: ["மு.ப.", "பி.ப."],
-        hi: ["पूर्वाह्न", "अपराह्न"],
-      };
-      mer = MER[lang] ? MER[lang][ampm === "AM" ? 0 : 1] : ampm;
+      // ICU hands back Latin "AM"/"PM" for several Indian locales, so the
+      // meridiem comes from the registry rather than from Intl
+      mer = LANGS[lang].meridiem[ampm === "AM" ? 0 : 1];
     } catch {
       // no ICU data for this locale here — an English row beats a thrown
       // renderer and a blank card
@@ -124,9 +108,9 @@ export function fmtAltAccuracy(
   accuracy?: number
 ): string {
   const parts: string[] = [];
-  const l = cardLang();
-  const altL = l === "ta" ? "உயரம்" : l === "hi" ? "ऊंचाई" : "Alt";
-  const m = l === "ta" ? "மீ" : l === "hi" ? "मी" : "m";
+  const a = LANGS[cardLang()].alt;
+  const altL = a.label;
+  const m = a.metre;
   if (altitude != null) parts.push(`${altL} ${altitude.toFixed(0)} ${m}`);
   if (accuracy != null) parts.push(`±${accuracy.toFixed(0)} ${m}`);
   return parts.join("  ");
@@ -181,7 +165,7 @@ export function fmtZone(zone?: string): string {
   // the word itself, and the place inside the brackets, both follow the
   // card's language — a Tamil footer reading "மண்டலம் : Zone 5 (Royapuram)"
   // was the last Latin island on an otherwise Tamil card
-  const ZONE_W = lang === "ta" ? "மண்டலம்" : lang === "hi" ? "क्षेत्र" : "Zone";
+  const ZONE_W = LANGS[lang].zoneWord;
   const nm = (v: string): string =>
     (lang === "ta" ? tamilPlace(v) : null) ?? v;
   // Kolkata-style boroughs are their own term — no "Zone" prefix

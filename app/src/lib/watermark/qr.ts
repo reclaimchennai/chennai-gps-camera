@@ -15,9 +15,15 @@ export interface QrInput {
   digipin?: string;
 }
 
+/**
+ * `sizePx` is the SOURCE raster, not the drawn size. It is generously
+ * large (and error correction is only "M") because the code is redrawn
+ * small on the card: a QR whose modules land under ~3 device pixels
+ * photographs as a grey square that no scanner will read.
+ */
 export async function renderLocationQr(
   { lat, lng, digipin }: QrInput,
-  sizePx = 260
+  sizePx = 512
 ): Promise<HTMLImageElement | null> {
   try {
     const lines = [
