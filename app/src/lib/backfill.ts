@@ -6,8 +6,13 @@
  * Anything still missing queues here:
  *  - photos keep their raw frame and are re-composited with the full
  *    watermark once the address (or Google map) arrives;
- *  - videos have nothing burned at record time, so the queue just fills
- *    record.data in — later exports/shares carry the full card.
+ *  - videos DO carry a burned-in card (the recording is composited), and
+ *    those pixels cannot be repainted afterwards. The queue fills
+ *    record.data so the details pane, the share text and any later export
+ *    carry the real address — but a clip recorded with no connectivity
+ *    keeps whatever the card said while it was recording. The card is
+ *    re-rendered twice a second DURING recording, so an address that
+ *    arrives mid-clip does appear from that moment on.
  * The queue drains on capture, app start, connectivity return, tab
  * focus, and retries on a backoff while anything stays pending.
  */

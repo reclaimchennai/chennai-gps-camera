@@ -88,6 +88,23 @@ export default function MediaDetailView({ id }: { id: string }) {
   // immersive chrome (header + action bar) — hidden by default so the
   // watermark is never covered; a tap raises it
   const [chrome, setChrome] = useState(false);
+  // the displayed item's file, ready for an instant share (see onShare)
+  const shareReady = useRef<{ id: string; blob: Blob } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    shareReady.current = null;
+    void (async () => {
+      const r = await getMedia(curId);
+      if (!alive || !r) return;
+      const b =
+        (r.kind === "video" && (await getBlob(curId, "final"))) ||
+        (await getBlob(curId, r.kind === "photo" ? "final" : "source"));
+      if (alive && b) shareReady.current = { id: curId, blob: b };
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [curId, refresh]);
   // decoded thumbnail for whatever is on screen now, as an instant stand-in
   const thumbUrl = getThumbUrl(curId);
   // custom video transport state (native controls are replaced by a
@@ -666,9 +683,23 @@ export default function MediaDetailView({ id }: { id: string }) {
   if (!rec) return null;
 
   const onShare = async () => {
-    const blob =
-      (rec.kind === "video" && (await getBlob(curId, "final"))) ||
-      (await getBlob(curId, rec.kind === "photo" ? "final" : "source"));
+    /**
+     * The blob must already be in hand.
+     *
+     * navigator.share() needs the user's tap still to be "active", and an
+     * await for IndexedDB spends that activation — Chrome then rejects the
+     * share, the catch swallows it, and the file silently downloads
+     * instead of the share sheet opening. That is exactly what pressing
+     * Share did. The current item's blob is preloaded when it is shown, so
+     * the common path reaches share() with no await at all.
+     */
+    let blob: Blob | null | undefined =
+      shareReady.current?.id === curId ? shareReady.current.blob : null;
+    if (!blob) {
+      blob =
+        (rec.kind === "video" && (await getBlob(curId, "final"))) ||
+        (await getBlob(curId, rec.kind === "photo" ? "final" : "source"));
+    }
     if (!blob) return;
     // Location context rides along with the file (§ share: ward, zone,
     // address, and a Google Maps link for the exact coordinates).

@@ -29,16 +29,37 @@ export async function shareBlob(
   if (isNativeApp()) {
     if (await nativeShareFile(blob, filename, text ?? "")) return "shared";
   }
-  const file = new File([blob], filename, { type: blob.type });
+  // A file with no MIME type is refused by canShare on some browsers, and
+  // the blob's type can be empty depending on how it was produced.
+  const type =
+    blob.type ||
+    (/\.(mp4|webm)$/i.test(filename) ? "video/mp4" : "image/jpeg");
+  const file = new File([blob], filename, { type });
   const nav = navigator as Navigator & {
     canShare?: (d: ShareData) => boolean;
   };
-  if (nav.share && nav.canShare?.({ files: [file] })) {
+  if (nav.share) {
+    // canShare is only a HINT. Browsers that implement share() without
+    // canShare used to skip sharing entirely and silently download the
+    // file instead — which is what pressing Share appeared to do. Attempt
+    // it whenever share() exists and let the browser refuse if it must.
+    const worthTrying = nav.canShare ? nav.canShare({ files: [file] }) : true;
+    if (worthTrying) {
+      try {
+        await nav.share({ files: [file], text });
+        return "shared";
+      } catch (e) {
+        // A cancel is not a failure: do NOT download behind the user's
+        // back when they simply dismissed the sheet.
+        if ((e as { name?: string })?.name === "AbortError") return "shared";
+      }
+    }
+    // last resort: share the text and link without the file
     try {
-      await nav.share({ files: [file], text });
+      await nav.share({ text });
       return "shared";
     } catch {
-      // user cancelled or share failed — fall through to download
+      // fall through to saving
     }
   }
   downloadBlob(blob, filename);
