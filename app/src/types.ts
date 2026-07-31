@@ -42,7 +42,10 @@ export interface Jurisdiction {
 
 // ---- Watermark -----------------------------------------------------
 
-export type LayoutPreset = "detailed" | "compact" | "minimal";
+export type LayoutPreset = "detailed" | "compact" | "minimal" | "chennai";
+
+/** Watermark text language. English is the default everywhere. */
+export type WatermarkLang = "en" | "ta" | "hi";
 export type WatermarkTheme = "dark" | "light" | "brand";
 
 export interface WatermarkFields {
@@ -75,6 +78,9 @@ export interface WatermarkConfig {
   opacity: number; // panel background alpha 0 – 1
   theme: WatermarkTheme;
   customLabelText: string;
+  /** Card text language. Falls back to English on a device whose fonts
+   *  cannot draw the script (see signboard.ts) rather than stamping tofu. */
+  language: WatermarkLang;
   /** Online Google-map thumbnail upgrade when connectivity allows (§5.4). */
   onlineMapUpgrade: boolean;
   /** Where the card sits on the photo. */

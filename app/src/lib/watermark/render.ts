@@ -23,6 +23,15 @@ import {
 } from "../geo/format";
 import { renderSocialStrip } from "./socialStrip";
 import { latLngToDigipin } from "../geo/digipin";
+import {
+  isChennai,
+  renderSignboard,
+  scriptAvailable,
+  signHeight,
+  stringsFor,
+  fontFor,
+  type CardStrings,
+} from "./signboard";
 
 export interface WatermarkAssets {
   miniMap?: CanvasImageSource | null;
@@ -140,14 +149,18 @@ function buildLines(
   theme: Theme,
   bodyPx: number,
   maxWidth: number,
-  _detailed: boolean
+  _detailed: boolean,
+  t: CardStrings,
+  signShown: boolean
 ): Line[] {
   const f = config.fields;
   const j = data.jurisdiction;
   const lines: Line[] = [];
-  const body = `${bodyPx}px ${FONT_STACK}`;
-  const bold = `600 ${Math.round(bodyPx * 1.15)}px ${FONT_STACK}`;
-  const small = `${Math.round(bodyPx * 0.9)}px ${FONT_STACK}`;
+  // the card follows the chosen language, so it needs that script's stack
+  const stack = fontFor(config.language);
+  const body = `${bodyPx}px ${stack}`;
+  const bold = `600 ${Math.round(bodyPx * 1.15)}px ${stack}`;
+  const small = `${Math.round(bodyPx * 0.9)}px ${stack}`;
 
   if (f.titleLine) {
     // City-level only — no state/country/flag. `locality` arrives
@@ -191,7 +204,7 @@ function buildLines(
     lines.push({
       text: data.fix
         ? fmtCoordsLine(data.fix.lat, data.fix.lng)
-        : "GPS: acquiring…",
+        : t.acquiring,
       font: body,
       color: theme.dim,
     });
@@ -201,7 +214,7 @@ function buildLines(
     const code =
       data.digipin ?? latLngToDigipin(data.fix.lat, data.fix.lng);
     if (code) {
-      lines.push({ text: `DIGIPIN: ${code}`, font: body, color: theme.dim });
+      lines.push({ text: `${t.digipin}: ${code}`, font: body, color: theme.dim });
     }
   }
 
@@ -220,7 +233,7 @@ function buildLines(
 
   if (f.compass && data.bearing != null) {
     lines.push({
-      text: `Facing ${fmtBearing(data.bearing)}`,
+      text: `${t.facing} ${fmtBearing(data.bearing)}`,
       font: small,
       color: theme.dim,
     });
@@ -231,8 +244,8 @@ function buildLines(
     const s = data.dbStats;
     lines.push({
       text: s
-        ? `Noise: Avg ${s.avg} dB · Min ${s.min} dB · Max ${s.max} dB`
-        : `Noise: ${Math.round(data.db!)} dB`,
+        ? `${t.noise}: ${t.avg} ${s.avg} dB · ${t.min} ${s.min} dB · ${t.max} ${s.max} dB`
+        : `${t.noise}: ${Math.round(data.db!)} dB`,
       font: small,
       color: theme.dim,
     });
@@ -257,23 +270,28 @@ function buildLines(
       });
     };
 
-    if ((f.ward || f.zone) && j.corporation) pushJur(j.corporation);
+    // the street-sign tab already names the corporation in two scripts —
+    // repeating it in the body is just clutter on a card that fights for
+    // every line
+    if ((f.ward || f.zone) && j.corporation && !signShown) {
+      pushJur(j.corporation);
+    }
     if (wardPending && f.ward) {
-      pushJur("Ward: not yet available");
+      pushJur(t.wardPending);
     } else {
       const zw: string[] = [];
       if (f.zone && j.zone) zw.push(fmtZone(j.zone));
       if (f.ward && j.ward)
-        zw.push(`Ward ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}`);
+        zw.push(`${t.ward} ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}`);
       if (zw.length) pushJur(zw.join(" · "));
       // village panchayats & cantonments: no ward/zone — their locating
       // line is "Block · District" (or the cantonment's board name),
       // occupying the same slot in the same style
       if (!zw.length && (f.ward || f.zone) && (j.block || j.district)) {
         const bd: string[] = [];
-        if (j.block) bd.push(`${j.block} Block`);
+        if (j.block) bd.push(`${j.block} ${t.block}`);
         if (j.district) {
-          bd.push(/board$/i.test(j.district) ? j.district : `${j.district} District`);
+          bd.push(/board$/i.test(j.district) ? j.district : `${j.district} ${t.district}`);
         }
         pushJur(bd.join(" · "));
       }
@@ -282,12 +300,12 @@ function buildLines(
     const lo = f.loStation ? j.loStation : undefined;
     const traffic = f.trafficStation ? j.trafficStation : undefined;
     if (lo && traffic) {
-      if (lo === traffic) pushJur(`Police (L&O & Traffic): ${lo}`);
-      else pushJur(`Police: L&O – ${lo} · Traffic – ${traffic}`, 3);
+      if (lo === traffic) pushJur(`${t.policeBoth}: ${lo}`);
+      else pushJur(`${t.policeLo} – ${lo} · ${t.traffic} – ${traffic}`, 3);
     } else if (lo) {
-      pushJur(`Police (L&O): ${lo}`);
+      pushJur(`${t.policeLo}: ${lo}`);
     } else if (traffic) {
-      pushJur(`Traffic: ${traffic}`);
+      pushJur(`${t.traffic}: ${traffic}`);
     }
   }
 
@@ -296,7 +314,7 @@ function buildLines(
   // Amber, in the same style as the jurisdiction rows.
   if (data.mockLocation) {
     lines.push({
-      text: "⚠ Mock location — GPS may be spoofed",
+      text: t.mock,
       font: `600 ${Math.round(bodyPx * 0.92)}px ${FONT_STACK}`,
       color: "#fbbf24",
       gapBefore: 0.35,
@@ -382,7 +400,13 @@ export function renderWatermark(
     return finish(renderMinimal(ctx, width, height, data, config, theme, s));
   }
 
-  const detailed = preset === "detailed";
+  // The Chennai template IS the detailed card, wearing a street-sign tab.
+  // Keeping one layout means every field toggle, the map, the QR and the
+  // width rules keep working identically under it — nothing forked.
+  const detailed = preset === "detailed" || preset === "chennai";
+  const t = stringsFor(ctx, config.language);
+  const signOn = preset === "chennai" && isChennai(data);
+  const signH = signOn ? signHeight(s, scriptAvailable(ctx, "ta")) : 0;
   const margin = Math.round(base * 0.025);
   const pad = Math.round(18 * s);
   // landscape: compact card (portrait-like width) instead of a full-bleed
@@ -407,7 +431,7 @@ export function renderWatermark(
   const textW = panelW - pad * 2 - colW - mapGap;
 
   const lines = buildLines(
-    ctx, data, config, theme, bodyPx, textW, detailed
+    ctx, data, config, theme, bodyPx, textW, detailed, t, signOn
   );
   if (!lines.length && !mapSize) return finish(null);
 
@@ -434,9 +458,18 @@ export function renderWatermark(
   const contentH = Math.max(textH, mapSize);
   const panelH = pad * 2 + contentH;
   const panelX = panelXFor(config.position, width, fitW, margin);
+  // the tab is drawn upward from the card's top edge, so a top-anchored
+  // card moves down by the tab's height to keep the whole thing on-photo
   const panelY = positionIsTop(config.position)
-    ? margin
+    ? margin + signH
     : height - margin - panelH;
+
+  // ---- street-sign tab (Chennai template) -----------------------------
+  // Drawn BEFORE the panel so the panel's rounded top corners overlap the
+  // tab's square bottom edge, welding the two into one shape.
+  if (signOn) {
+    renderSignboard(ctx, panelX, panelY, fitW, s, data, config.language);
+  }
 
   // ---- panel ---------------------------------------------------------
   ctx.save();
@@ -527,7 +560,14 @@ export function renderWatermark(
     ty += asc + lineGap;
   }
   ctx.restore();
-  return finish({ x: panelX, y: panelY, width: fitW, height: panelH });
+  // report the tab as part of the card so the viewfinder's edit button and
+  // the social strip clear the whole thing, not just the panel
+  return finish({
+    x: panelX,
+    y: panelY - signH,
+    width: fitW,
+    height: panelH + signH,
+  });
 }
 
 function renderMinimal(

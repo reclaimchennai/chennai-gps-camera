@@ -45,6 +45,40 @@ interface LiveState {
   setMockLocation(m: boolean): void;
 }
 
+/**
+ * Chennai users get the street-sign card by default (owner decision).
+ *
+ * It cannot be decided at install: the template depends on WHERE the user
+ * is, which is only known once a fix resolves inside Greater Chennai
+ * Corporation. So the first Chennai fix adopts it — once, guarded by a
+ * flag, and only from the plain detailed card. A user who has picked any
+ * other layout (or who picks detailed back afterwards) is never
+ * overridden: the app gets one chance to suggest, not a standing veto on
+ * their choice.
+ */
+function adoptChennaiTemplate(r: LookupResult | null): void {
+  try {
+    if (localStorage.getItem("gpscam-chennai-template") === "1") return;
+    const j = r?.jurisdiction;
+    const chennai =
+      j &&
+      (j.scope === "gcc" || /greater chennai/i.test(j.corporation ?? ""));
+    if (!chennai) return;
+    // A fix can land before hydrateSettings() resolves. Claiming the flag
+    // then would burn the one chance against a default-valued store and
+    // the template would never appear — so wait for real settings and let
+    // the next fix try again.
+    const st = useSettingsStore.getState();
+    if (!st.hydrated) return;
+    localStorage.setItem("gpscam-chennai-template", "1");
+    if (st.watermark.preset === "detailed") {
+      st.setWatermark({ ...st.watermark, preset: "chennai" });
+    }
+  } catch {
+    // storage unavailable — leave the layout alone
+  }
+}
+
 export const useLiveStore = create<LiveState>((set) => ({
   fix: null,
   lookupResult: null,
@@ -58,7 +92,10 @@ export const useLiveStore = create<LiveState>((set) => ({
   uiRotation: 0,
   mockLocation: false,
   setFix: (fix) => set({ fix }),
-  setLookupResult: (lookupResult) => set({ lookupResult }),
+  setLookupResult: (lookupResult) => {
+    set({ lookupResult });
+    adoptChennaiTemplate(lookupResult);
+  },
   setBearing: (bearing) => set({ bearing }),
   setGpsStatus: (gpsStatus) => set({ gpsStatus }),
   setAddress: (address, locality, addressFor) =>

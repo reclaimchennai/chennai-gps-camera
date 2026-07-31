@@ -4,7 +4,7 @@ import { useLiveStore, useSettingsStore } from "../store";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { collectWatermarkData, getProfilePhoto } from "../lib/capture";
-import { FIELD_META, PRESET_META } from "../lib/watermark/presets";
+import { FIELD_META, LANG_META, PRESET_META } from "../lib/watermark/presets";
 import { fmtDateOnly } from "../lib/geo/format";
 import ProfileFields from "./ProfileFields";
 import type { DateFormat, WatermarkData } from "../types";
@@ -168,7 +168,7 @@ export default function WatermarkEditorView() {
       </div>
 
       <div className="card" style={{ marginTop: 14 }}>
-        <div className="card-title">Layout</div>
+        <div className="card-title">Template</div>
         <div style={{ padding: "10px 14px" }}>
           <div className="seg">
             {PRESET_META.map((p) => (
@@ -183,6 +183,30 @@ export default function WatermarkEditorView() {
           </div>
           <div className="hint" style={{ marginTop: 8 }}>
             {PRESET_META.find((p) => p.key === config.preset)?.hint}
+          </div>
+          {config.preset === "chennai" && (
+            <div className="hint" style={{ marginTop: 6 }}>
+              The street-sign header only appears on photos taken inside
+              Greater Chennai Corporation — elsewhere this renders as the
+              plain detailed card.
+            </div>
+          )}
+        </div>
+        <div className="row" style={{ display: "block" }}>
+          <div className="label">Card language</div>
+          <div className="hint" style={{ margin: "2px 0 8px" }}>
+            Falls back to English if your phone has no font for the script
+          </div>
+          <div className="seg">
+            {LANG_META.map((l) => (
+              <button
+                key={l.key}
+                data-active={config.language === l.key}
+                onClick={() => set({ language: l.key })}
+              >
+                {l.label}
+              </button>
+            ))}
           </div>
         </div>
         <div className="row" style={{ display: "block" }}>

@@ -1,4 +1,4 @@
-import type { WatermarkConfig, WatermarkFields } from "../../types";
+import type { WatermarkConfig, WatermarkFields, WatermarkLang } from "../../types";
 
 export const APP_NAME = "Chennai GPS Camera"; // working name — final branding TBD by owner
 
@@ -30,6 +30,7 @@ export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
   opacity: 0.55,
   theme: "dark",
   customLabelText: "",
+  language: "en", // default English regardless of template (owner decision)
   onlineMapUpgrade: false,
   position: "bottom",
 };
@@ -64,4 +65,15 @@ export const PRESET_META: { key: WatermarkConfig["preset"]; label: string; hint:
   { key: "detailed", label: "Detailed card", hint: "Stacked panel with mini-map" },
   { key: "compact", label: "Compact bar", hint: "Single slim bar, essentials only" },
   { key: "minimal", label: "Corner badge", hint: "Coordinates + time badge" },
+  {
+    key: "chennai",
+    label: "Chennai street sign",
+    hint: "GCC street-board header on the detailed card",
+  },
+];
+
+export const LANG_META: { key: WatermarkLang; label: string }[] = [
+  { key: "en", label: "English" },
+  { key: "ta", label: "தமிழ் Tamil" },
+  { key: "hi", label: "हिन्दी Hindi" },
 ];

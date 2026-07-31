@@ -76,8 +76,11 @@ try {
   // 2b. enable DIGIPIN + verify top card position renders at the top
   await page.goto(`${base}/#/settings/watermark`);
   await page.waitForTimeout(900);
+  // match the DIGIPIN row by its exact label — "DIGIPIN" also appears in
+  // the Location QR row's text, and a substring match hits both
   const digipinSwitch = page
-    .locator(".row", { hasText: "DIGIPIN" })
+    .locator(".row")
+    .filter({ has: page.locator(".label", { hasText: /^DIGIPIN$/ }) })
     .locator(".switch");
   // DIGIPIN defaults on now — only toggle when it happens to be off, so the
   // encoding check downstream always runs with the field enabled.
