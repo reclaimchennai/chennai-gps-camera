@@ -13,6 +13,8 @@
  */
 import { useSettingsStore } from "../store";
 import { langOf } from "./watermark/signboard";
+import { langsFor } from "./i18n/languages";
+import { currentPackId } from "./geo/geodata";
 import { nativeReverseGeocode } from "./native";
 
 export interface GeocodeResult {
@@ -205,7 +207,15 @@ export async function reverseGeocode(
   const { settings, watermark } = useSettingsStore.getState();
   const mode = settings.geocoder;
   if (mode === "off") return null;
-  const lang = langOf(watermark.language);
+  // Ask for the address in the card's language ONLY where that language
+  // is actually local. A Tamil card in Bengaluru was getting a Tamil
+  // TRANSLITERATION of a Kannada address — "Inner Circle Municipal Park"
+  // respelt in Tamil letters — which is neither language and helps
+  // nobody. Outside its home region the address comes back in English
+  // while the labels stay in the chosen language.
+  const chosen = langOf(watermark.language);
+  const local = langsFor(currentPackId());
+  const lang = local.includes(chosen) ? chosen : "en";
   const stateFallback = STATE_FALLBACK[lang] ?? STATE_FALLBACK.en;
   try {
     const trySystem = async () => {

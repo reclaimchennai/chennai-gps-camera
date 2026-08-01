@@ -21,6 +21,7 @@ import type { WatermarkConfig, WatermarkData } from "../../types";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../geo/format";
 import { latLngToDigipin } from "../geo/digipin";
 import { tamilStation, tamilPlace } from "../geo/tamil-places";
+import { tamilBodyName } from "../geo/tn-body-names";
 import {
   isChennaiJurisdiction,
   langOf,
@@ -124,6 +125,30 @@ const TN_CORPORATIONS: { match: RegExp; slot: LogoSlot; tamil: string }[] = [
   { match: /avadi/i, slot: "avadi", tamil: "ஆவடி மாநகராட்சி" },
 ];
 
+/**
+ * Local-language names for bodies outside Tamil Nadu.
+ *
+ * Bengaluru's five are read straight off the corporation roundels the
+ * owner supplied — the Kannada ring text IS the official name — and the
+ * metros are their published official titles. Tamil Nadu is not here: its
+ * 527 bodies come from the LGD table (tn-body-names.ts).
+ */
+const LOCAL_NAMES: { match: RegExp; local: string; slot?: LogoSlot }[] = [
+  { match: /bengaluru north/i, local: "ಬೆಂಗಳೂರು ಉತ್ತರ ನಗರ ಪಾಲಿಕೆ", slot: "blr-north" },
+  { match: /bengaluru south/i, local: "ಬೆಂಗಳೂರು ದಕ್ಷಿಣ ನಗರ ಪಾಲಿಕೆ", slot: "blr-south" },
+  { match: /bengaluru east/i, local: "ಬೆಂಗಳೂರು ಪೂರ್ವ ನಗರ ಪಾಲಿಕೆ", slot: "blr-east" },
+  { match: /bengaluru west/i, local: "ಬೆಂಗಳೂರು ಪಶ್ಚಿಮ ನಗರ ಪಾಲಿಕೆ", slot: "blr-west" },
+  { match: /bengaluru central/i, local: "ಬೆಂಗಳೂರು ಕೇಂದ್ರ ನಗರ ಪಾಲಿಕೆ", slot: "blr-central" },
+  { match: /bruhat bengaluru|bbmp/i, local: "ಬೃಹತ್ ಬೆಂಗಳೂರು ಮಹಾನಗರ ಪಾಲಿಕೆ", slot: "bbmp" },
+  { match: /brihanmumbai|greater mumbai/i, local: "बृहन्मुंबई महानगरपालिका" },
+  { match: /pune municipal/i, local: "पुणे महानगरपालिका" },
+  { match: /kolkata municipal/i, local: "কলকাতা পৌরসংস্থা" },
+  { match: /greater hyderabad/i, local: "గ్రేటర్ హైదరాబాద్ మున్సిపల్ కార్పొరేషన్" },
+  { match: /visakhapatnam/i, local: "గ్రేటర్ విశాఖపట్నం మున్సిపల్ కార్పొరేషన్" },
+  { match: /new delhi municipal/i, local: "नई दिल्ली नगरपालिक परिषद", slot: "ndmc" },
+  { match: /municipal corporation of delhi|^delhi/i, local: "दिल्ली नगर निगम", slot: "mcd" },
+];
+
 export function signStyle(data: WatermarkData): SignStyle | null {
   const j = data.jurisdiction;
   if (!j || j.scope === "out") return null;
@@ -174,60 +199,22 @@ export function signStyle(data: WatermarkData): SignStyle | null {
     };
   }
 
-  // Bengaluru's boards carry no white bars at all — the roundel sits on
-  // the blue at the left and every line is white on blue.
-  if (/bengaluru|bruhat|bbmp/i.test(name)) {
-    // Bengaluru split into five city corporations in 2025, each with its
-    // own roundel. Pick by name, so a Koramangala photo carries the East
-    // crest and a Gandhinagar one carries Central. A single BBMP mark
-    // would now name a body that no longer covers the spot.
-    const dir: LogoSlot = /\bnorth\b/i.test(name)
-      ? "blr-north"
-      : /\bsouth\b/i.test(name)
-        ? "blr-south"
-        : /\beast\b/i.test(name)
-          ? "blr-east"
-          : /\bwest\b/i.test(name)
-            ? "blr-west"
-            : /\bcentral\b/i.test(name)
-              ? "blr-central"
-              : "bbmp";
-    return {
-      tamil: null,
-      english: name,
-      topStrip: false,
-      bottomStrip: false,
-      leftLogo: dir,
-      centreLogo: null,
-      logoOnBlue: true,
-      plate: BLUE,
-    };
-  }
-
-  // Delhi's boards are emerald green with the council seal on the plate
-  // itself and no white bars — the same skeleton, a different livery.
-  if (/delhi/i.test(name)) {
-    return {
-      tamil: null,
-      english: name,
-      topStrip: false,
-      bottomStrip: false,
-      leftLogo: /new delhi municipal/i.test(name) ? "ndmc" : "mcd",
-      centreLogo: null,
-      logoOnBlue: true,
-      plate: DELHI_GREEN,
-    };
-  }
-
+  // One board for everyone: the body's own-language name on the left of
+  // the white strip, its crest in the middle, the English name on the
+  // right. Tamil Nadu's names come from the LGD table; everywhere else
+  // from LOCAL_NAMES. A body with neither still gets the English name,
+  // which is always present.
+  const hit = LOCAL_NAMES.find((l) => l.match.test(name));
+  const local = hit?.local ?? tamilBodyName(name);
   return {
-    tamil: null,
+    tamil: local,
     english: name,
     topStrip: true,
     bottomStrip: true,
     leftLogo: null,
-    centreLogo: null,
+    centreLogo: hit?.slot ?? null,
     logoOnBlue: false,
-    plate: BLUE,
+    plate: /delhi/i.test(name) ? DELHI_GREEN : BLUE,
   };
 }
 
