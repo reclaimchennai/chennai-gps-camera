@@ -69,8 +69,8 @@ export const PRESET_META: { key: WatermarkConfig["preset"]; label: string; hint:
   { key: "minimal", label: "Corner badge", hint: "Coordinates + time badge" },
   {
     key: "chennai",
-    label: "Chennai street sign",
-    hint: "GCC street-board header on the detailed card",
+    label: "Street sign",
+    hint: "Chennai-style civic board, addressed to your local body",
   },
 ];
 

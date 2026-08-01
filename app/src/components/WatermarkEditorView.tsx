@@ -191,27 +191,24 @@ export default function WatermarkEditorView() {
             {PRESET_META.find((p) => p.key === config.preset)?.hint}
           </div>
           {config.preset === "chennai" &&
-            (isChennaiJurisdiction(liveJurisdiction) ? (
+            (liveJurisdiction && liveJurisdiction.scope !== "out" ? (
               <div className="hint" style={{ marginTop: 6 }}>
-                Active here — photos taken at this location get the street
-                sign.
+                {`Active here — addressed to ${
+                  liveJurisdiction.corporation ??
+                  liveJurisdiction.district ??
+                  "your local body"
+                }.`}
+                {isChennaiJurisdiction(liveJurisdiction)
+                  ? " Carries the GCC and Singara Chennai emblems."
+                  : " The GCC emblems appear only inside Greater Chennai Corporation."}
               </div>
             ) : (
-              /* Naming the body that DOES cover this spot: the template
-                 silently rendering as the plain card looked like the
-                 setting had not applied. The sign says "Greater Chennai
-                 Corporation", so showing it outside GCC would address the
-                 complaint to the wrong authority. */
               <div
                 className="hint"
                 style={{ marginTop: 6, color: "#fbbf24" }}
               >
-                Not active at your current location
-                {liveJurisdiction?.corporation
-                  ? ` — this is ${liveJurisdiction.corporation}`
-                  : ""}
-                . The street sign is only for Greater Chennai Corporation,
-                so the plain detailed card is used here instead.
+                No local body matched where you are, so the plain detailed
+                card is used. See About for coverage.
               </div>
             ))}
         </div>

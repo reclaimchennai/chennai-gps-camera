@@ -21,13 +21,55 @@ import type { WatermarkConfig, WatermarkData } from "../../types";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../geo/format";
 import { latLngToDigipin } from "../geo/digipin";
 import { tamilStation, tamilPlace } from "../geo/tamil-places";
-import { langOf, scriptAvailable, stringsFor, fontFor } from "./signboard";
+import {
+  isChennaiJurisdiction,
+  langOf,
+  scriptAvailable,
+  stringsFor,
+  fontFor,
+} from "./signboard";
 
 const BLUE = "#0056b3";
 const WHITE = "#ffffff";
 const LATIN =
   "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
 const TAMIL = `'Noto Sans Tamil', 'Latha', 'Tamil Sangam MN', ${LATIN}`;
+
+/**
+ * Who the board is addressed to.
+ *
+ * The sign was gated on Greater Chennai Corporation, which is
+ * administratively right and practically wrong: St Thomas Mount reads
+ * "Chennai - 600016" to anyone who lives there, but it is a Cantonment
+ * Board, so choosing the template did nothing at all. The board now
+ * works wherever a jurisdiction resolves, and names the body that
+ * ACTUALLY covers the spot.
+ *
+ * GCC's emblem and the Singara Chennai mark stay behind the GCC check.
+ * They are that corporation's marks, and stamping them on a complaint
+ * bound for a Cantonment Board would misattribute it — the one thing
+ * this card exists not to do.
+ */
+export interface SignAuthority {
+  tamil: string | null;
+  english: string;
+  gcc: boolean;
+}
+
+export function signAuthority(data: WatermarkData): SignAuthority | null {
+  const j = data.jurisdiction;
+  if (!j || j.scope === "out") return null;
+  if (isChennaiJurisdiction(j)) {
+    return {
+      tamil: "பெருநகர சென்னை மாநகராட்சி",
+      english: "Greater Chennai Corporation",
+      gcc: true,
+    };
+  }
+  const name = j.corporation ?? j.district;
+  if (!name) return null;
+  return { tamil: null, english: name, gcc: false };
+}
 
 /** Width/height of a drawable, falling back to its known design ratio. */
 function aspect(img: CanvasImageSource, fallback: number): number {
@@ -55,6 +97,25 @@ function placeName(data: WatermarkData, lang: string): string {
   // the geocoder usually answers in Tamil already; this covers the
   // offline path, where the locality comes from the English pack
   return (lang === "ta" ? tamilPlace(head) : null) ?? head;
+}
+
+/** Split a name over at most two balanced lines at a space. */
+function splitTwo(text: string): string[] {
+  const t = text.trim();
+  if (!t) return [];
+  const words = t.split(/\s+/);
+  if (words.length < 3) return [t];
+  let best = 1;
+  let bestDiff = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(" ").length;
+    const b = words.slice(i).join(" ").length;
+    if (Math.abs(a - b) < bestDiff) {
+      bestDiff = Math.abs(a - b);
+      best = i;
+    }
+  }
+  return [words.slice(0, best).join(" "), words.slice(best).join(" ")];
 }
 
 function fitText(
@@ -95,11 +156,20 @@ export function renderChennaiSign(
   qr: CanvasImageSource | null,
   gcc: CanvasImageSource | null,
   singara: CanvasImageSource | null,
+  /** canvas short side — the QR floor is a function of OUTPUT pixels, not
+   *  of how wide the plate happens to be */
+  base: number,
   measureOnly = false
 ): SignMetrics {
   const lang = langOf(config.language);
   const t = stringsFor(ctx, lang);
-  const tamilOk = scriptAvailable(ctx, "ta");
+  const authority = signAuthority(data);
+  const showMarks = authority?.gcc === true;
+  const tamilOk = scriptAvailable(ctx, "ta") && !!authority?.tamil;
+  if (!showMarks) {
+    gcc = null;
+    singara = null;
+  }
 
   const pad = Math.round(16 * s);
   const shape = config.signShape ?? "arrow-left";
@@ -174,6 +244,14 @@ export function renderChennaiSign(
   if (pin) footBits.push(`${lang === "ta" ? "அஞ்சல் குறியீடு" : "PIN"} : ${pin}`);
   const footH = footBits.length ? Math.round(40 * s) : 0;
 
+  // The QR floor is set by the OUTPUT resolution. Sizing it off the plate
+  // meant shrink-wrapping starved it: a 1440x900 frame gave a ~50 px code,
+  // about 1.4 device pixels per module, which does not decode. This
+  // content needs roughly 37 modules, so ~3 px each is the real minimum.
+  const qrSize = qr
+    ? Math.round(Math.max(78 * s, Math.min(base * 0.14, 170)))
+    : 0;
+
   // ---- shrink-wrap ---------------------------------------------------
   // The plate used to span the full frame whatever it held, so a short
   // place name over five short rows still painted a board across the
@@ -189,15 +267,16 @@ export function renderChennaiSign(
   const singaraW = singara
     ? Math.round(aspect(singara, 1) * Math.round(112 * s))
     : 0;
-  const tamilW = tamilOk
-    ? Math.max(
-        measure("பெருநகர", authPx, TAMIL, "700"),
-        measure("சென்னை மாநகராட்சி", authPx, TAMIL, "700")
-      )
+  const tamilLines = tamilOk ? splitTwo(authority!.tamil!) : [];
+  const tamilW = tamilLines.length
+    ? Math.max(...tamilLines.map((l) => measure(l, authPx, TAMIL, "700")))
     : 0;
+  // the English name is split over two lines at the last space that
+  // keeps both halves under half the plate; a Cantonment Board's name is
+  // far longer than "Greater / Chennai Corporation"
+  const engLines = splitTwo(authority?.english ?? "");
   const engW = Math.max(
-    measure("Greater", authPx, LATIN, "700"),
-    measure("Chennai Corporation", authPx, LATIN, "700")
+    ...engLines.map((l) => measure(l, authPx, LATIN, "700"))
   );
   // The Singara mark is drawn CENTRED, so a sequential left+logo+right
   // sum is not enough: whichever side is wider decides how much room the
@@ -217,7 +296,12 @@ export function renderChennaiSign(
     ? measure(footBits.join("  ·  "), Math.round(19 * s), fontFor(lang), "700") +
       Math.round(24 * s)
     : 0;
-  const needed = Math.max(headerW, placeNatural, rowsNatural, footNatural);
+  // the Singara mark is centred and the QR sits hard right, so the plate
+  // has to be wide enough that they cannot meet
+  const badgeRowW = qrSize ? 2 * (qrSize + gapMin) + singaraW : 0;
+  const needed = Math.max(
+    headerW, placeNatural, rowsNatural, footNatural, badgeRowW
+  );
   const contentW = Math.max(
     Math.round(220 * s), // never so narrow the header collapses
     Math.min(availW, Math.ceil(needed))
@@ -240,13 +324,7 @@ export function renderChennaiSign(
   const DIAMOND_MID = 0.426;
   const singaraH = singara ? Math.round(112 * s) : 0;
   const overhang = singara ? Math.round(singaraH * (1 - DIAMOND_MID)) : 0;
-  // Sized off the PLATE, not just the font scale. At 78*s a landscape
-  // shot produced a ~57 px code — roughly 1.5 device pixels per module,
-  // which decoded as an empty string on one card and not at all on the
-  // other. It has to stay big enough to survive being photographed.
-  const qrSize = qr
-    ? Math.round(Math.max(78 * s, Math.min(contentW * 0.1, 170)))
-    : 0;
+
   const qrTop = qr ? Math.round(8 * s) : 0;
   const badgeH = Math.max(overhang, qrTop + qrSize);
 
@@ -333,16 +411,23 @@ export function renderChennaiSign(
   ctx.fillStyle = BLUE;
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
-  if (tamilOk) {
+  const place2 = (i: number, n: number) =>
+    cy + bandH * (n > 1 ? (i ? 0.68 : 0.32) : 0.5);
+  if (tamilLines.length) {
     ctx.font = `700 ${authPx}px ${TAMIL}`;
-    ctx.fillText("பெருநகர", hx, cy + bandH * 0.32);
-    ctx.fillText("சென்னை மாநகராட்சி", hx, cy + bandH * 0.68);
+    tamilLines.forEach((l, i) =>
+      ctx.fillText(l, hx, place2(i, tamilLines.length))
+    );
   }
-  ctx.textAlign = "right";
-  const rx = x + insetL + contentW - Math.round(10 * s);
+  // With no Tamil line the English name carries the strip alone, so it
+  // starts at the left instead of hugging a right edge across a gap.
+  const soloEnglish = !tamilLines.length;
+  ctx.textAlign = soloEnglish ? "left" : "right";
+  const rx = soloEnglish ? hx : x + insetL + contentW - Math.round(10 * s);
   ctx.font = `700 ${authPx}px ${LATIN}`;
-  ctx.fillText("Greater", rx, cy + bandH * 0.32);
-  ctx.fillText("Chennai Corporation", rx, cy + bandH * 0.68);
+  engLines.forEach((l, i) =>
+    ctx.fillText(l, rx, place2(i, engLines.length))
+  );
   cy += bandH;
 
   // ---- Singara mark (straddling) + QR (right, under the English text) --

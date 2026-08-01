@@ -24,8 +24,8 @@ import {
 import { renderSocialStrip } from "./socialStrip";
 import { latLngToDigipin } from "../geo/digipin";
 import { tamilStation } from "../geo/tamil-places";
-import { isChennai, stringsFor, fontFor, type CardStrings } from "./signboard";
-import { renderChennaiSign } from "./chennaiSign";
+import { stringsFor, fontFor, type CardStrings } from "./signboard";
+import { renderChennaiSign, signAuthority } from "./chennaiSign";
 
 export interface WatermarkAssets {
   miniMap?: CanvasImageSource | null;
@@ -410,7 +410,9 @@ export function renderWatermark(
   const t = stringsFor(ctx, config.language);
   // The Chennai template is a whole plate, not a header on the normal
   // card — it carries its own place name, data rows and ward strip.
-  const signOn = preset === "chennai" && isChennai(data);
+  // any resolved local body, not only GCC — the board names whoever
+  // actually covers the spot
+  const signOn = preset === "chennai" && signAuthority(data) !== null;
   const margin = Math.round(base * 0.025);
   const pad = Math.round(18 * s);
   // landscape: compact card (portrait-like width) instead of a full-bleed
@@ -430,6 +432,7 @@ export function renderWatermark(
       ctx, 0, 0, panelW, s, data, config, signQr,
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null,
+      base,
       true
     );
     const signW = m.width;
@@ -443,7 +446,8 @@ export function renderWatermark(
     renderChennaiSign(
       ctx, sx, sy, panelW, s, data, config, signQr,
       assets.gccEmblem ?? null,
-      assets.singaraLogo ?? null
+      assets.singaraLogo ?? null,
+      base
     );
     return finish({ x: sx, y: sy, width: signW, height: m.height });
   }
