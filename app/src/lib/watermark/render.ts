@@ -36,6 +36,8 @@ export interface WatermarkAssets {
    *  renderer must stay a pure function of (data, config, assets). */
   gccEmblem?: CanvasImageSource | null;
   singaraLogo?: CanvasImageSource | null;
+  /** roundel for whichever city corporation covers this spot */
+  corpLogo?: CanvasImageSource | null;
   /** true only when the thumb is genuine Google imagery (§5.4 attribution) */
   miniMapIsGoogle?: boolean;
   profilePhoto?: CanvasImageSource | null;
@@ -432,6 +434,7 @@ export function renderWatermark(
       ctx, 0, 0, panelW, s, data, config, signQr,
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null,
+      assets.corpLogo ?? null,
       base,
       true
     );
@@ -447,6 +450,7 @@ export function renderWatermark(
       ctx, sx, sy, panelW, s, data, config, signQr,
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null,
+      assets.corpLogo ?? null,
       base
     );
     return finish({ x: sx, y: sy, width: signW, height: m.height });

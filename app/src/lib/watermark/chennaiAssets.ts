@@ -22,13 +22,20 @@ import { resetScriptCache } from "./signboard";
 import { ensureCardFont } from "../i18n/languages";
 import gccUrl from "../../assets/gcc-emblem.png";
 import singaraUrl from "../../assets/singara-chennai.png";
+import blrEastUrl from "../../assets/blr-east.png";
+import blrCentralUrl from "../../assets/blr-central.png";
 
 export interface ChennaiLogos {
   gcc: HTMLImageElement | null;
   singara: HTMLImageElement | null;
+  /** Bengaluru city-corporation roundels, keyed by the slot name the
+   *  sign style asks for. Supplied by the owner; the remaining three
+   *  corporations have no published emblem we can stand behind yet, and
+   *  a board with no roundel simply renders without one. */
+  blr: Record<string, HTMLImageElement | null>;
 }
 
-const logos: ChennaiLogos = { gcc: null, singara: null };
+const logos: ChennaiLogos = { gcc: null, singara: null, blr: {} };
 let pending: Promise<ChennaiLogos> | null = null;
 
 function load(url: string): Promise<HTMLImageElement | null> {
@@ -47,11 +54,14 @@ export function ensureChennaiLogos(): Promise<ChennaiLogos> {
     pending = Promise.all([
       load(gccUrl),
       load(singaraUrl),
+      load(blrEastUrl),
+      load(blrCentralUrl),
       // the sign always carries Tamil, whatever the card language
       ensureCardFont("ta", resetScriptCache),
-    ]).then(([gcc, singara]) => {
+    ]).then(([gcc, singara, blrEast, blrCentral]) => {
       logos.gcc = gcc;
       logos.singara = singara;
+      logos.blr = { "blr-east": blrEast, "blr-central": blrCentral };
       return logos;
     });
   }

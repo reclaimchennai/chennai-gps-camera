@@ -14,6 +14,7 @@ import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { renderLocationQr } from "../lib/watermark/qr";
 import { ensureChennaiLogos } from "../lib/watermark/chennaiAssets";
+import { signStyle } from "../lib/watermark/chennaiSign";
 import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
 import {
@@ -716,9 +717,15 @@ export default function CameraView({ active }: { active: boolean }) {
       // the Chennai plate's emblems, resolved on the same cadence so the
       // live card matches what a capture will burn
       if (watermark.preset === "chennai") {
-        void ensureChennaiLogos().then(({ gcc, singara }) => {
+        void ensureChennaiLogos().then(({ gcc, singara, blr }) => {
           assetsRef.current.gccEmblem = gcc;
           assetsRef.current.singaraLogo = singara;
+          const { lookupResult } = useLiveStore.getState();
+          const style = lookupResult?.jurisdiction
+            ? signStyle({ jurisdiction: lookupResult.jurisdiction } as never)
+            : null;
+          const slot = style?.leftLogo ?? style?.centreLogo;
+          assetsRef.current.corpLogo = (slot && blr[slot]) ?? null;
         });
       }
     };

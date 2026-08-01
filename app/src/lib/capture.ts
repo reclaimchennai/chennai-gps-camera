@@ -11,7 +11,7 @@ import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
 import { renderLocationQr } from "./watermark/qr";
 import { ensureChennaiLogos } from "./watermark/chennaiAssets";
-import { isChennai } from "./watermark/signboard";
+import { signStyle } from "./watermark/chennaiSign";
 
 /** Emblems for the Chennai plate — resolved once, then handed to the
  *  renderer through `assets` so no draw path depends on load order. */
@@ -19,9 +19,16 @@ export async function chennaiSignAssets(
   config: { preset: string },
   data: { jurisdiction?: unknown }
 ): Promise<Partial<WatermarkAssets>> {
-  if (config.preset !== "chennai" || !isChennai(data as never)) return {};
-  const { gcc, singara } = await ensureChennaiLogos();
-  return { gccEmblem: gcc, singaraLogo: singara };
+  if (config.preset !== "chennai") return {};
+  const style = signStyle(data as never);
+  if (!style) return {};
+  const { gcc, singara, blr } = await ensureChennaiLogos();
+  const slot = style.leftLogo ?? style.centreLogo;
+  return {
+    gccEmblem: gcc,
+    singaraLogo: singara,
+    corpLogo: (slot && blr[slot]) ?? null,
+  };
 }
 import { writeExif } from "./exif";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";

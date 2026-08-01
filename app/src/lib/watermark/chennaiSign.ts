@@ -36,40 +36,141 @@ const LATIN =
 const TAMIL = `'Noto Sans Tamil', 'Latha', 'Tamil Sangam MN', ${LATIN}`;
 
 /**
- * Who the board is addressed to.
+ * Who the board is addressed to, and how that city draws its boards.
  *
  * The sign was gated on Greater Chennai Corporation, which is
  * administratively right and practically wrong: St Thomas Mount reads
  * "Chennai - 600016" to anyone who lives there, but it is a Cantonment
  * Board, so choosing the template did nothing at all. The board now
- * works wherever a jurisdiction resolves, and names the body that
- * ACTUALLY covers the spot.
+ * works wherever a jurisdiction resolves, names the body that ACTUALLY
+ * covers the spot, and follows that city's own board conventions.
  *
- * GCC's emblem and the Singara Chennai mark stay behind the GCC check.
- * They are that corporation's marks, and stamping them on a complaint
- * bound for a Cantonment Board would misattribute it — the one thing
- * this card exists not to do.
+ * Emblems are per-body and never shared. GCC's crest and the Singara
+ * Chennai mark appear only inside GCC; stamping them on a complaint
+ * bound for a Cantonment Board would misattribute it, which is the one
+ * thing this card exists not to do.
+ *
+ * `logo` names a slot, not a file. Slots stay empty until an emblem with
+ * provenance we can stand behind is dropped in — see chennaiAssets.ts.
+ * A board with an empty slot simply renders without it.
  */
-export interface SignAuthority {
+export type LogoSlot =
+  | "gcc"
+  | "singara"
+  | "tambaram"
+  | "blr-east"
+  | "blr-central"
+  | "blr-north"
+  | "blr-south"
+  | "blr-west"
+  | "bbmp"
+  | null;
+
+export interface SignStyle {
   tamil: string | null;
   english: string;
-  gcc: boolean;
+  /** white bar behind the authority name at the top */
+  topStrip: boolean;
+  /** white bar carrying ward / zone / pincode at the bottom */
+  bottomStrip: boolean;
+  /** emblem at the left of the header */
+  leftLogo: LogoSlot;
+  /** emblem straddling the header's lower edge, centred */
+  centreLogo: LogoSlot;
+  /** Bengaluru: the roundel sits ON the blue at the left, not on a strip */
+  logoOnBlue: boolean;
 }
 
-export function signAuthority(data: WatermarkData): SignAuthority | null {
+export function signStyle(data: WatermarkData): SignStyle | null {
   const j = data.jurisdiction;
   if (!j || j.scope === "out") return null;
+  const name = j.corporation ?? j.district;
+
   if (isChennaiJurisdiction(j)) {
     return {
       tamil: "பெருநகர சென்னை மாநகராட்சி",
       english: "Greater Chennai Corporation",
-      gcc: true,
+      topStrip: true,
+      bottomStrip: true,
+      leftLogo: "gcc",
+      centreLogo: "singara",
+      logoOnBlue: false,
     };
   }
-  const name = j.corporation ?? j.district;
   if (!name) return null;
-  return { tamil: null, english: name, gcc: false };
+
+  // Cantonment boards: name only. Their emblem carries the State Emblem
+  // of India, restricted under the 2005 Act, so no crest is drawn. They
+  // have no ward/zone data either, so there is nothing for a bottom bar
+  // to hold and it is omitted rather than left empty.
+  if (/cantonment/i.test(name)) {
+    return {
+      tamil: null,
+      english: name,
+      topStrip: true,
+      bottomStrip: false,
+      leftLogo: null,
+      centreLogo: null,
+      logoOnBlue: false,
+    };
+  }
+
+  // Tambaram: Chennai's layout with its own crest in the centre slot and
+  // no GCC emblem at the left.
+  if (/tambaram/i.test(name)) {
+    return {
+      tamil: "தாம்பரம் மாநகராட்சி",
+      english: name,
+      topStrip: true,
+      bottomStrip: true,
+      leftLogo: null,
+      centreLogo: "tambaram",
+      logoOnBlue: false,
+    };
+  }
+
+  // Bengaluru's boards carry no white bars at all — the roundel sits on
+  // the blue at the left and every line is white on blue.
+  if (/bengaluru|bruhat|bbmp/i.test(name)) {
+    // Bengaluru split into five city corporations in 2025, each with its
+    // own roundel. Pick by name, so a Koramangala photo carries the East
+    // crest and a Gandhinagar one carries Central. A single BBMP mark
+    // would now name a body that no longer covers the spot.
+    const dir: LogoSlot = /\bnorth\b/i.test(name)
+      ? "blr-north"
+      : /\bsouth\b/i.test(name)
+        ? "blr-south"
+        : /\beast\b/i.test(name)
+          ? "blr-east"
+          : /\bwest\b/i.test(name)
+            ? "blr-west"
+            : /\bcentral\b/i.test(name)
+              ? "blr-central"
+              : "bbmp";
+    return {
+      tamil: null,
+      english: name,
+      topStrip: false,
+      bottomStrip: false,
+      leftLogo: dir,
+      centreLogo: null,
+      logoOnBlue: true,
+    };
+  }
+
+  return {
+    tamil: null,
+    english: name,
+    topStrip: true,
+    bottomStrip: true,
+    leftLogo: null,
+    centreLogo: null,
+    logoOnBlue: false,
+  };
 }
+
+/** Back-compat name used by render.ts's gate. */
+export const signAuthority = signStyle;
 
 /** Width/height of a drawable, falling back to its known design ratio. */
 function aspect(img: CanvasImageSource, fallback: number): number {
@@ -156,6 +257,7 @@ export function renderChennaiSign(
   qr: CanvasImageSource | null,
   gcc: CanvasImageSource | null,
   singara: CanvasImageSource | null,
+  corp: CanvasImageSource | null,
   /** canvas short side — the QR floor is a function of OUTPUT pixels, not
    *  of how wide the plate happens to be */
   base: number,
@@ -163,13 +265,20 @@ export function renderChennaiSign(
 ): SignMetrics {
   const lang = langOf(config.language);
   const t = stringsFor(ctx, lang);
-  const authority = signAuthority(data);
-  const showMarks = authority?.gcc === true;
-  const tamilOk = scriptAvailable(ctx, "ta") && !!authority?.tamil;
-  if (!showMarks) {
-    gcc = null;
-    singara = null;
-  }
+  const style = signStyle(data);
+  // Slots decide which emblem, if any, each position gets. An emblem with
+  // no slot on this board is dropped rather than reused elsewhere.
+  const leftImg =
+    style?.leftLogo === "gcc" ? gcc : style?.leftLogo ? corp : null;
+  const centreImg =
+    style?.centreLogo === "singara"
+      ? singara
+      : style?.centreLogo
+        ? corp
+        : null;
+  gcc = leftImg;
+  singara = centreImg;
+  const tamilOk = scriptAvailable(ctx, "ta") && !!style?.tamil;
 
   const pad = Math.round(16 * s);
   const shape = config.signShape ?? "arrow-left";
@@ -183,6 +292,7 @@ export function renderChennaiSign(
   const insetR = (pointsRight ? arrow : 0) + pad;
 
   // ---- header strip -------------------------------------------------
+  const withStrip = style?.topStrip !== false;
   const bandH = Math.round(72 * s);
   const emblemH = Math.round(bandH * 0.86);
   const authPx = Math.round(19 * s);
@@ -223,7 +333,6 @@ export function renderChennaiSign(
   }
   if (data.mockLocation) rows.push(t.mock);
   const rowGap = Math.round(rowPx * 0.5);
-  const rowsH = rows.length ? rows.length * (rowPx + rowGap) : 0;
 
   // ---- footer strip: ward / zone / pincode --------------------------
   const footBits: string[] = [];
@@ -242,7 +351,14 @@ export function renderChennaiSign(
   }
   const pin = pincodeOf(data);
   if (pin) footBits.push(`${lang === "ta" ? "அஞ்சல் குறியீடு" : "PIN"} : ${pin}`);
-  const footH = footBits.length ? Math.round(40 * s) : 0;
+  const wantsFoot = style?.bottomStrip !== false && footBits.length > 0;
+  const footH = wantsFoot ? Math.round(40 * s) : 0;
+  // no bottom bar: the same facts still belong on the board, so they go
+  // in as an ordinary white-on-blue row rather than being dropped
+  if (!wantsFoot && footBits.length) rows.push(footBits.join("  ·  "));
+  // measured only now: the no-bottom-strip styles append a row above,
+  // and computing this earlier left the plate one row short, clipping it
+  const rowsH = rows.length ? rows.length * (rowPx + rowGap) : 0;
 
   // The QR floor is set by the OUTPUT resolution. Sizing it off the plate
   // meant shrink-wrapping starved it: a 1440x900 frame gave a ~50 px code,
@@ -267,14 +383,14 @@ export function renderChennaiSign(
   const singaraW = singara
     ? Math.round(aspect(singara, 1) * Math.round(112 * s))
     : 0;
-  const tamilLines = tamilOk ? splitTwo(authority!.tamil!) : [];
+  const tamilLines = tamilOk ? splitTwo(style!.tamil!) : [];
   const tamilW = tamilLines.length
     ? Math.max(...tamilLines.map((l) => measure(l, authPx, TAMIL, "700")))
     : 0;
   // the English name is split over two lines at the last space that
   // keeps both halves under half the plate; a Cantonment Board's name is
   // far longer than "Greater / Chennai Corporation"
-  const engLines = splitTwo(authority?.english ?? "");
+  const engLines = splitTwo(style?.english ?? "");
   const engW = Math.max(
     ...engLines.map((l) => measure(l, authPx, LATIN, "700"))
   );
@@ -393,22 +509,27 @@ export function renderChennaiSign(
 
   let cy = y + pad;
 
-  // ---- white header strip -------------------------------------------
-  // slightly more opaque than the plate: blue-on-translucent-white is the
-  // first thing to become unreadable as opacity drops
-  ctx.save();
-  ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
-  ctx.fillStyle = WHITE;
-  ctx.fillRect(x + insetL, cy, contentW, bandH);
-  ctx.restore();
+  // ---- header strip ---------------------------------------------------
+  // Bengaluru's boards have no white bars, so the strip is skipped and
+  // the names are drawn white on blue instead.
+  if (withStrip) {
+    // slightly more opaque than the plate: blue-on-translucent-white is
+    // the first thing to become unreadable as opacity drops
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
+    ctx.fillStyle = WHITE;
+    ctx.fillRect(x + insetL, cy, contentW, bandH);
+    ctx.restore();
+  }
 
   let hx = x + insetL + Math.round(8 * s);
   if (gcc) {
-    const gw = Math.round(aspect(gcc, 139 / 190) * emblemH);
-    ctx.drawImage(gcc, hx, cy + (bandH - emblemH) / 2, gw, emblemH);
+    const gh = style?.logoOnBlue ? Math.round(bandH * 1.05) : emblemH;
+    const gw = Math.round(aspect(gcc, 139 / 190) * gh);
+    ctx.drawImage(gcc, hx, cy + (bandH - gh) / 2, gw, gh);
     hx += gw + Math.round(10 * s);
   }
-  ctx.fillStyle = BLUE;
+  ctx.fillStyle = withStrip ? BLUE : WHITE;
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   const place2 = (i: number, n: number) =>
