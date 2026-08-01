@@ -24,14 +24,14 @@ import gccUrl from "../../assets/gcc-emblem.png";
 import singaraUrl from "../../assets/singara-chennai.png";
 import blrEastUrl from "../../assets/blr-east.png";
 import blrCentralUrl from "../../assets/blr-central.png";
+import ndmcUrl from "../../assets/ndmc.png";
 
 export interface ChennaiLogos {
   gcc: HTMLImageElement | null;
   singara: HTMLImageElement | null;
-  /** Bengaluru city-corporation roundels, keyed by the slot name the
-   *  sign style asks for. Supplied by the owner; the remaining three
-   *  corporations have no published emblem we can stand behind yet, and
-   *  a board with no roundel simply renders without one. */
+  /** Per-body crests, keyed by the slot the sign style asks for. Slots
+   *  with no verified emblem stay absent and the board renders without
+   *  one — no layout depends on a crest being there. */
   blr: Record<string, HTMLImageElement | null>;
 }
 
@@ -56,12 +56,17 @@ export function ensureChennaiLogos(): Promise<ChennaiLogos> {
       load(singaraUrl),
       load(blrEastUrl),
       load(blrCentralUrl),
+      load(ndmcUrl),
       // the sign always carries Tamil, whatever the card language
       ensureCardFont("ta", resetScriptCache),
-    ]).then(([gcc, singara, blrEast, blrCentral]) => {
+    ]).then(([gcc, singara, blrEast, blrCentral, ndmc]) => {
       logos.gcc = gcc;
       logos.singara = singara;
-      logos.blr = { "blr-east": blrEast, "blr-central": blrCentral };
+      logos.blr = {
+        "blr-east": blrEast,
+        "blr-central": blrCentral,
+        ndmc,
+      };
       return logos;
     });
   }

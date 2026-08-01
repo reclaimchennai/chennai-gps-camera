@@ -30,6 +30,7 @@ import {
 } from "./signboard";
 
 const BLUE = "#0056b3";
+const DELHI_GREEN = "#146b4a";
 const WHITE = "#ffffff";
 const LATIN =
   "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
@@ -64,6 +65,8 @@ export type LogoSlot =
   | "blr-south"
   | "blr-west"
   | "bbmp"
+  | "ndmc"
+  | "mcd"
   | null;
 
 export interface SignStyle {
@@ -77,8 +80,10 @@ export interface SignStyle {
   leftLogo: LogoSlot;
   /** emblem straddling the header's lower edge, centred */
   centreLogo: LogoSlot;
-  /** Bengaluru: the roundel sits ON the blue at the left, not on a strip */
+  /** Bengaluru: the roundel sits ON the plate at the left, not on a strip */
   logoOnBlue: boolean;
+  /** plate colour — Delhi's boards are emerald green, not GCC blue */
+  plate: string;
 }
 
 export function signStyle(data: WatermarkData): SignStyle | null {
@@ -95,6 +100,7 @@ export function signStyle(data: WatermarkData): SignStyle | null {
       leftLogo: "gcc",
       centreLogo: "singara",
       logoOnBlue: false,
+      plate: BLUE,
     };
   }
   if (!name) return null;
@@ -112,6 +118,7 @@ export function signStyle(data: WatermarkData): SignStyle | null {
       leftLogo: null,
       centreLogo: null,
       logoOnBlue: false,
+      plate: BLUE,
     };
   }
 
@@ -126,6 +133,7 @@ export function signStyle(data: WatermarkData): SignStyle | null {
       leftLogo: null,
       centreLogo: "tambaram",
       logoOnBlue: false,
+      plate: BLUE,
     };
   }
 
@@ -155,6 +163,22 @@ export function signStyle(data: WatermarkData): SignStyle | null {
       leftLogo: dir,
       centreLogo: null,
       logoOnBlue: true,
+      plate: BLUE,
+    };
+  }
+
+  // Delhi's boards are emerald green with the council seal on the plate
+  // itself and no white bars — the same skeleton, a different livery.
+  if (/delhi/i.test(name)) {
+    return {
+      tamil: null,
+      english: name,
+      topStrip: false,
+      bottomStrip: false,
+      leftLogo: /new delhi municipal/i.test(name) ? "ndmc" : "mcd",
+      centreLogo: null,
+      logoOnBlue: true,
+      plate: DELHI_GREEN,
     };
   }
 
@@ -166,6 +190,7 @@ export function signStyle(data: WatermarkData): SignStyle | null {
     leftLogo: null,
     centreLogo: null,
     logoOnBlue: false,
+    plate: BLUE,
   };
 }
 
@@ -496,7 +521,7 @@ export function renderChennaiSign(
   plate(0);
   ctx.save();
   ctx.globalAlpha = Math.min(1, Math.max(0.35, config.opacity));
-  ctx.fillStyle = BLUE;
+  ctx.fillStyle = style?.plate ?? BLUE;
   ctx.fill();
   ctx.restore();
   ctx.lineJoin = "round";
@@ -529,7 +554,7 @@ export function renderChennaiSign(
     ctx.drawImage(gcc, hx, cy + (bandH - gh) / 2, gw, gh);
     hx += gw + Math.round(10 * s);
   }
-  ctx.fillStyle = withStrip ? BLUE : WHITE;
+  ctx.fillStyle = withStrip ? (style?.plate ?? BLUE) : WHITE;
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
   const place2 = (i: number, n: number) =>
@@ -621,7 +646,7 @@ export function renderChennaiSign(
       fontFor(lang),
       contentW - Math.round(16 * s)
     );
-    ctx.fillStyle = BLUE;
+    ctx.fillStyle = style?.plate ?? BLUE;
     ctx.textBaseline = "middle";
     ctx.font = `700 ${fpx}px ${fontFor(lang)}`;
     ctx.fillText(line, x + insetL + contentW / 2, cy + footH / 2);
