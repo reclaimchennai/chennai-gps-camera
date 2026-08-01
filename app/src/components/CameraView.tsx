@@ -645,10 +645,16 @@ export default function CameraView({ active }: { active: boolean }) {
           ctx.translate(0, h);
           ctx.rotate(-Math.PI / 2);
         }
-        cardRect = renderWatermark(ctx, h, w, data, watermark, profile, assetsRef.current);
+        cardRect = renderWatermark(
+          ctx, h, w, data, watermark, profile, assetsRef.current,
+          { preview: true }
+        );
         ctx.restore();
       } else {
-        cardRect = renderWatermark(ctx, w, h, data, watermark, profile, assetsRef.current);
+        cardRect = renderWatermark(
+          ctx, w, h, data, watermark, profile, assetsRef.current,
+          { preview: true }
+        );
       }
       // the recording timer positions itself off the live card (never over
       // it); rects are in the ROTATED drawing space, dims in canvas px

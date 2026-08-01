@@ -127,7 +127,8 @@ export default function WatermarkEditorView() {
         octx.fillRect(0, 0, W, H);
       }
       const panel = renderWatermark(
-        octx, W, H, data, config, profile, assetsRef.current
+        octx, W, H, data, config, profile, assetsRef.current,
+        { preview: true }
       );
 
       let sx = 0, sy = 0, sw = W, sh = H;

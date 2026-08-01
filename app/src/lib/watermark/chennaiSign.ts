@@ -370,9 +370,7 @@ export function renderChennaiSign(
   gcc: CanvasImageSource | null,
   singara: CanvasImageSource | null,
   corp: CanvasImageSource | null,
-  /** canvas short side — the QR floor is a function of OUTPUT pixels, not
-   *  of how wide the plate happens to be */
-  base: number,
+  preview = false,
   measureOnly = false
 ): SignMetrics {
   const lang = langOf(config.language);
@@ -544,9 +542,9 @@ export function renderChennaiSign(
   );
   const qrIdeal = content0 * QR_PLATE_FRAC;
   const qrSize = qr
-    ? base >= 640
-      ? Math.round(Math.min(170, Math.max(96, qrIdeal)))
-      : Math.round(qrIdeal)
+    ? preview
+      ? Math.round(qrIdeal)
+      : Math.round(Math.min(170, Math.max(96, qrIdeal)))
     : 0;
 
   // the crest is centred and the QR sits hard right, so the plate has to

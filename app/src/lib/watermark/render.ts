@@ -372,7 +372,13 @@ export function renderWatermark(
   data: WatermarkData,
   config: WatermarkConfig,
   profile: Profile,
-  assets: WatermarkAssets = {}
+  assets: WatermarkAssets = {},
+  /** Drawing the on-screen preview rather than a file. The QR's absolute
+   *  scannability floor is skipped, because nothing scans a viewfinder —
+   *  and applying it made the preview QR far bigger than the saved one.
+   *  Canvas size cannot stand in for this: a phone's overlay is around
+   *  1080 px wide, the same order as a small capture. */
+  opts: { preview?: boolean } = {}
 ): WatermarkRect | null {
   const theme = THEMES[config.theme];
   // scale from the SHORT side so a landscape shot gets the same absolute
@@ -435,7 +441,7 @@ export function renderWatermark(
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null,
       assets.corpLogo ?? null,
-      base,
+      !!opts.preview,
       true
     );
     const signW = m.width;
@@ -451,7 +457,7 @@ export function renderWatermark(
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null,
       assets.corpLogo ?? null,
-      base
+      !!opts.preview
     );
     return finish({ x: sx, y: sy, width: signW, height: m.height });
   }
