@@ -25,6 +25,7 @@ import singaraUrl from "../../assets/singara-chennai.png";
 import blrEastUrl from "../../assets/blr-east.png";
 import blrCentralUrl from "../../assets/blr-central.png";
 import ndmcUrl from "../../assets/ndmc.png";
+import tambaramUrl from "../../assets/tambaram.png";
 
 export interface ChennaiLogos {
   gcc: HTMLImageElement | null;
@@ -57,15 +58,17 @@ export function ensureChennaiLogos(): Promise<ChennaiLogos> {
       load(blrEastUrl),
       load(blrCentralUrl),
       load(ndmcUrl),
+      load(tambaramUrl),
       // the sign always carries Tamil, whatever the card language
       ensureCardFont("ta", resetScriptCache),
-    ]).then(([gcc, singara, blrEast, blrCentral, ndmc]) => {
+    ]).then(([gcc, singara, blrEast, blrCentral, ndmc, tambaram]) => {
       logos.gcc = gcc;
       logos.singara = singara;
       logos.blr = {
         "blr-east": blrEast,
         "blr-central": blrCentral,
         ndmc,
+        tambaram,
       };
       return logos;
     });

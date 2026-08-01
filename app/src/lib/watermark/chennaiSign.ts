@@ -385,12 +385,15 @@ export function renderChennaiSign(
   // and computing this earlier left the plate one row short, clipping it
   const rowsH = rows.length ? rows.length * (rowPx + rowGap) : 0;
 
-  // The QR floor is set by the OUTPUT resolution. Sizing it off the plate
-  // meant shrink-wrapping starved it: a 1440x900 frame gave a ~50 px code,
-  // about 1.4 device pixels per module, which does not decode. This
-  // content needs roughly 37 modules, so ~3 px each is the real minimum.
+  // Scannable, not enormous. Sizing off the plate alone starved it once
+  // the plate started shrink-wrapping (a 1440x900 frame gave ~50 px, about
+  // 1.4 device pixels per module, which does not decode). Tying it to the
+  // output at 0.14 then overcorrected and the code dominated the board.
+  // The content is ~37 modules, so ~3 px each is the floor that matters:
+  // 100 px is the smallest that reliably decodes, and there is nothing to
+  // gain above ~112 — at 170 the code was dominating the board.
   const qrSize = qr
-    ? Math.round(Math.max(78 * s, Math.min(base * 0.14, 170)))
+    ? Math.round(Math.min(112, Math.max(100, 78 * s, base * 0.075)))
     : 0;
 
   // ---- shrink-wrap ---------------------------------------------------
