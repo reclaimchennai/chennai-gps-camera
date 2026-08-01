@@ -200,6 +200,22 @@ const STATE_FALLBACK: Record<string, string> = {
   hi: "\u0924\u092e\u093f\u0932\u0928\u093e\u0921\u0941",
 };
 
+/** Does this text actually contain the script we asked for? */
+const SCRIPT_OF: Record<string, RegExp> = {
+  ta: /[\u0B80-\u0BFF]/,
+  hi: /[\u0900-\u097F]/,
+  mr: /[\u0900-\u097F]/,
+  kn: /[\u0C80-\u0CFF]/,
+  te: /[\u0C00-\u0C7F]/,
+  bn: /[\u0980-\u09FF]/,
+};
+
+function inLanguage(text: string | undefined, lang: string): boolean {
+  const re = SCRIPT_OF[lang];
+  if (!re) return true; // English, or a language with no script test
+  return !!text && re.test(text);
+}
+
 export async function reverseGeocode(
   lat: number,
   lng: number
@@ -229,7 +245,29 @@ export async function reverseGeocode(
           }
         : null;
     };
-    if (mode === "system") return await trySystem();
+    /**
+     * Android's Geocoder takes a Locale but frequently answers in English
+     * anyway, so asking politely is not enough. When the user has chosen a
+     * local language, check what came back and go to a provider that
+     * honours the language parameter if the script is wrong. The
+     * English answer is kept as the fallback — a right address in the
+     * wrong language beats no address.
+     */
+    const localised = async (
+      first: GeocodeResult | null
+    ): Promise<GeocodeResult | null> => {
+      if (lang === "en" || inLanguage(first?.address, lang)) return first;
+      if (!navigator.onLine) return first;
+      if (settings.googleApiKey) {
+        const g = await google(lat, lng, settings.googleApiKey, lang);
+        if (inLanguage(g?.address, lang)) return g;
+      }
+      const n = await nominatim(lat, lng, lang);
+      if (inLanguage(n?.address, lang)) return n;
+      return first;
+    };
+
+    if (mode === "system") return await localised(await trySystem());
     if (mode === "google")
       return settings.googleApiKey
         ? await google(lat, lng, settings.googleApiKey, lang)
@@ -242,7 +280,7 @@ export async function reverseGeocode(
 
     // auto: system → google (keyed) → mappls (keyed) → nominatim
     const sys = await trySystem();
-    if (sys) return sys;
+    if (sys) return await localised(sys);
     if (settings.googleApiKey) {
       const g = await google(lat, lng, settings.googleApiKey, lang);
       if (g) return g;

@@ -18,7 +18,14 @@
  * reader would most reasonably trust.
  */
 import type { WatermarkConfig, WatermarkData } from "../../types";
-import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../geo/format";
+import {
+  fmtAltAccuracy,
+  fmtBearing,
+  fmtCoordsLine,
+  fmtDateLine,
+  fmtWard,
+  fmtZone,
+} from "../geo/format";
 import { latLngToDigipin } from "../geo/digipin";
 import { tamilStation, tamilPlace } from "../geo/tamil-places";
 import { tamilBodyName } from "../geo/tn-body-names";
@@ -424,7 +431,26 @@ export function renderChennaiSign(
     const code = data.digipin ?? latLngToDigipin(data.fix.lat, data.fix.lng);
     if (code) rows.push(`${t.digipin}: ${code}`);
   }
+  if (f.altitudeAccuracy && data.fix) {
+    const alt = fmtAltAccuracy(data.fix.altitude, data.fix.accuracy, lang);
+    if (alt) rows.push(alt);
+  }
   if (f.datetime) rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes, lang));
+  if (f.compass && data.bearing != null) {
+    rows.push(`${t.facing} ${fmtBearing(data.bearing)}`);
+  }
+  // The sign was ignoring four toggles the settings screen offers —
+  // noise, compass, altitude and the custom label. Switching the noise
+  // level on opened the microphone (and stopped the user's music) for a
+  // reading that was then never drawn.
+  if (f.soundLevel && (data.dbStats || data.db != null)) {
+    const st = data.dbStats;
+    rows.push(
+      st
+        ? `${t.noise}: ${t.avg} ${st.avg} dB · ${t.min} ${st.min} dB · ${t.max} ${st.max} dB`
+        : `${t.noise}: ${Math.round(data.db!)} dB`
+    );
+  }
   const j = data.jurisdiction;
   // Police is ONE row, same rule the detailed card follows: club L&O and
   // Traffic when the station is the same rather than printing it twice.
@@ -442,6 +468,9 @@ export function renderChennaiSign(
     rows.push(`${t.traffic}: ${traffic}`);
   }
   if (data.mockLocation) rows.push(t.mock);
+  if (f.customLabel && config.customLabelText.trim()) {
+    rows.push(config.customLabelText.trim());
+  }
   const rowGap = Math.round(rowPx * 0.34); // was 0.5 — the rows drove the height
 
   // ---- footer strip: ward / zone / pincode --------------------------

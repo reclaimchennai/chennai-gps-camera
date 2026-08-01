@@ -12,6 +12,8 @@ import "@fontsource/oswald/latin-400.css";
 import "@fontsource/caveat/latin-400.css";
 import App from "./App";
 import { hydrateSettings } from "./store";
+import { stopMeter } from "./lib/audio/meter";
+import { nativeAudioFocus } from "./lib/native";
 import { startLocation, startCompass } from "./lib/location";
 import { startLiveAddress } from "./lib/liveAddress";
 import { initBackfill } from "./lib/backfill";
@@ -61,6 +63,24 @@ if (isNativeApp()) {
 // the first render — camera pre-warm happens in CameraView's mount effect.
 initTheme(); // system theme immediately; re-applied once settings hydrate
 startOrientationWatch(); // in-place UI rotation for landscape shooting
+
+// Releasing the microphone is not enough to bring a user's music back, and
+// the camera screen's own handler only runs while that screen is mounted.
+// This is global and covers the gallery, settings, and a swipe-away that
+// never delivers a visibilitychange.
+function releaseAudioOnBackground(): void {
+  const release = () => {
+    stopMeter();
+    void nativeAudioFocus(false);
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) release();
+  });
+  window.addEventListener("pagehide", release);
+  window.addEventListener("freeze", release);
+}
+releaseAudioOnBackground();
+
 void hydrateSettings().then(() => {
   applyTheme();
   // Native: geolocation NEVER starts before the location grant is

@@ -43,6 +43,9 @@ export interface FieldMeta {
   hint?: string;
 }
 
+/** `profilePhoto` is deliberately absent: adding a photo in Profile turns
+ *  it on and removing it turns it off, so a separate switch could only
+ *  contradict what the user just did. */
 export const FIELD_META: FieldMeta[] = [
   { key: "titleLine", label: "Locality title line", hint: "e.g. Kodambakkam, Chennai" },
   { key: "address", label: "Full address", hint: "Filled in when online" },
@@ -58,7 +61,6 @@ export const FIELD_META: FieldMeta[] = [
   { key: "qrCode", label: "Location QR (maps link + DIGIPIN)" },
   { key: "compass", label: "Compass bearing" },
   { key: "soundLevel", label: "Noise level (dB)", hint: "Approximate — phone mics are uncalibrated" },
-  { key: "profilePhoto", label: "Profile photo" },
   { key: "socialHandles", label: "Social handles" },
   { key: "customLabel", label: "Custom label" },
 ];

@@ -167,7 +167,9 @@ export function startMeter(cameraStream?: MediaStream | null): void {
         }
         return;
       }
-      audioCtx ??= new AudioContext();
+      if (!audioCtx || audioCtx.state === "closed") {
+        audioCtx = new AudioContext();
+      }
       if (audioCtx.state === "suspended") {
         void audioCtx.resume();
         // policies that reject resume() outside a gesture accept it
@@ -198,12 +200,16 @@ export function stopMeter(): void {
   generation++;
   teardownGraph();
   void nativeAudioFocus(false);
-  // SUSPEND the context, not just the graph. A running AudioContext holds
-  // Android audio focus even with nothing connected, which is why other
-  // apps' audio stayed blocked while this app was minimised. startMeter
-  // resumes it on the way back in.
-  if (audioCtx && audioCtx.state === "running") {
-    void audioCtx.suspend().catch(() => {});
+  // CLOSE the context, do not merely suspend it. Suspending was enough to
+  // stop other apps being blocked, but not enough for a paused media app
+  // to resume: on Android the audio session survives a suspend, so
+  // nothing tells the music app its interruption is over. Closing frees
+  // the session outright; the next start builds a new context, which is
+  // cheap next to a mic open.
+  if (audioCtx) {
+    const dying = audioCtx;
+    audioCtx = null;
+    void dying.close().catch(() => {});
   }
   // clear the session stats so the next active session starts fresh
   statSum = 0;

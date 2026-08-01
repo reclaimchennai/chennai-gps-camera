@@ -175,15 +175,32 @@ export default function ProfileFields() {
     };
   }, [profile.hasPhoto]);
 
+  // Uploading a photo IS the request to show it — a second switch buried
+  // in the field list only creates a state where the user has added a
+  // photo and cannot see why it is missing.
   const onPhotoPicked = async (file: File) => {
     const cropped = await circleCrop(file, 256);
     await putBlob("profile", "raw", cropped);
     setProfile({ ...profile, hasPhoto: true });
+    const wm = useSettingsStore.getState().watermark;
+    if (!wm.fields.profilePhoto) {
+      useSettingsStore.getState().setWatermark({
+        ...wm,
+        fields: { ...wm.fields, profilePhoto: true },
+      });
+    }
   };
 
   const removePhoto = async () => {
     await deleteBlob("profile", "raw");
     setProfile({ ...profile, hasPhoto: false });
+    const wm = useSettingsStore.getState().watermark;
+    if (wm.fields.profilePhoto) {
+      useSettingsStore.getState().setWatermark({
+        ...wm,
+        fields: { ...wm.fields, profilePhoto: false },
+      });
+    }
   };
 
   const setHandle = (id: string, patch: Partial<SocialHandle>) => {
