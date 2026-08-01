@@ -890,12 +890,31 @@ export default function CameraView({ active }: { active: boolean }) {
         const wmCtx = wmCanvas.getContext("2d")!;
         const { watermark, profile } = useSettingsStore.getState();
         let lastWmTick = -1;
+        // How the phone is held NOW versus at record start. The file's
+        // dimensions are fixed for the whole clip (MediaRecorder cannot
+        // resize mid-stream), but the card can still turn inside them —
+        // and it must, because the viewfinder turns. Without this the
+        // overlay rotated on screen while the recording kept the card at
+        // whatever angle the clip started on.
+        let wmDelta = 0;
+        const deltaNow = () => {
+          const cur = useLiveStore.getState().uiRotation;
+          return (((cur - recRot) % 360) + 360) % 360;
+        };
         const renderWm = () => {
-          wmCtx.clearRect(0, 0, burnW, burnH);
+          wmDelta = deltaNow();
+          const swap = wmDelta === 90 || wmDelta === 270;
+          const w = swap ? burnH : burnW;
+          const h = swap ? burnW : burnH;
+          if (wmCanvas.width !== w || wmCanvas.height !== h) {
+            wmCanvas.width = w;
+            wmCanvas.height = h;
+          }
+          wmCtx.clearRect(0, 0, w, h);
           renderWatermark(
             wmCtx,
-            burnW,
-            burnH,
+            w,
+            h,
             collectWatermarkData(),
             watermark,
             profile,
@@ -968,11 +987,26 @@ export default function CameraView({ active }: { active: boolean }) {
           }
           cctx.restore();
           const wmTick = Math.floor(Date.now() / 500);
-          if (wmTick !== lastWmTick) {
+          // re-render on the clock tick, and immediately when the phone
+          // turns — waiting up to half a second to follow a flip reads as
+          // the card being stuck
+          if (wmTick !== lastWmTick || deltaNow() !== wmDelta) {
             lastWmTick = wmTick;
             renderWm();
           }
+          cctx.save();
+          if (wmDelta === 90) {
+            cctx.translate(cc.width, 0);
+            cctx.rotate(Math.PI / 2);
+          } else if (wmDelta === 270) {
+            cctx.translate(0, cc.height);
+            cctx.rotate(-Math.PI / 2);
+          } else if (wmDelta === 180) {
+            cctx.translate(cc.width, cc.height);
+            cctx.rotate(Math.PI);
+          }
           cctx.drawImage(wmCanvas, 0, 0);
+          cctx.restore();
         };
         // Drive compositing on a steady requestAnimationFrame clock, NOT
         // the video's requestVideoFrameCallback. rVFC stops firing the
