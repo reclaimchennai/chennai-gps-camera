@@ -129,9 +129,12 @@ export function startMeter(cameraStream?: MediaStream | null): void {
   void (async () => {
     try {
       teardownGraph();
-      // tell Android this is a short interruption, so the user's music
-      // resumes when we hand focus back rather than staying dead
-      void nativeAudioFocus(true);
+      // NO audio-focus request here. Asking for AUDIOFOCUS_GAIN_TRANSIENT
+      // (v1.33.0) made things worse, not better: holding it ducked the
+      // user's music to a distant murmur for as long as the app was
+      // backgrounded, and only killing the process restored it. Whatever
+      // Android does implicitly when a mic opens, adding our own focus
+      // request on top of it was not an improvement.
       let stream: MediaStream | null = null;
       if (cameraStream?.getAudioTracks().length) {
         // reuse the recording's (already unprocessed) mic track

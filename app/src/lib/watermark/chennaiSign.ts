@@ -94,6 +94,15 @@ export interface SignStyle {
   logoOnBlue: boolean;
   /** plate colour — Delhi's boards are emerald green, not GCC blue */
   plate: string;
+  /**
+   * Explicit line groups for the header strip, when the usual
+   * local-left / English-right pair is not enough. Delhi names the body
+   * in four scripts: Hindi and English to the left of the crest,
+   * Punjabi and Urdu to its right, so the crest stays centred the way it
+   * is on every other city's board.
+   */
+  left?: { text: string; font: string }[];
+  right?: { text: string; font: string }[];
 }
 
 
@@ -152,9 +161,40 @@ const LOCAL_NAMES: { match: RegExp; local: string; slot?: LogoSlot }[] = [
   { match: /kolkata municipal/i, local: "কলকাতা পৌরসংস্থা" },
   { match: /greater hyderabad/i, local: "గ్రేటర్ హైదరాబాద్ మున్సిపల్ కార్పొరేషన్" },
   { match: /visakhapatnam/i, local: "గ్రేటర్ విశాఖపట్నం మున్సిపల్ కార్పొరేషన్" },
-  { match: /new delhi municipal/i, local: "नई दिल्ली नगरपालिक परिषद", slot: "ndmc" },
+  { match: /new delhi municipal/i, local: "नई दिल्ली नगरपालिका परिषद", slot: "ndmc" },
   { match: /municipal corporation of delhi|^delhi/i, local: "दिल्ली नगर निगम", slot: "mcd" },
 ];
+
+const GURMUKHI = `'Noto Sans Gurmukhi', ${LATIN}`;
+const NASTALIQ = `'Noto Nastaliq Urdu', ${LATIN}`;
+const DEVA = `'Noto Sans Devanagari', ${LATIN}`;
+
+/** Delhi's boards name the body in four scripts, two each side of the crest. */
+const DELHI_NAMES: Record<
+  string,
+  { left: { text: string; font: string }[]; right: { text: string; font: string }[] }
+> = {
+  ndmc: {
+    left: [
+      { text: "नई दिल्ली नगरपालिका परिषद", font: DEVA },
+      { text: "New Delhi Municipal Council", font: LATIN },
+    ],
+    right: [
+      { text: "ਨਵੀਂ ਦਿੱਲੀ ਨਗਰਪਾਲਿਕਾ ਪਰਿਸ਼ਦ", font: GURMUKHI },
+      { text: "نئی دہلی میونسپل کونسل", font: NASTALIQ },
+    ],
+  },
+  mcd: {
+    left: [
+      { text: "दिल्ली नगर निगम", font: DEVA },
+      { text: "Municipal Corporation of Delhi", font: LATIN },
+    ],
+    right: [
+      { text: "ਦਿੱਲੀ ਨਗਰ ਨਿਗਮ", font: GURMUKHI },
+      { text: "دہلی نگر نگم", font: NASTALIQ },
+    ],
+  },
+};
 
 export function signStyle(data: WatermarkData): SignStyle | null {
   const j = data.jurisdiction;
@@ -213,6 +253,7 @@ export function signStyle(data: WatermarkData): SignStyle | null {
   // which is always present.
   const hit = LOCAL_NAMES.find((l) => l.match.test(name));
   const local = hit?.local ?? tamilBodyName(name);
+  const four = hit?.slot ? DELHI_NAMES[hit.slot] : undefined;
   return {
     tamil: local,
     english: name,
@@ -222,6 +263,8 @@ export function signStyle(data: WatermarkData): SignStyle | null {
     centreLogo: hit?.slot ?? null,
     logoOnBlue: false,
     plate: /delhi/i.test(name) ? DELHI_GREEN : BLUE,
+    left: four?.left,
+    right: four?.right,
   };
 }
 
@@ -532,26 +575,31 @@ export function renderChennaiSign(
   const singaraW = singara
     ? Math.round(aspect(singara, 1) * Math.round(112 * s))
     : 0;
-  const tamilLines = tamilOk ? splitTwo(style!.tamil!) : [];
-  const tamilW = tamilLines.length
-    ? Math.max(...tamilLines.map((l) => measure(l, authPx, TAMIL, "700")))
-    : 0;
-  // the English name is split over two lines at the last space that
-  // keeps both halves under half the plate; a Cantonment Board's name is
-  // far longer than "Greater / Chennai Corporation"
+  // the English name is split over two lines; a Cantonment Board's name
+  // is far longer than "Greater / Chennai Corporation"
   const engLines = splitTwo(style?.english ?? "");
-  const engW = Math.max(
-    ...engLines.map((l) => measure(l, authPx, LATIN, "700"))
-  );
+  // Either an explicit pair of groups (Delhi's four scripts, two a side)
+  // or the usual local-left / English-right pair.
+  const leftLines: { text: string; font: string }[] =
+    style?.left ??
+    (tamilOk ? splitTwo(style!.tamil!).map((t) => ({ text: t, font: TAMIL })) : []);
+  const rightLines: { text: string; font: string }[] =
+    style?.right ?? engLines.map((t) => ({ text: t, font: LATIN }));
   // The Singara mark is drawn CENTRED, so a sequential left+logo+right
   // sum is not enough: whichever side is wider decides how much room the
   // centre has. Sizing to twice the wider side keeps the logo clear of
   // both — a plain sum let the Tamil name run under the logo once the
   // plate started shrink-wrapping.
-  const leftBlock = emblemW + Math.round(8 * s) + tamilW;
-  const rightBlock = engW + Math.round(10 * s);
+  const leftBlock =
+    emblemW +
+    Math.round(8 * s) +
+    leftLines.reduce((w, l) => Math.max(w, measure(l.text, authPx, l.font, "700")), 0);
+  const rightBlock =
+    rightLines.reduce((w, l) => Math.max(w, measure(l.text, authPx, l.font, "700")), 0) +
+    Math.round(10 * s);
   const headerW =
     2 * Math.max(leftBlock, rightBlock) + singaraW + 2 * gapMin;
+
   const placeNatural = measure(place, Math.round(46 * s), fontFor(lang), "700");
   const rowsNatural = rows.reduce(
     (m, r) => Math.max(m, measure(r, rowPx, fontFor(lang))),
@@ -734,21 +782,25 @@ export function renderChennaiSign(
   ctx.textAlign = "left";
   const place2 = (i: number, n: number) =>
     cy + bandH * (n > 1 ? (i ? 0.68 : 0.32) : 0.5);
-  if (tamilLines.length) {
-    ctx.font = `700 ${authPx}px ${TAMIL}`;
-    tamilLines.forEach((l, i) =>
-      ctx.fillText(l, hx, place2(i, tamilLines.length))
-    );
+
+  if (leftLines.length) {
+    ctx.textAlign = "left";
+    leftLines.forEach((l, i) => {
+      ctx.font = `700 ${authPx}px ${l.font}`;
+      ctx.fillText(l.text, hx, place2(i, leftLines.length));
+    });
   }
-  // With no Tamil line the English name carries the strip alone, so it
-  // starts at the left instead of hugging a right edge across a gap.
-  const soloEnglish = !tamilLines.length;
-  ctx.textAlign = soloEnglish ? "left" : "right";
-  const rx = soloEnglish ? hx : x + insetL + contentW - Math.round(10 * s);
-  ctx.font = `700 ${authPx}px ${LATIN}`;
-  engLines.forEach((l, i) =>
-    ctx.fillText(l, rx, place2(i, engLines.length))
-  );
+  if (rightLines.length) {
+    // right-aligned against the strip's inner edge, so the crest keeps the
+    // middle to itself however long the names are
+    const soloRight = !leftLines.length;
+    ctx.textAlign = soloRight ? "left" : "right";
+    const rx = soloRight ? hx : x + insetL + contentW - Math.round(10 * s);
+    rightLines.forEach((l, i) => {
+      ctx.font = `700 ${authPx}px ${l.font}`;
+      ctx.fillText(l.text, rx, place2(i, rightLines.length));
+    });
+  }
   cy += bandH;
 
   // ---- Singara mark (straddling) + QR (right, under the English text) --

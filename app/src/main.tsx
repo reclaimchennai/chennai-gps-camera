@@ -13,6 +13,7 @@ import "@fontsource/caveat/latin-400.css";
 import App from "./App";
 import { hydrateSettings } from "./store";
 import { stopMeter } from "./lib/audio/meter";
+import { camera } from "./lib/camera";
 import { nativeAudioFocus } from "./lib/native";
 import { startLocation, startCompass } from "./lib/location";
 import { startLiveAddress } from "./lib/liveAddress";
@@ -71,6 +72,10 @@ startOrientationWatch(); // in-place UI rotation for landscape shooting
 function releaseAudioOnBackground(): void {
   const release = () => {
     stopMeter();
+    // the meter usually rides the CAMERA's audio track, which stopMeter
+    // deliberately does not stop because the camera owns it — so the mic
+    // stayed open unless the camera view itself happened to be mounted
+    camera.stop();
     void nativeAudioFocus(false);
   };
   document.addEventListener("visibilitychange", () => {

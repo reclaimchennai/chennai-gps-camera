@@ -503,16 +503,20 @@ export default function CameraView({ active }: { active: boolean }) {
 
   // ---- live sound meter (watermark "Sound level" field) ---------------
   const soundOn = useSettingsStore((s) => s.watermark.fields.soundLevel);
+  // Only VIDEO mode meters continuously. The noise field is on by default,
+  // and metering it in photo mode held the microphone for the whole
+  // session — which is what stopped the user's music the moment the app
+  // opened. Photo mode takes a ~0.6 s reading at capture instead
+  // (sampleNoiseOnce), so the saved card still carries a level and the
+  // mic is handed straight back.
   useEffect(() => {
-    if (!active || !ready || !soundOn) {
+    if (!active || !ready || !soundOn || mode !== "video") {
       stopMeter();
       return;
     }
-    // the shared camera stream always carries the (unprocessed) mic
-    // track — one meter attach, stable across photo/video switches
     startMeter(camera.stream);
     return () => stopMeter();
-  }, [active, ready, soundOn]);
+  }, [active, ready, soundOn, mode]);
 
   const switchMode = useCallback(
     (m: Mode) => {
@@ -1387,7 +1391,9 @@ export default function CameraView({ active }: { active: boolean }) {
   // photo (with the noise field off) hands it back to other apps.
   useEffect(() => {
     if (!active || !ready) return;
-    const need = mode === "video" || soundOn;
+    // NOT `|| soundOn`: the noise field defaults on, so that clause meant
+    // the microphone was held from the moment the viewfinder appeared
+    const need = mode === "video";
     camera.audioWanted = need;
     if (need) void camera.ensureAudio();
     else camera.releaseAudio();
