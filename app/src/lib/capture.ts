@@ -10,7 +10,9 @@ import { camera } from "./camera";
 import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
 import { renderLocationQr } from "./watermark/qr";
-import { ensureChennaiLogos } from "./watermark/chennaiAssets";
+import { loadCrest } from "./watermark/crests";
+import { ensureCardFont } from "./i18n/languages";
+import { resetScriptCache } from "./watermark/signboard";
 import { signStyle } from "./watermark/chennaiSign";
 
 /** Emblems for the Chennai plate — resolved once, then handed to the
@@ -22,13 +24,21 @@ export async function chennaiSignAssets(
   if (config.preset !== "chennai") return {};
   const style = signStyle(data as never);
   if (!style) return {};
-  const { gcc, singara, blr } = await ensureChennaiLogos();
-  const slot = style.leftLogo ?? style.centreLogo;
-  return {
-    gccEmblem: gcc,
-    singaraLogo: singara,
-    corpLogo: (slot && blr[slot]) ?? null,
-  };
+  // fetch only what this board draws — the crest set is ~540 KB and any
+  // one user ever sees one of them
+  const [gccEmblem, singaraLogo, corpLogo] = await Promise.all([
+    loadCrest(style.leftLogo === "gcc" ? "gcc" : null),
+    loadCrest(style.centreLogo === "singara" ? "singara" : null),
+    loadCrest(
+      style.leftLogo && style.leftLogo !== "gcc"
+        ? style.leftLogo
+        : style.centreLogo && style.centreLogo !== "singara"
+          ? style.centreLogo
+          : null
+    ),
+  ]);
+  await ensureCardFont("ta", resetScriptCache); // the boards carry Tamil
+  return { gccEmblem, singaraLogo, corpLogo };
 }
 import { writeExif } from "./exif";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";

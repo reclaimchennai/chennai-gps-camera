@@ -52,7 +52,7 @@ const TAMIL = `'Noto Sans Tamil', 'Latha', 'Tamil Sangam MN', ${LATIN}`;
  * thing this card exists not to do.
  *
  * `logo` names a slot, not a file. Slots stay empty until an emblem with
- * provenance we can stand behind is dropped in — see chennaiAssets.ts.
+ * provenance we can stand behind is dropped in — see crests.ts.
  * A board with an empty slot simply renders without it.
  */
 export type LogoSlot =
@@ -67,6 +67,8 @@ export type LogoSlot =
   | "bbmp"
   | "ndmc"
   | "mcd"
+  /** Tamil Nadu city corporations, keyed by city */
+  | string
   | null;
 
 export interface SignStyle {
@@ -85,6 +87,38 @@ export interface SignStyle {
   /** plate colour — Delhi's boards are emerald green, not GCC blue */
   plate: string;
 }
+
+
+/**
+ * Tamil Nadu's city corporations: the crest slot and the body's own Tamil
+ * name, matched on the corporation string the boundary data reports.
+ *
+ * Every one of these draws Chennai's layout with its own crest in the
+ * centre slot and no GCC crest — a Madurai complaint must not travel
+ * under Chennai Corporation's arms.
+ *
+ * Coimbatore, Tirunelveli, Vellore and Avadi are absent because no crest
+ * has been supplied for them. They fall through to the generic board,
+ * which names the body in text and draws no crest at all.
+ */
+const TN_CORPORATIONS: { match: RegExp; slot: LogoSlot; tamil: string }[] = [
+  { match: /tambaram/i, slot: "tambaram", tamil: "தாம்பரம் மாநகராட்சி" },
+  { match: /madurai/i, slot: "madurai", tamil: "மதுரை மாநகராட்சி" },
+  { match: /tiruchirappalli|trichy/i, slot: "tiruchirappalli", tamil: "திருச்சிராப்பள்ளி மாநகராட்சி" },
+  { match: /salem/i, slot: "salem", tamil: "சேலம் மாநகராட்சி" },
+  { match: /tiruppur|tirupur/i, slot: "tiruppur", tamil: "திருப்பூர் மாநகராட்சி" },
+  { match: /erode/i, slot: "erode", tamil: "ஈரோடு மாநகராட்சி" },
+  { match: /thoothukudi|tuticorin/i, slot: "thoothukudi", tamil: "தூத்துக்குடி மாநகராட்சி" },
+  { match: /dindigul/i, slot: "dindigul", tamil: "திண்டுக்கல் மாநகராட்சி" },
+  { match: /thanjavur|tanjore/i, slot: "thanjavur", tamil: "தஞ்சாவூர் மாநகராட்சி" },
+  { match: /hosur/i, slot: "hosur", tamil: "ஓசூர் மாநகராட்சி" },
+  { match: /nagercoil/i, slot: "nagercoil", tamil: "நாகர்கோயில் மாநகராட்சி" },
+  { match: /kancheepuram|kanchipuram/i, slot: "kancheepuram", tamil: "காஞ்சிபுரம் மாநகராட்சி" },
+  { match: /karaikudi/i, slot: "karaikudi", tamil: "காரைக்குடி மாநகராட்சி" },
+  { match: /cuddalore/i, slot: "cuddalore", tamil: "கடலூர் மாநகராட்சி" },
+  { match: /sivakasi/i, slot: "sivakasi", tamil: "சிவகாசி மாநகராட்சி" },
+  { match: /namakkal/i, slot: "namakkal", tamil: "நாமக்கல் மாநகராட்சி" },
+];
 
 export function signStyle(data: WatermarkData): SignStyle | null {
   const j = data.jurisdiction;
@@ -122,16 +156,15 @@ export function signStyle(data: WatermarkData): SignStyle | null {
     };
   }
 
-  // Tambaram: Chennai's layout with its own crest in the centre slot and
-  // no GCC emblem at the left.
-  if (/tambaram/i.test(name)) {
+  const tn = TN_CORPORATIONS.find((c) => c.match.test(name));
+  if (tn) {
     return {
-      tamil: "தாம்பரம் மாநகராட்சி",
+      tamil: tn.tamil,
       english: name,
       topStrip: true,
       bottomStrip: true,
       leftLogo: null,
-      centreLogo: "tambaram",
+      centreLogo: tn.slot,
       logoOnBlue: false,
       plate: BLUE,
     };

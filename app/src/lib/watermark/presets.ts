@@ -32,7 +32,7 @@ export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
   theme: "dark",
   customLabelText: "",
   language: "en", // default English regardless of template (owner decision)
-  signShape: "arrow-left", // matches the real GCC boards
+  signShape: "box", // owner default; the arrows remain a choice
   onlineMapUpgrade: false,
   position: "bottom",
 };
