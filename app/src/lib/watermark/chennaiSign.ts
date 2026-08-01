@@ -97,9 +97,9 @@ export interface SignStyle {
  * centre slot and no GCC crest — a Madurai complaint must not travel
  * under Chennai Corporation's arms.
  *
- * Coimbatore, Tirunelveli, Vellore and Avadi are absent because no crest
- * has been supplied for them. They fall through to the generic board,
- * which names the body in text and draws no crest at all.
+ * All twenty-one of Tamil Nadu's city corporations are covered. Anything
+ * outside the list falls through to the generic board, which names the
+ * body in text and draws no crest — nothing borrows a neighbour's arms.
  */
 const TN_CORPORATIONS: { match: RegExp; slot: LogoSlot; tamil: string }[] = [
   { match: /tambaram/i, slot: "tambaram", tamil: "தாம்பரம் மாநகராட்சி" },
@@ -118,6 +118,10 @@ const TN_CORPORATIONS: { match: RegExp; slot: LogoSlot; tamil: string }[] = [
   { match: /cuddalore/i, slot: "cuddalore", tamil: "கடலூர் மாநகராட்சி" },
   { match: /sivakasi/i, slot: "sivakasi", tamil: "சிவகாசி மாநகராட்சி" },
   { match: /namakkal/i, slot: "namakkal", tamil: "நாமக்கல் மாநகராட்சி" },
+  { match: /coimbatore|kovai/i, slot: "coimbatore", tamil: "கோவை மாநகராட்சி" },
+  { match: /tirunelveli/i, slot: "tirunelveli", tamil: "திருநெல்வேலி மாநகராட்சி" },
+  { match: /vellore/i, slot: "vellore", tamil: "வேலூர் மாநகராட்சி" },
+  { match: /avadi/i, slot: "avadi", tamil: "ஆவடி மாநகராட்சி" },
 ];
 
 export function signStyle(data: WatermarkData): SignStyle | null {

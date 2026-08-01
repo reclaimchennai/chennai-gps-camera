@@ -7,9 +7,13 @@
  * given user ever sees one.
  *
  * Provenance: supplied by the owner, who is responsible for the civic
- * marks this app reproduces. Cantonment boards are deliberately absent —
- * theirs carries the State Emblem of India, restricted under the 2005
- * Act — and so are bodies whose emblem we have not been given.
+ * marks this app reproduces. Several of these incorporate the national
+ * flag or the Ashoka Chakra as part of the body's OWN arms, which is
+ * ordinary for Indian civic crests. Cantonment boards remain absent:
+ * theirs is the Government of India emblem carrying the Ashoka lion
+ * capital, restricted under the State Emblem of India (Prohibition of
+ * Improper Use) Act 2005, which is a different thing from a corporation
+ * quoting the chakra in its own seal.
  */
 import gccUrl from "../../assets/gcc-emblem.png";
 import singaraUrl from "../../assets/singara-chennai.png";
@@ -32,6 +36,10 @@ import thanjavurUrl from "../../assets/tn-thanjavur.png";
 import thoothukudiUrl from "../../assets/tn-thoothukudi.png";
 import tiruchirappalliUrl from "../../assets/tn-tiruchirappalli.png";
 import tiruppurUrl from "../../assets/tn-tiruppur.png";
+import coimbatoreUrl from "../../assets/tn-coimbatore.png";
+import avadiUrl from "../../assets/tn-avadi.png";
+import velloreUrl from "../../assets/tn-vellore.png";
+import tirunelveliUrl from "../../assets/tn-tirunelveli.png";
 
 export const CREST_URLS: Record<string, string> = {
   gcc: gccUrl,
@@ -55,6 +63,10 @@ export const CREST_URLS: Record<string, string> = {
   thoothukudi: thoothukudiUrl,
   tiruchirappalli: tiruchirappalliUrl,
   tiruppur: tiruppurUrl,
+  coimbatore: coimbatoreUrl,
+  avadi: avadiUrl,
+  vellore: velloreUrl,
+  tirunelveli: tirunelveliUrl,
 };
 
 const cache = new Map<string, Promise<HTMLImageElement | null>>();
