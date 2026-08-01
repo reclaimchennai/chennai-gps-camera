@@ -249,6 +249,69 @@ function placeName(data: WatermarkData, lang: string): string {
   return (lang === "ta" ? tamilPlace(head) : null) ?? head;
 }
 
+/**
+ * Wrap `text` to `maxW` over at most `maxLines`, breaking at spaces and
+ * preferring a comma boundary so an address splits where a reader would
+ * split it. The last line is ellipsized if it still overflows.
+ */
+function wrapTo(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  px: number,
+  font: string,
+  maxW: number,
+  maxLines: number
+): string[] {
+  ctx.font = `${px}px ${font}`;
+  if (ctx.measureText(text).width <= maxW) return [text];
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let cur = "";
+  for (const w of words) {
+    const attempt = cur ? `${cur} ${w}` : w;
+    if (ctx.measureText(attempt).width <= maxW || !cur) {
+      cur = attempt;
+    } else if (lines.length < maxLines - 1) {
+      lines.push(cur);
+      cur = w;
+    } else {
+      cur = attempt;
+    }
+  }
+  if (cur) lines.push(cur);
+  // Break after a comma, choosing the one nearest the MIDDLE rather than
+  // the last that happens to fit — an address split at its final comma
+  // gives one long line and one stub.
+  if (lines.length === 2) {
+    const joined = lines.join(" ");
+    const mid = joined.length / 2;
+    let best = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < joined.length; i++) {
+      if (joined[i] !== ",") continue;
+      if (ctx.measureText(joined.slice(0, i + 1)).width > maxW) continue;
+      if (ctx.measureText(joined.slice(i + 1).trim()).width > maxW) continue;
+      const dist = Math.abs(i - mid);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      }
+    }
+    if (best > 0) {
+      lines[0] = joined.slice(0, best + 1).trim();
+      lines[1] = joined.slice(best + 1).trim();
+    }
+  }
+  let last = lines[lines.length - 1];
+  if (last && ctx.measureText(last).width > maxW) {
+    while (ctx.measureText(last + "\u2026").width > maxW && last.length > 2) {
+      last = last.slice(0, -2);
+    }
+    lines[lines.length - 1] = last + "\u2026";
+  }
+  return lines;
+}
+
 /** Split a name over at most two balanced lines at a space. */
 function splitTwo(text: string): string[] {
   const t = text.trim();
@@ -353,7 +416,7 @@ export function renderChennaiSign(
   const rowPx = rowPx0;
   const rows: string[] = [];
   const f = config.fields;
-  if (f.address && data.address) rows.push(data.address);
+  const addressText = f.address ? (data.address ?? "") : "";
   if (f.coords) {
     rows.push(
       data.fix ? fmtCoordsLine(data.fix.lat, data.fix.lng) : t.acquiring
@@ -467,9 +530,21 @@ export function renderChennaiSign(
   // the Singara mark is centred and the QR sits hard right, so the plate
   // has to be wide enough that they cannot meet
   const badgeRowW = qrSize ? 2 * (qrSize + gapMin) + singaraW : 0;
+  // The address is the one row that can run far longer than everything
+  // else. Left in the width calculation it stretched the plate across the
+  // whole photo; shrunk to fit it became a thread. It is wrapped instead,
+  // to the width the REST of the board already needs, over at most two
+  // lines — so the plate stays the size its other content asks for.
   const needed = Math.max(
     headerW, placeNatural, rowsNatural, footNatural, badgeRowW
   );
+  if (addressText) {
+    const cap = Math.max(needed, Math.round(availW * 0.55));
+    const addrLines = wrapTo(
+      ctx, addressText, rowPx, fontFor(lang), Math.min(cap, availW), 2
+    );
+    rows.unshift(...addrLines);
+  }
   const contentW = Math.max(
     Math.round(220 * s), // never so narrow the header collapses
     Math.min(availW, Math.ceil(needed))
