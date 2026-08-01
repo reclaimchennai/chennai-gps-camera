@@ -453,7 +453,7 @@ export function renderChennaiSign(
 
   // ---- header strip -------------------------------------------------
   const withStrip = style?.topStrip !== false;
-  const bandH = Math.round(66 * s);
+  let bandH = Math.round(66 * s);
   const emblemH = Math.round(bandH * 0.86);
   const authPx = Math.round(19 * s);
 
@@ -590,6 +590,27 @@ export function renderChennaiSign(
   // centre has. Sizing to twice the wider side keeps the logo clear of
   // both — a plain sum let the Tamil name run under the logo once the
   // plate started shrink-wrapping.
+  // grow the strip if a script needs more room than the default two rows
+  {
+    const groupH = (lines: { text: string; font: string }[]) => {
+      if (!lines.length) return 0;
+      const gap = Math.round(authPx * 0.18);
+      return (
+        lines.reduce((t, l) => {
+          ctx.font = `700 ${authPx}px ${l.font}`;
+          const m = ctx.measureText(l.text);
+          const ink =
+            (m.actualBoundingBoxAscent || authPx * 0.8) +
+            (m.actualBoundingBoxDescent || authPx * 0.25);
+          return t + Math.min(ink, authPx * 1.1 * 1.15);
+        }, 0) +
+        gap * (lines.length - 1)
+      );
+    };
+    const need = Math.max(groupH(leftLines), groupH(rightLines));
+    bandH = Math.max(bandH, Math.round(need + 16 * s));
+  }
+
   const leftBlock =
     emblemW +
     Math.round(8 * s) +
@@ -780,15 +801,65 @@ export function renderChennaiSign(
   ctx.fillStyle = withStrip ? (style?.plate ?? BLUE) : WHITE;
   ctx.textBaseline = "middle";
   ctx.textAlign = "left";
-  const place2 = (i: number, n: number) =>
-    cy + bandH * (n > 1 ? (i ? 0.68 : 0.32) : 0.5);
+  /**
+   * Stack a group of header lines by their MEASURED height.
+   *
+   * Fixed thirds worked while every line was Latin or Devanagari, but
+   * Nastaliq slopes steeply and carries far more ascender and descender
+   * than its point size suggests — Urdu and Gurmukhi ran into each other.
+   */
+  const stack = (
+    lines: { text: string; font: string }[]
+  ): {
+    line: { text: string; font: string };
+    baseline: number;
+    px: number;
+  }[] => {
+    const metrics = lines.map((l) => {
+      // Normalise by INK height, not point size. Nastaliq measures about
+      // 2.85x its nominal size (ascent 86 at 40 px, against Gurmukhi's
+      // 36), so setting every line to the same px made Urdu tower over
+      // the line above it and collide.
+      let px = authPx;
+      ctx.font = `700 ${px}px ${l.font}`;
+      let m = ctx.measureText(l.text);
+      let ink =
+        (m.actualBoundingBoxAscent || px * 0.8) +
+        (m.actualBoundingBoxDescent || px * 0.25);
+      const target = authPx * 1.1;
+      if (ink > target * 1.15) {
+        px = Math.max(authPx * 0.45, px * (target / ink));
+        ctx.font = `700 ${px}px ${l.font}`;
+        m = ctx.measureText(l.text);
+        ink =
+          (m.actualBoundingBoxAscent || px * 0.8) +
+          (m.actualBoundingBoxDescent || px * 0.25);
+      }
+      return {
+        px,
+        asc: m.actualBoundingBoxAscent || px * 0.8,
+        desc: m.actualBoundingBoxDescent || px * 0.25,
+        h: ink,
+      };
+    });
+    const gap = Math.round(authPx * 0.18);
+    const total =
+      metrics.reduce((t, m) => t + m.h, 0) + gap * (metrics.length - 1);
+    let y = cy + (bandH - total) / 2;
+    return lines.map((line, i) => {
+      const baseline = y + metrics[i].asc;
+      y += metrics[i].h + gap;
+      return { line, baseline, px: metrics[i].px };
+    });
+  };
 
+  ctx.textBaseline = "alphabetic";
   if (leftLines.length) {
     ctx.textAlign = "left";
-    leftLines.forEach((l, i) => {
-      ctx.font = `700 ${authPx}px ${l.font}`;
-      ctx.fillText(l.text, hx, place2(i, leftLines.length));
-    });
+    for (const { line, baseline, px } of stack(leftLines)) {
+      ctx.font = `700 ${Math.round(px)}px ${line.font}`;
+      ctx.fillText(line.text, hx, baseline);
+    }
   }
   if (rightLines.length) {
     // right-aligned against the strip's inner edge, so the crest keeps the
@@ -796,11 +867,12 @@ export function renderChennaiSign(
     const soloRight = !leftLines.length;
     ctx.textAlign = soloRight ? "left" : "right";
     const rx = soloRight ? hx : x + insetL + contentW - Math.round(10 * s);
-    rightLines.forEach((l, i) => {
-      ctx.font = `700 ${authPx}px ${l.font}`;
-      ctx.fillText(l.text, rx, place2(i, rightLines.length));
-    });
+    for (const { line, baseline, px } of stack(rightLines)) {
+      ctx.font = `700 ${Math.round(px)}px ${line.font}`;
+      ctx.fillText(line.text, rx, baseline);
+    }
   }
+  ctx.textBaseline = "middle";
   cy += bandH;
 
   // ---- Singara mark (straddling) + QR (right, under the English text) --
