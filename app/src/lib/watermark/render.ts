@@ -491,7 +491,10 @@ export function renderWatermark(
   // limit — the painted card hugs the longest actual line, so it covers
   // as little of the photo as the enabled fields allow (no dead space).
   const usedTextW = lines.length ? Math.min(textW, Math.ceil(maxLineW)) : 0;
-  const fitW = pad * 2 + mapSize + mapGap + usedTextW;
+  // colW, NOT mapSize: with the mini-map off and the QR on, the column is
+  // still occupied. Measuring from mapSize made the card too narrow and
+  // started the text at the column's left edge — straight over the QR.
+  const fitW = pad * 2 + colW + mapGap + usedTextW;
 
   // Branding-free card: no app badge, just the clean address panel.
   const contentH = Math.max(textH, colH);
@@ -579,7 +582,7 @@ export function renderWatermark(
   }
 
   // ---- text lines ----------------------------------------------------------
-  const tx = panelX + pad + mapSize + mapGap;
+  const tx = panelX + pad + colW + mapGap;
   let ty = contentY + (contentH - textH) / 2;
   ctx.textBaseline = "top";
   for (const ln of lines) {

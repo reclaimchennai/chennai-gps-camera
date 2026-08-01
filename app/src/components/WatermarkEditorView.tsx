@@ -6,6 +6,7 @@ import { renderMiniMap } from "../lib/watermark/minimap";
 import { chennaiSignAssets, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { FIELD_META, langMeta, PRESET_META, SIGN_SHAPE_META } from "../lib/watermark/presets";
 import { currentPackId } from "../lib/geo/geodata";
+import { isChennaiJurisdiction } from "../lib/watermark/signboard";
 import { fmtDateOnly } from "../lib/geo/format";
 import ProfileFields from "./ProfileFields";
 import type { DateFormat, WatermarkData } from "../types";
@@ -44,6 +45,9 @@ export default function WatermarkEditorView() {
   const setWatermark = useSettingsStore((s) => s.setWatermark);
   const settings = useSettingsStore((s) => s.settings);
   const setSettings = useSettingsStore((s) => s.setSettings);
+  // the live jurisdiction, at component scope — the render pipeline's
+  // `data` is built inside an effect and is not visible to the JSX
+  const liveJurisdiction = useLiveStore((s) => s.lookupResult?.jurisdiction);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const assetsRef = useRef<WatermarkAssets>({});
   // The pinned preview eats half the screen while the keyboard is up —
@@ -186,13 +190,30 @@ export default function WatermarkEditorView() {
           <div className="hint" style={{ marginTop: 8 }}>
             {PRESET_META.find((p) => p.key === config.preset)?.hint}
           </div>
-          {config.preset === "chennai" && (
-            <div className="hint" style={{ marginTop: 6 }}>
-              The street sign only appears on photos taken inside Greater
-              Chennai Corporation — elsewhere this renders as the plain
-              detailed card.
-            </div>
-          )}
+          {config.preset === "chennai" &&
+            (isChennaiJurisdiction(liveJurisdiction) ? (
+              <div className="hint" style={{ marginTop: 6 }}>
+                Active here — photos taken at this location get the street
+                sign.
+              </div>
+            ) : (
+              /* Naming the body that DOES cover this spot: the template
+                 silently rendering as the plain card looked like the
+                 setting had not applied. The sign says "Greater Chennai
+                 Corporation", so showing it outside GCC would address the
+                 complaint to the wrong authority. */
+              <div
+                className="hint"
+                style={{ marginTop: 6, color: "#fbbf24" }}
+              >
+                Not active at your current location
+                {liveJurisdiction?.corporation
+                  ? ` — this is ${liveJurisdiction.corporation}`
+                  : ""}
+                . The street sign is only for Greater Chennai Corporation,
+                so the plain detailed card is used here instead.
+              </div>
+            ))}
         </div>
         {config.preset === "chennai" && (
           <div className="row" style={{ display: "block" }}>

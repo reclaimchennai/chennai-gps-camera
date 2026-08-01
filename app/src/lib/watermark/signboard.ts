@@ -123,11 +123,17 @@ export function stringsFor(
   return LANGS[scriptAvailable(ctx, lang) ? lang : "en"].strings;
 }
 
-/** Is this capture inside Greater Chennai Corporation? */
-export function isChennai(data: WatermarkData): boolean {
-  const j = data.jurisdiction;
+/** Is this jurisdiction Greater Chennai Corporation? */
+export function isChennaiJurisdiction(
+  j: { scope?: string; corporation?: string } | null | undefined
+): boolean {
   if (!j) return false;
   if (j.scope === "gcc") return true;
   return /greater chennai/i.test(j.corporation ?? "");
+}
+
+/** Is this capture inside Greater Chennai Corporation? */
+export function isChennai(data: WatermarkData): boolean {
+  return isChennaiJurisdiction(data.jurisdiction);
 }
 
