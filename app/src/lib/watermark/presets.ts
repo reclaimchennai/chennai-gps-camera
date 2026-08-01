@@ -25,7 +25,7 @@ export const ALL_FIELDS: WatermarkFields = {
 };
 
 export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
-  preset: "detailed",
+  preset: "chennai", // the street sign is the default board (owner)
   fields: { ...ALL_FIELDS },
   fontScale: 0.8, // smallest by default — users can size it up in the editor
   opacity: 0.55,
@@ -70,7 +70,7 @@ export const PRESET_META: { key: WatermarkConfig["preset"]; label: string; hint:
   {
     key: "chennai",
     label: "Street sign",
-    hint: "Chennai-style civic board, addressed to your local body",
+    hint: "Civic board addressed to your local body — the default",
   },
 ];
 

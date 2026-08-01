@@ -130,7 +130,10 @@ export function isChennaiJurisdiction(
 ): boolean {
   if (!j) return false;
   if (j.scope === "gcc") return true;
-  return /greater chennai/i.test(j.corporation ?? "");
+  // the metro pack says "Greater Chennai Corporation", the statewide one
+  // just "Chennai Corporation" — matching only the first sent Chennai
+  // photos resolved from the statewide pack to the generic board
+  return /(^|\b)(greater\s+)?chennai corporation\b/i.test(j.corporation ?? "");
 }
 
 /** Is this capture inside Greater Chennai Corporation? */

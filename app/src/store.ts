@@ -48,31 +48,22 @@ interface LiveState {
 }
 
 /**
- * Chennai users get the street-sign card by default (owner decision).
+ * Move existing installs onto the street sign, once.
  *
- * It cannot be decided at install: the template depends on WHERE the user
- * is, which is only known once a fix resolves inside Greater Chennai
- * Corporation. So the first Chennai fix adopts it — once, guarded by a
- * flag, and only from the plain detailed card. A user who has picked any
- * other layout (or who picks detailed back afterwards) is never
- * overridden: the app gets one chance to suggest, not a standing veto on
- * their choice.
+ * New installs get it from DEFAULT_WATERMARK_CONFIG, but a stored config
+ * always wins over a default, so anyone who had used the app before would
+ * have stayed on the plain detailed card forever. This runs once and only
+ * from "detailed" — a user who has deliberately chosen the compact bar or
+ * the corner badge keeps it.
  */
-function adoptChennaiTemplate(r: LookupResult | null): void {
+function adoptStreetSign(): void {
   try {
-    if (localStorage.getItem("gpscam-chennai-template") === "1") return;
-    const j = r?.jurisdiction;
-    const chennai =
-      j &&
-      (j.scope === "gcc" || /greater chennai/i.test(j.corporation ?? ""));
-    if (!chennai) return;
-    // A fix can land before hydrateSettings() resolves. Claiming the flag
-    // then would burn the one chance against a default-valued store and
-    // the template would never appear — so wait for real settings and let
-    // the next fix try again.
+    if (localStorage.getItem("gpscam-street-sign-default") === "1") return;
     const st = useSettingsStore.getState();
+    // a fix can arrive before hydrateSettings() resolves; claiming the
+    // flag then would burn the one chance against default-valued settings
     if (!st.hydrated) return;
-    localStorage.setItem("gpscam-chennai-template", "1");
+    localStorage.setItem("gpscam-street-sign-default", "1");
     if (st.watermark.preset === "detailed") {
       st.setWatermark({ ...st.watermark, preset: "chennai" });
     }
@@ -96,7 +87,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   setFix: (fix) => set({ fix }),
   setLookupResult: (lookupResult) => {
     set({ lookupResult });
-    adoptChennaiTemplate(lookupResult);
+    adoptStreetSign();
   },
   setBearing: (bearing) => set({ bearing }),
   setGpsStatus: (gpsStatus) => set({ gpsStatus }),
