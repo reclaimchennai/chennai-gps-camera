@@ -36,6 +36,7 @@ export interface CardStrings {
   acquiring: string;
   wardPending: string;
   mock: string;
+  pincode: string;
 }
 
 export interface LangDef {
@@ -73,7 +74,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       policeLo: "Police (L&O)", traffic: "Traffic", noise: "Noise",
       avg: "Avg", min: "Min", max: "Max", facing: "Facing",
       acquiring: "GPS: acquiring…", wardPending: "Ward: not yet available",
-      mock: "⚠ Mock location — GPS may be spoofed",
+      mock: "⚠ Mock location — GPS may be spoofed", pincode: "PIN",
     },
   },
   ta: {
@@ -91,7 +92,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "சராசரி", min: "குறைந்தது", max: "அதிகபட்சம்", facing: "திசை",
       acquiring: "GPS: பெறப்படுகிறது…",
       wardPending: "வார்டு: இன்னும் கிடைக்கவில்லை",
-      mock: "⚠ போலி இருப்பிடம் — GPS தவறாக இருக்கலாம்",
+      mock: "⚠ போலி இருப்பிடம் — GPS தவறாக இருக்கலாம்", pincode: "அஞ்சல் குறியீடு",
     },
   },
   hi: {
@@ -109,7 +110,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "औसत", min: "न्यूनतम", max: "अधिकतम", facing: "दिशा",
       acquiring: "GPS: प्राप्त किया जा रहा है…",
       wardPending: "वार्ड: अभी उपलब्ध नहीं",
-      mock: "⚠ नकली स्थान — GPS गलत हो सकता है",
+      mock: "⚠ नकली स्थान — GPS गलत हो सकता है", pincode: "पिन कोड",
     },
   },
   kn: {
@@ -127,7 +128,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "ಸರಾಸರಿ", min: "ಕನಿಷ್ಠ", max: "ಗರಿಷ್ಠ", facing: "ದಿಕ್ಕು",
       acquiring: "GPS: ಪಡೆಯಲಾಗುತ್ತಿದೆ…",
       wardPending: "ವಾರ್ಡ್: ಇನ್ನೂ ಲಭ್ಯವಿಲ್ಲ",
-      mock: "⚠ ನಕಲಿ ಸ್ಥಳ — GPS ತಪ್ಪಾಗಿರಬಹುದು",
+      mock: "⚠ ನಕಲಿ ಸ್ಥಳ — GPS ತಪ್ಪಾಗಿರಬಹುದು", pincode: "ಪಿನ್ ಕೋಡ್",
     },
   },
   te: {
@@ -145,7 +146,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "సగటు", min: "కనిష్ఠ", max: "గరిష్ఠ", facing: "దిశ",
       acquiring: "GPS: పొందుతోంది…",
       wardPending: "వార్డు: ఇంకా అందుబాటులో లేదు",
-      mock: "⚠ నకిలీ స్థానం — GPS తప్పు కావచ్చు",
+      mock: "⚠ నకిలీ స్థానం — GPS తప్పు కావచ్చు", pincode: "పిన్ కోడ్",
     },
   },
   mr: {
@@ -163,7 +164,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "सरासरी", min: "किमान", max: "कमाल", facing: "दिशा",
       acquiring: "GPS: मिळवत आहे…",
       wardPending: "प्रभाग: अद्याप उपलब्ध नाही",
-      mock: "⚠ बनावट स्थान — GPS चुकीचे असू शकते",
+      mock: "⚠ बनावट स्थान — GPS चुकीचे असू शकते", pincode: "पिन कोड",
     },
   },
   bn: {
@@ -181,7 +182,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "গড়", min: "সর্বনিম্ন", max: "সর্বোচ্চ", facing: "দিক",
       acquiring: "GPS: সংগ্রহ করা হচ্ছে…",
       wardPending: "ওয়ার্ড: এখনও পাওয়া যায়নি",
-      mock: "⚠ নকল অবস্থান — GPS ভুল হতে পারে",
+      mock: "⚠ নকল অবস্থান — GPS ভুল হতে পারে", pincode: "পিন কোড",
     },
   },
 };

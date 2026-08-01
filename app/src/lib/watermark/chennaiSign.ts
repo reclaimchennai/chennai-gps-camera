@@ -419,14 +419,14 @@ export function renderChennaiSign(
   const addressText = f.address ? (data.address ?? "") : "";
   if (f.coords) {
     rows.push(
-      data.fix ? fmtCoordsLine(data.fix.lat, data.fix.lng) : t.acquiring
+      data.fix ? fmtCoordsLine(data.fix.lat, data.fix.lng, lang) : t.acquiring
     );
   }
   if (f.digipin && data.fix) {
     const code = data.digipin ?? latLngToDigipin(data.fix.lat, data.fix.lng);
     if (code) rows.push(`${t.digipin}: ${code}`);
   }
-  if (f.datetime) rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes));
+  if (f.datetime) rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes, lang));
   const j = data.jurisdiction;
   // Police is ONE row, same rule the detailed card follows: club L&O and
   // Traffic when the station is the same rather than printing it twice.
@@ -457,12 +457,12 @@ export function renderChennaiSign(
     // "Zone : Zone 5 (Royapuram)"; that duplication was on the English
     // card too. Take the number, and only fall back to the full string
     // when a pack has no zone number to take.
-    const z = fmtZone(j.zone);
+    const z = fmtZone(j.zone, lang);
     const num = /(\d+)/.exec(z);
     footBits.push(`${t.zone} : ${num ? num[1] : z}`);
   }
   const pin = pincodeOf(data);
-  if (pin) footBits.push(`${lang === "ta" ? "அஞ்சல் குறியீடு" : "PIN"} : ${pin}`);
+  if (pin) footBits.push(`${t.pincode} : ${pin}`);
   const wantsFoot = style?.bottomStrip !== false && footBits.length > 0;
   const footH = wantsFoot ? Math.round(40 * s) : 0;
   // no bottom bar: the same facts still belong on the board, so they go
@@ -470,7 +470,7 @@ export function renderChennaiSign(
   if (!wantsFoot && footBits.length) rows.push(footBits.join("  ·  "));
   // measured only now: the no-bottom-strip styles append a row above,
   // and computing this earlier left the plate one row short, clipping it
-  const rowsH = rows.length ? rows.length * (rowPx + rowGap) : 0;
+
 
   // Scannable, not enormous. Sizing off the plate alone starved it once
   // the plate started shrink-wrapping (a 1440x900 frame gave ~50 px, about
@@ -479,9 +479,16 @@ export function renderChennaiSign(
   // The content is ~37 modules, so ~3 px each is the floor that matters:
   // 100 px is the smallest that reliably decodes, and there is nothing to
   // gain above ~112 — at 170 the code was dominating the board.
-  const qrSize = qr
-    ? Math.round(Math.min(112, Math.max(100, 78 * s, base * 0.075)))
-    : 0;
+  // The QR is a share of the PLATE, not of the frame. Sizing it off the
+  // frame made it look different on every photo shape and enormous on the
+  // live overlay, because a fixed pixel floor is a big fraction of a small
+  // canvas. Measured off the board the owner approved: ~13.5% of the
+  // plate's content width.
+  //
+  // The absolute floor is only about surviving being photographed, so it
+  // applies at capture sizes only; the preview is purely proportional and
+  // therefore matches what gets written.
+  const QR_PLATE_FRAC = 0.135;
 
   // ---- shrink-wrap ---------------------------------------------------
   // The plate used to span the full frame whatever it held, so a short
@@ -527,17 +534,30 @@ export function renderChennaiSign(
     ? measure(footBits.join("  ·  "), Math.round(19 * s), fontFor(lang), "700") +
       Math.round(24 * s)
     : 0;
-  // the Singara mark is centred and the QR sits hard right, so the plate
-  // has to be wide enough that they cannot meet
+  // Pass one: what the board needs with no QR in it. That fixes the
+  // plate's natural width, which the QR is then sized against — sizing
+  // the two against each other would be circular.
+  const need0 = Math.max(headerW, placeNatural, rowsNatural, footNatural);
+  const content0 = Math.max(
+    Math.round(220 * s),
+    Math.min(availW, Math.ceil(need0))
+  );
+  const qrIdeal = content0 * QR_PLATE_FRAC;
+  const qrSize = qr
+    ? base >= 640
+      ? Math.round(Math.min(170, Math.max(96, qrIdeal)))
+      : Math.round(qrIdeal)
+    : 0;
+
+  // the crest is centred and the QR sits hard right, so the plate has to
+  // be wide enough that they cannot meet
   const badgeRowW = qrSize ? 2 * (qrSize + gapMin) + singaraW : 0;
   // The address is the one row that can run far longer than everything
   // else. Left in the width calculation it stretched the plate across the
   // whole photo; shrunk to fit it became a thread. It is wrapped instead,
   // to the width the REST of the board already needs, over at most two
   // lines — so the plate stays the size its other content asks for.
-  const needed = Math.max(
-    headerW, placeNatural, rowsNatural, footNatural, badgeRowW
-  );
+  const needed = Math.max(need0, badgeRowW);
   if (addressText) {
     const cap = Math.max(needed, Math.round(availW * 0.55));
     const addrLines = wrapTo(
@@ -545,6 +565,11 @@ export function renderChennaiSign(
     );
     rows.unshift(...addrLines);
   }
+  // Measured only now. The address lines join `rows` above, and computing
+  // this before that left the plate short by two rows — the footer strip
+  // fell out of the bottom of the board. Same mistake as the ward row
+  // before it; the rule is that nothing may touch `rows` after this line.
+  const rowsH = rows.length ? rows.length * (rowPx + rowGap) : 0;
   const contentW = Math.max(
     Math.round(220 * s), // never so narrow the header collapses
     Math.min(availW, Math.ceil(needed))

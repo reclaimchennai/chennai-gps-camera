@@ -19,12 +19,28 @@ export function fmtLng(lng: number): string {
  * and month. A full Tamil date pushed the row past the plate and got
  * shrunk to the point of being harder to read than the abbreviation.
  */
-function cardLang(): CardLang {
-  return langOf(useSettingsStore.getState().watermark?.language);
+/**
+ * The language to format in.
+ *
+ * These read the live setting when nothing is passed, which is right for
+ * UI callers — but the RENDERER must pass the language of the config it
+ * is drawing. Re-compositing a photo replays `record.config`, so a card
+ * captured in Tamil would otherwise pick up whatever the user has since
+ * switched to, and print its coordinates and date in the wrong language
+ * from the labels beside them.
+ */
+function cardLang(explicit?: unknown): CardLang {
+  return langOf(
+    explicit ?? useSettingsStore.getState().watermark?.language
+  );
 }
 
-export function fmtCoordsLine(lat: number, lng: number): string {
-  const l = LANGS[cardLang()].coords;
+export function fmtCoordsLine(
+  lat: number,
+  lng: number,
+  lang?: unknown
+): string {
+  const l = LANGS[cardLang(lang)].coords;
   return `${l.lat} ${lat.toFixed(6)}°  ${l.lng} ${lng.toFixed(6)}°`;
 }
 
@@ -60,7 +76,11 @@ export function fmtDateOnly(
 /** "Wednesday, 08/07/2026 06:47:32 PM UTC+05:30" (§5.3 reference layout).
  *  The date portion follows the user's date-format setting. Seconds are
  *  included so video watermarks can tick in real time. */
-export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
+export function fmtDateLine(
+  ts: number,
+  tzOffsetMinutes: number,
+  langIn?: unknown
+): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
   let h = d.getHours();
@@ -71,7 +91,7 @@ export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
   const abs = Math.abs(off);
 
   const format = useSettingsStore.getState().settings.dateFormat;
-  const lang = cardLang();
+  const lang = cardLang(langIn);
   if (lang !== "en") {
     const loc = LANGS[lang].locale;
     let wd: string, dm: string, mer: string;
@@ -105,10 +125,11 @@ export function fmtDateLine(ts: number, tzOffsetMinutes: number): string {
 
 export function fmtAltAccuracy(
   altitude?: number | null,
-  accuracy?: number
+  accuracy?: number,
+  lang?: unknown
 ): string {
   const parts: string[] = [];
-  const a = LANGS[cardLang()].alt;
+  const a = LANGS[cardLang(lang)].alt;
   const altL = a.label;
   const m = a.metre;
   if (altitude != null) parts.push(`${altL} ${altitude.toFixed(0)} ${m}`);
@@ -159,9 +180,9 @@ const GCC_ZONE_NUMBERS: Record<string, number> = {
  *  "Zone 5 Royapuram" → "Zone 5 (Royapuram)" (Chennai, "Zone N Name")
  *  "Gandhinagar (2)" → "Zone 2 (Gandhinagar)" (Bengaluru, "Name (N)")
  *  "Zone 2" → "Zone 2"; boroughs pass through unchanged. */
-export function fmtZone(zone?: string): string {
+export function fmtZone(zone?: string, langIn?: unknown): string {
   if (!zone) return "";
-  const lang = cardLang();
+  const lang = cardLang(langIn);
   // the word itself, and the place inside the brackets, both follow the
   // card's language — a Tamil footer reading "மண்டலம் : Zone 5 (Royapuram)"
   // was the last Latin island on an otherwise Tamil card

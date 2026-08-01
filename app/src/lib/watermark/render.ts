@@ -204,7 +204,7 @@ function buildLines(
   if (f.coords) {
     lines.push({
       text: data.fix
-        ? fmtCoordsLine(data.fix.lat, data.fix.lng)
+        ? fmtCoordsLine(data.fix.lat, data.fix.lng, config.language)
         : t.acquiring,
       font: body,
       color: theme.dim,
@@ -220,13 +220,13 @@ function buildLines(
   }
 
   if (f.altitudeAccuracy && data.fix) {
-    const t = fmtAltAccuracy(data.fix.altitude, data.fix.accuracy);
+    const t = fmtAltAccuracy(data.fix.altitude, data.fix.accuracy, config.language);
     if (t) lines.push({ text: t, font: small, color: theme.dim });
   }
 
   if (f.datetime) {
     lines.push({
-      text: fmtDateLine(data.timestamp, data.tzOffsetMinutes),
+      text: fmtDateLine(data.timestamp, data.tzOffsetMinutes, config.language),
       font: body,
       color: theme.dim,
     });
@@ -285,7 +285,7 @@ function buildLines(
       pushJur(t.wardPending);
     } else {
       const zw: string[] = [];
-      if (f.zone && j.zone) zw.push(fmtZone(j.zone));
+      if (f.zone && j.zone) zw.push(fmtZone(j.zone, config.language));
       if (f.ward && j.ward)
         zw.push(`${t.ward} ${fmtWard(j.ward)}${j.wardName ? ` (${j.wardName})` : ""}`);
       if (zw.length) pushJur(zw.join(" · "));
@@ -621,11 +621,11 @@ function renderMinimal(
   const rows: string[] = [];
   if (config.fields.coords) {
     rows.push(
-      data.fix ? fmtCoordsLine(data.fix.lat, data.fix.lng) : "GPS: acquiring…"
+      data.fix ? fmtCoordsLine(data.fix.lat, data.fix.lng, config.language) : "GPS: acquiring…"
     );
   }
   if (config.fields.datetime) {
-    rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes));
+    rows.push(fmtDateLine(data.timestamp, data.tzOffsetMinutes, config.language));
   }
   if (config.fields.soundLevel && data.db != null) {
     rows.push(`Noise ≈ ${Math.round(data.db)} dB`);
