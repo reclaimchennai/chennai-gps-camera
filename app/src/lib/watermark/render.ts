@@ -419,20 +419,29 @@ export function renderWatermark(
     ? Math.min(width - margin * 2, Math.round(height * 1.25))
     : width - margin * 2;
   if (signOn) {
-    const signW = panelW;
+    // measure first: the plate shrink-wraps to its content, so its width
+    // is not known until the rows have been built
+    // The measure pass must see EXACTLY what the draw pass will draw. It
+    // was passed a null QR while the draw pass got the real one, so the
+    // plate was positioned using a height that did not include the code
+    // and hung past the bottom margin.
+    const signQr = config.fields.qrCode ? (assets.qr ?? null) : null;
     const m = renderChennaiSign(
-      ctx, 0, 0, signW, s, data, config, null,
+      ctx, 0, 0, panelW, s, data, config, signQr,
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null,
       true
     );
+    const signW = m.width;
     const sx = panelXFor(config.position, width, signW, margin);
     const sy = positionIsTop(config.position)
       ? margin
       : height - margin - m.height;
+    // pass the same AVAILABLE width both times — handing the draw pass
+    // the shrunken width would make it re-shrink against a smaller budget
+    // and lay out differently from what was measured
     renderChennaiSign(
-      ctx, sx, sy, signW, s, data, config,
-      config.fields.qrCode ? (assets.qr ?? null) : null,
+      ctx, sx, sy, panelW, s, data, config, signQr,
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null
     );

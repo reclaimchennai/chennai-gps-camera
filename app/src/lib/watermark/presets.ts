@@ -32,6 +32,7 @@ export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
   theme: "dark",
   customLabelText: "",
   language: "en", // default English regardless of template (owner decision)
+  signShape: "arrow-left", // matches the real GCC boards
   onlineMapUpgrade: false,
   position: "bottom",
 };
@@ -79,6 +80,16 @@ export const PRESET_META: { key: WatermarkConfig["preset"]; label: string; hint:
  * EVERY city we cover, not only the ones with a bespoke street sign —
  * a Kolkata user gets a Bengali card on the standard layout.
  */
+export const SIGN_SHAPE_META: {
+  key: WatermarkConfig["signShape"];
+  label: string;
+}[] = [
+  { key: "arrow-left", label: "Arrow left" },
+  { key: "arrow-right", label: "Arrow right" },
+  { key: "arrow-both", label: "Both ends" },
+  { key: "box", label: "Rectangle" },
+];
+
 export function langMeta(
   packId: string | null
 ): { key: WatermarkLang; label: string }[] {

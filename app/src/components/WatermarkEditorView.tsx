@@ -4,7 +4,7 @@ import { useLiveStore, useSettingsStore } from "../store";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { chennaiSignAssets, collectWatermarkData, getProfilePhoto } from "../lib/capture";
-import { FIELD_META, langMeta, PRESET_META } from "../lib/watermark/presets";
+import { FIELD_META, langMeta, PRESET_META, SIGN_SHAPE_META } from "../lib/watermark/presets";
 import { currentPackId } from "../lib/geo/geodata";
 import { fmtDateOnly } from "../lib/geo/format";
 import ProfileFields from "./ProfileFields";
@@ -188,12 +188,31 @@ export default function WatermarkEditorView() {
           </div>
           {config.preset === "chennai" && (
             <div className="hint" style={{ marginTop: 6 }}>
-              The street-sign header only appears on photos taken inside
-              Greater Chennai Corporation — elsewhere this renders as the
-              plain detailed card.
+              The street sign only appears on photos taken inside Greater
+              Chennai Corporation — elsewhere this renders as the plain
+              detailed card.
             </div>
           )}
         </div>
+        {config.preset === "chennai" && (
+          <div className="row" style={{ display: "block" }}>
+            <div className="label">Sign shape</div>
+            <div className="hint" style={{ margin: "2px 0 8px" }}>
+              Chennai's boards point left — the rest are a matter of taste
+            </div>
+            <div className="seg">
+              {SIGN_SHAPE_META.map((sh) => (
+                <button
+                  key={sh.key}
+                  data-active={(config.signShape ?? "arrow-left") === sh.key}
+                  onClick={() => set({ signShape: sh.key })}
+                >
+                  {sh.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="row" style={{ display: "block" }}>
           <div className="label">Card language</div>
           <div className="hint" style={{ margin: "2px 0 8px" }}>

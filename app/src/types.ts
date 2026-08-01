@@ -83,6 +83,9 @@ export interface WatermarkConfig {
   language: WatermarkLang;
   /** Online Google-map thumbnail upgrade when connectivity allows (§5.4). */
   onlineMapUpgrade: boolean;
+  /** Plate outline for the street-sign template. Chennai's boards point
+   *  left, but the shape is a matter of taste and other cities differ. */
+  signShape: "arrow-left" | "arrow-right" | "arrow-both" | "box";
   /** Where the card sits on the photo. */
   position:
     | "bottom"

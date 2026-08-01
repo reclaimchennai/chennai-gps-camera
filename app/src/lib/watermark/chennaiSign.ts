@@ -76,6 +76,8 @@ function fitText(
 
 export interface SignMetrics {
   height: number;
+  /** Shrink-wrapped plate width — the caller positions with this. */
+  width: number;
 }
 
 /**
@@ -100,21 +102,26 @@ export function renderChennaiSign(
   const tamilOk = scriptAvailable(ctx, "ta");
 
   const pad = Math.round(16 * s);
-  const arrow = Math.round(w * 0.1);
-  const inner = arrow + pad; // content left edge, clear of the arrow head
-  const contentW = w - inner - pad;
+  const shape = config.signShape ?? "arrow-left";
+  const pointsLeft = shape === "arrow-left" || shape === "arrow-both";
+  const pointsRight = shape === "arrow-right" || shape === "arrow-both";
+  // Fixed to the scale rather than to the plate width: the width is about
+  // to be derived FROM the content, so an arrow measured as a fraction of
+  // it would be circular.
+  const arrow = Math.round(78 * s);
+  const insetL = (pointsLeft ? arrow : 0) + pad;
+  const insetR = (pointsRight ? arrow : 0) + pad;
 
   // ---- header strip -------------------------------------------------
   const bandH = Math.round(72 * s);
   const emblemH = Math.round(bandH * 0.86);
   const authPx = Math.round(19 * s);
 
-  // ---- place name ---------------------------------------------------
   const place = placeName(data, lang);
-  const placePx = fitText(ctx, place, Math.round(46 * s), fontFor(lang), contentW);
+  const rowPx0 = Math.round(19 * s);
 
   // ---- technical rows -----------------------------------------------
-  const rowPx = Math.round(19 * s);
+  const rowPx = rowPx0;
   const rows: string[] = [];
   const f = config.fields;
   if (f.address && data.address) rows.push(data.address);
@@ -167,6 +174,59 @@ export function renderChennaiSign(
   if (pin) footBits.push(`${lang === "ta" ? "அஞ்சல் குறியீடு" : "PIN"} : ${pin}`);
   const footH = footBits.length ? Math.round(40 * s) : 0;
 
+  // ---- shrink-wrap ---------------------------------------------------
+  // The plate used to span the full frame whatever it held, so a short
+  // place name over five short rows still painted a board across the
+  // whole photo. Measure what the content actually needs and take the
+  // smaller of that and the space available.
+  const measure = (text: string, px: number, font: string, weight = "400") => {
+    ctx.font = `${weight} ${px}px ${font}`;
+    return ctx.measureText(text).width;
+  };
+  const availW = w - insetL - insetR;
+  const gapMin = Math.round(18 * s);
+  const emblemW = gcc ? Math.round(aspect(gcc, 139 / 190) * emblemH) : 0;
+  const singaraW = singara
+    ? Math.round(aspect(singara, 1) * Math.round(112 * s))
+    : 0;
+  const tamilW = tamilOk
+    ? Math.max(
+        measure("பெருநகர", authPx, TAMIL, "700"),
+        measure("சென்னை மாநகராட்சி", authPx, TAMIL, "700")
+      )
+    : 0;
+  const engW = Math.max(
+    measure("Greater", authPx, LATIN, "700"),
+    measure("Chennai Corporation", authPx, LATIN, "700")
+  );
+  // The Singara mark is drawn CENTRED, so a sequential left+logo+right
+  // sum is not enough: whichever side is wider decides how much room the
+  // centre has. Sizing to twice the wider side keeps the logo clear of
+  // both — a plain sum let the Tamil name run under the logo once the
+  // plate started shrink-wrapping.
+  const leftBlock = emblemW + Math.round(8 * s) + tamilW;
+  const rightBlock = engW + Math.round(10 * s);
+  const headerW =
+    2 * Math.max(leftBlock, rightBlock) + singaraW + 2 * gapMin;
+  const placeNatural = measure(place, Math.round(46 * s), fontFor(lang), "700");
+  const rowsNatural = rows.reduce(
+    (m, r) => Math.max(m, measure(r, rowPx, fontFor(lang))),
+    0
+  );
+  const footNatural = footBits.length
+    ? measure(footBits.join("  ·  "), Math.round(19 * s), fontFor(lang), "700") +
+      Math.round(24 * s)
+    : 0;
+  const needed = Math.max(headerW, placeNatural, rowsNatural, footNatural);
+  const contentW = Math.max(
+    Math.round(220 * s), // never so narrow the header collapses
+    Math.min(availW, Math.ceil(needed))
+  );
+  const width = insetL + contentW + insetR;
+  const placePx = fitText(
+    ctx, place, Math.round(46 * s), fontFor(lang), contentW
+  );
+
   // The Singara mark straddles the header strip's lower edge the way it
   // sits on the real boards: the diamond half on the white and half on
   // the blue, with the "Singara Chennai 2.0" wordmark clear of the strip
@@ -201,7 +261,7 @@ export function renderChennaiSign(
     (footH ? gapS + footH : 0) +
     pad;
 
-  if (measureOnly) return { height };
+  if (measureOnly) return { height, width };
 
   const h = height;
   ctx.save();
@@ -210,16 +270,28 @@ export function renderChennaiSign(
   // left-pointing arrow, apex at mid-height, per the GCC boards
   const plate = (insetPx: number) => {
     const l = x + insetPx;
-    const r = x + w - insetPx;
+    const r = x + width - insetPx;
     const tp = y + insetPx;
     const bt = y + h - insetPx;
+    const mid = (tp + bt) / 2;
     const ax = l + arrow;
+    const bx = r - arrow;
     ctx.beginPath();
-    ctx.moveTo(l, (tp + bt) / 2);
-    ctx.lineTo(ax, tp);
-    ctx.lineTo(r, tp);
-    ctx.lineTo(r, bt);
-    ctx.lineTo(ax, bt);
+    if (pointsLeft) {
+      ctx.moveTo(l, mid);
+      ctx.lineTo(ax, tp);
+    } else {
+      ctx.moveTo(l, tp);
+    }
+    if (pointsRight) {
+      ctx.lineTo(bx, tp);
+      ctx.lineTo(r, mid);
+      ctx.lineTo(bx, bt);
+    } else {
+      ctx.lineTo(r, tp);
+      ctx.lineTo(r, bt);
+    }
+    ctx.lineTo(pointsLeft ? ax : l, bt);
     ctx.closePath();
   };
   // The plate honours the card's opacity like every other layout, so the
@@ -249,10 +321,10 @@ export function renderChennaiSign(
   ctx.save();
   ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
   ctx.fillStyle = WHITE;
-  ctx.fillRect(x + inner, cy, contentW, bandH);
+  ctx.fillRect(x + insetL, cy, contentW, bandH);
   ctx.restore();
 
-  let hx = x + inner + Math.round(8 * s);
+  let hx = x + insetL + Math.round(8 * s);
   if (gcc) {
     const gw = Math.round(aspect(gcc, 139 / 190) * emblemH);
     ctx.drawImage(gcc, hx, cy + (bandH - emblemH) / 2, gw, emblemH);
@@ -267,7 +339,7 @@ export function renderChennaiSign(
     ctx.fillText("சென்னை மாநகராட்சி", hx, cy + bandH * 0.68);
   }
   ctx.textAlign = "right";
-  const rx = x + inner + contentW - Math.round(10 * s);
+  const rx = x + insetL + contentW - Math.round(10 * s);
   ctx.font = `700 ${authPx}px ${LATIN}`;
   ctx.fillText("Greater", rx, cy + bandH * 0.32);
   ctx.fillText("Chennai Corporation", rx, cy + bandH * 0.68);
@@ -281,7 +353,7 @@ export function renderChennaiSign(
       const sw = Math.round(aspect(singara, 1) * singaraH);
       ctx.drawImage(
         singara,
-        x + inner + (contentW - sw) / 2,
+        x + insetL + (contentW - sw) / 2,
         bandBottom - singaraH * DIAMOND_MID,
         sw,
         singaraH
@@ -289,7 +361,7 @@ export function renderChennaiSign(
     }
     if (qr && qrSize) {
       // white plate so it stays scannable against the blue
-      const qx = x + inner + contentW - qrSize;
+      const qx = x + insetL + contentW - qrSize;
       const qy = bandBottom + qrTop;
       ctx.fillStyle = WHITE;
       ctx.fillRect(qx, qy, qrSize, qrSize);
@@ -310,7 +382,7 @@ export function renderChennaiSign(
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   ctx.font = `700 ${placePx}px ${fontFor(lang)}`;
-  ctx.fillText(place, x + inner + contentW / 2, cy, contentW);
+  ctx.fillText(place, x + insetL + contentW / 2, cy, contentW);
   cy += Math.round(placePx * 1.18);
 
   // ---- technical rows -------------------------------------------------
@@ -322,7 +394,7 @@ export function renderChennaiSign(
       const px = fitText(ctx, r, rowPx, fontFor(lang), contentW, "400");
       ctx.font = `${px}px ${fontFor(lang)}`;
       ctx.fillStyle = r === t.mock ? "#ffd54a" : "rgba(255,255,255,0.95)";
-      ctx.fillText(r, x + inner + contentW / 2, cy + (rowPx - px) / 2);
+      ctx.fillText(r, x + insetL + contentW / 2, cy + (rowPx - px) / 2);
       cy += rowPx + rowGap;
     }
   }
@@ -333,7 +405,7 @@ export function renderChennaiSign(
     ctx.save();
     ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
     ctx.fillStyle = WHITE;
-    ctx.fillRect(x + inner, cy, contentW, footH);
+    ctx.fillRect(x + insetL, cy, contentW, footH);
     ctx.restore();
     const line = footBits.join("  ·  ");
     const fpx = fitText(
@@ -346,11 +418,11 @@ export function renderChennaiSign(
     ctx.fillStyle = BLUE;
     ctx.textBaseline = "middle";
     ctx.font = `700 ${fpx}px ${fontFor(lang)}`;
-    ctx.fillText(line, x + inner + contentW / 2, cy + footH / 2);
+    ctx.fillText(line, x + insetL + contentW / 2, cy + footH / 2);
   }
 
   ctx.restore();
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  return { height };
+  return { height, width };
 }
