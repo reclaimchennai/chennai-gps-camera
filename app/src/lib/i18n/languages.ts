@@ -220,5 +220,47 @@ export function langsFor(packId: string | null | undefined): CardLang[] {
   return out;
 }
 
+/**
+ * Make the card's script resident before anything measures or draws it.
+ *
+ * The fonts are bundled but fetched lazily by `unicode-range`, so the
+ * very first probe can run against a font that has not arrived and cache
+ * "unavailable" for the whole session. That is what put English DIGIPIN
+ * and Noise labels on an otherwise Tamil card: format.ts localises
+ * unconditionally, while the label table was gated on the probe, so the
+ * two disagreed on the same card.
+ *
+ * This used to be bolted onto the Chennai logo loader, which meant it
+ * only ever ran for one template in one city.
+ */
+export async function ensureCardFont(
+  langIn: unknown,
+  onReady?: () => void
+): Promise<void> {
+  const lang = langOf(langIn);
+  if (lang === "en") return;
+  try {
+    const f = (document as Document & { fonts?: FontFaceSet }).fonts;
+    if (!f) return;
+    const family = LANGS[lang].font.split(",")[0].replace(/'/g, "").trim();
+    const sample = SAMPLES[lang] ?? "";
+    await f.load(`700 24px "${family}"`, sample);
+    await f.load(`400 24px "${family}"`, sample);
+    onReady?.();
+  } catch {
+    // no font loading API — the pixel probe still guards against tofu
+  }
+}
+
+/** One word per script, for font-load hints and the tofu probe. */
+export const SAMPLES: Record<string, string> = {
+  ta: "சென்னை",
+  hi: "चेन्नई",
+  mr: "मुंबई",
+  kn: "ಬೆಂಗಳೂರು",
+  te: "హైదరాబాద్",
+  bn: "কলকাতা",
+};
+
 /** Every language, for the Settings list when no pack has loaded yet. */
 export const ALL_LANGS = Object.keys(LANGS) as CardLang[];

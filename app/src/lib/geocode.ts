@@ -38,8 +38,23 @@ function joinLocality(
 }
 
 /**
- * City-level address cleanup:
- *  - drop state + country segments ("Tamil Nadu", "India")
+ * Country names to drop, in every script we render.
+ *
+ * The rule only matched lowercase "india", so a Tamil address kept
+ * "இந்தியா" on the card. The country adds nothing — the app is for Indian
+ * civic bodies — while the STATE is worth keeping, which is the opposite
+ * of what this did before.
+ */
+const COUNTRY = new Set(
+  [
+    "india", "bharat", "भारत", "इंडिया", "இந்தியா", "ಭಾರತ", "ಇಂಡಿಯಾ",
+    "భారతదేశం", "ఇండియా", "ভারত", "ইন্ডিয়া",
+  ].map((c) => c.toLowerCase())
+);
+
+/**
+ * Address cleanup:
+ *  - drop the country segment in any script; KEEP the state
  *  - drop administrative noise ("CMWSSB Division 61", "Ward 61")
  *  - strip zone prefixes from area names ("Zone 5 Royapuram" → "Royapuram")
  *  - join the trailing pincode as "Chennai - 600008"
@@ -49,14 +64,17 @@ function cleanAddress(address: string, state?: string): string {
   const out: string[] = [];
   for (let seg of address.split(/,\s*/).map((s) => s.trim())) {
     const low = seg.toLowerCase();
-    if (!seg || low === "india") continue;
-    if (st && low === st) continue;
+    if (!seg || COUNTRY.has(low)) continue;
     if (/^cmwssb\s+division\s*\d+$/i.test(seg)) continue;
     if (/^ward\s*\d+[a-z]?$/i.test(seg)) continue;
     if (/^zone\s*\d+$/i.test(seg)) continue;
     seg = seg.replace(/^zone\s*\d+\s+/i, "");
-    // "Tamil Nadu 600017" → keep the pincode
-    if (st && low.startsWith(`${st} `)) seg = seg.slice(st.length).trim();
+    // "Tamil Nadu 600017" arrives as one segment — split it so the state
+    // reads as a state and the pincode joins the tail properly
+    if (st && low.startsWith(`${st} `) && /\d{6}$/.test(seg)) {
+      out.push(seg.slice(0, st.length).trim());
+      seg = seg.slice(st.length).trim();
+    }
     if (!seg || out[out.length - 1]?.toLowerCase() === seg.toLowerCase()) continue;
     out.push(seg);
   }

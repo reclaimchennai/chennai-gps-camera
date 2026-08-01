@@ -19,6 +19,7 @@
  * draws without them — never blocking a capture on a decode.
  */
 import { resetScriptCache } from "./signboard";
+import { ensureCardFont } from "../i18n/languages";
 import gccUrl from "../../assets/gcc-emblem.png";
 import singaraUrl from "../../assets/singara-chennai.png";
 
@@ -29,18 +30,6 @@ export interface ChennaiLogos {
 
 const logos: ChennaiLogos = { gcc: null, singara: null };
 let pending: Promise<ChennaiLogos> | null = null;
-
-async function tamilFontReady(): Promise<void> {
-  try {
-    const f = (document as Document & { fonts?: FontFaceSet }).fonts;
-    if (!f) return;
-    await f.load('700 24px "Noto Sans Tamil"', "\u0b9a\u0bc6\u0ba9\u0bcd\u0ba9\u0bc8");
-    await f.load('400 24px "Noto Sans Tamil"', "\u0b9a\u0bc6\u0ba9\u0bcd\u0ba9\u0bc8");
-    resetScriptCache();
-  } catch {
-    // font loading unsupported — the probe still guards against tofu
-  }
-}
 
 function load(url: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
@@ -58,9 +47,8 @@ export function ensureChennaiLogos(): Promise<ChennaiLogos> {
     pending = Promise.all([
       load(gccUrl),
       load(singaraUrl),
-      // the bundled Tamil face must be resident before anything measures
-      // or draws Tamil, or the first card of the session falls back
-      tamilFontReady(),
+      // the sign always carries Tamil, whatever the card language
+      ensureCardFont("ta", resetScriptCache),
     ]).then(([gcc, singara]) => {
       logos.gcc = gcc;
       logos.singara = singara;

@@ -91,7 +91,13 @@ export const SIGN_SHAPE_META: {
 ];
 
 export function langMeta(
-  packId: string | null
+  packId: string | null,
+  current?: WatermarkLang
 ): { key: WatermarkLang; label: string }[] {
-  return langsFor(packId).map((key) => ({ key, label: LANGS[key].label }));
+  const keys = langsFor(packId);
+  // Always offer the language already in use. Outside a covered area the
+  // list collapses to English + Hindi, which hid the user's own choice
+  // and left no way to switch back off it.
+  if (current && !keys.includes(current)) keys.push(current);
+  return keys.map((key) => ({ key, label: LANGS[key].label }));
 }

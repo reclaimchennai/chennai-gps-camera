@@ -237,7 +237,7 @@ export default function WatermarkEditorView() {
             Falls back to English if your phone has no font for the script
           </div>
           <div className="seg">
-            {langMeta(currentPackId()).map((l) => (
+            {langMeta(currentPackId(), config.language).map((l) => (
               <button
                 key={l.key}
                 data-active={config.language === l.key}

@@ -20,6 +20,7 @@ import type { WatermarkData } from "../../types";
 
 import {
   LANGS,
+  SAMPLES,
   langOf as registryLangOf,
   type CardLang,
   type CardStrings,
@@ -76,7 +77,7 @@ export function scriptAvailable(
   const hit = scriptCache.get(lang);
   if (hit !== undefined) return hit;
 
-  const sample = lang === "ta" ? "\u0b9a\u0bc6\u0ba9\u0bcd\u0ba9\u0bc8" : "\u091a\u0947\u0928\u094d\u0928\u0908";
+  const sample = SAMPLES[lang] ?? "\u091a\u0947\u0928\u094d\u0928\u0908";
   const ok = (() => {
     try {
       const W = 220;

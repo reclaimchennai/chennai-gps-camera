@@ -9,6 +9,8 @@ import type {
 import type { LookupResult } from "./lib/geo/lookup";
 import { kvGet, kvSet } from "./lib/db";
 import { DEFAULT_WATERMARK_CONFIG } from "./lib/watermark/presets";
+import { ensureCardFont } from "./lib/i18n/languages";
+import { resetScriptCache } from "./lib/watermark/signboard";
 
 // ---- Live (ephemeral) state ------------------------------------------
 
@@ -178,6 +180,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
   setWatermark: (watermark) => {
     set({ watermark });
+    // bring the script in before the next render measures it, and clear
+    // the probe cache once it lands — otherwise a probe that ran while
+    // the face was still loading pins the card to English labels
+    void ensureCardFont(watermark.language, resetScriptCache);
     void kvSet("watermark-config", watermark);
   },
   setProfile: (profile) => {
@@ -192,6 +198,7 @@ export async function hydrateSettings(): Promise<void> {
     kvGet<WatermarkConfig>("watermark-config"),
     kvGet<Profile>("profile"),
   ]);
+  void ensureCardFont(watermark?.language, resetScriptCache);
   useSettingsStore.setState({
     hydrated: true,
     settings: { ...DEFAULT_SETTINGS, ...settings },
