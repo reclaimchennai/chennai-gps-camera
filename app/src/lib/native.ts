@@ -13,6 +13,7 @@
  */
 
 interface NativeBridgePlugin {
+  audioFocus(opts: { hold: boolean }): Promise<{ ok: boolean; holding?: boolean }>;
   reverseGeocode(opts: { lat: number; lng: number; lang?: string }): Promise<{
     ok: boolean;
     addressLine?: string;
@@ -251,6 +252,23 @@ export interface NativeAddress {
 }
 
 /** OS reverse geocode (English). Null in the browser or on failure. */
+/**
+ * Take or hand back Android audio focus.
+ *
+ * Releasing the microphone does not resume the user's music — only
+ * abandoning focus does, because that is what sends the media app
+ * AUDIOFOCUS_GAIN. No-op on the web build.
+ */
+export async function nativeAudioFocus(hold: boolean): Promise<void> {
+  const b = bridge();
+  if (!b?.audioFocus) return;
+  try {
+    await b.audioFocus({ hold });
+  } catch {
+    // focus is best-effort; never block capture on it
+  }
+}
+
 export async function nativeReverseGeocode(
   lat: number,
   lng: number,

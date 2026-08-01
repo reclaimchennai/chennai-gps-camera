@@ -14,6 +14,7 @@ import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
 import { renderLocationQr } from "../lib/watermark/qr";
 import { loadCrest } from "../lib/watermark/crests";
+import { nativeAudioFocus } from "../lib/native";
 import { signStyle } from "../lib/watermark/chennaiSign";
 import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
@@ -481,6 +482,9 @@ export default function CameraView({ active }: { active: boolean }) {
         recorderRef.current?.stop();
         camera.stop();
         stopMeter();
+        // hand the music back on the way out; stopMeter covers the meter's
+        // own mic, this covers a recording's
+        void nativeAudioFocus(false);
       } else {
         void startCam(modeRef.current);
       }

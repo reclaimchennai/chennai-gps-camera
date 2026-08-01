@@ -13,6 +13,7 @@
  */
 import { useLiveStore, useSettingsStore } from "../../store";
 import { preferredAudioConstraints } from "./source";
+import { nativeAudioFocus } from "../native";
 
 // dBFS→"dB" shift chosen so readings land close to common phone
 // noise-meter apps (quiet room ~35–40, conversation ~60, traffic ~75).
@@ -128,6 +129,9 @@ export function startMeter(cameraStream?: MediaStream | null): void {
   void (async () => {
     try {
       teardownGraph();
+      // tell Android this is a short interruption, so the user's music
+      // resumes when we hand focus back rather than staying dead
+      void nativeAudioFocus(true);
       let stream: MediaStream | null = null;
       if (cameraStream?.getAudioTracks().length) {
         // reuse the recording's (already unprocessed) mic track
@@ -193,6 +197,7 @@ export function startMeter(cameraStream?: MediaStream | null): void {
 export function stopMeter(): void {
   generation++;
   teardownGraph();
+  void nativeAudioFocus(false);
   // SUSPEND the context, not just the graph. A running AudioContext holds
   // Android audio focus even with nothing connected, which is why other
   // apps' audio stayed blocked while this app was minimised. startMeter

@@ -6,6 +6,9 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Address;
 import android.location.Geocoder;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -97,6 +100,100 @@ public class NativeBridgePlugin extends Plugin {
      * removes the doubt. `pattern` is the same shape the web API takes:
      * alternating wait/vibrate milliseconds.
      */
+
+    /** Held focus, so it can be handed back on the way out. */
+    private AudioFocusRequest audioFocusRequest = null;
+    private boolean holdingAudioFocus = false;
+
+    /**
+     * Take or hand back Android audio focus around microphone use.
+     *
+     * Opening a mic pauses whatever the user was listening to, but
+     * RELEASING the mic does not resume it — a media app only resumes when
+     * the focus holder abandons focus and it receives AUDIOFOCUS_GAIN. We
+     * never requested focus, so we never abandoned it, and music stayed
+     * dead after leaving the app.
+     *
+     * TRANSIENT is deliberate: it tells the other app this is a short
+     * interruption to come back from, which is exactly what metering the
+     * noise level or recording a clip is.
+     */
+    @PluginMethod
+    public void audioFocus(PluginCall call) {
+        final boolean hold = Boolean.TRUE.equals(call.getBoolean("hold", false));
+        JSObject out = new JSObject();
+        try {
+            AudioManager am =
+                (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+            if (am == null) {
+                out.put("ok", false);
+                call.resolve(out);
+                return;
+            }
+            if (hold) {
+                if (!holdingAudioFocus) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        AudioAttributes attrs = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build();
+                        audioFocusRequest = new AudioFocusRequest.Builder(
+                                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                            .setAudioAttributes(attrs)
+                            .setWillPauseWhenDucked(true)
+                            .build();
+                        am.requestAudioFocus(audioFocusRequest);
+                    } else {
+                        am.requestAudioFocus(null,
+                            AudioManager.STREAM_MUSIC,
+                            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+                    }
+                    holdingAudioFocus = true;
+                }
+            } else if (holdingAudioFocus) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        && audioFocusRequest != null) {
+                    am.abandonAudioFocusRequest(audioFocusRequest);
+                    audioFocusRequest = null;
+                } else {
+                    am.abandonAudioFocus(null);
+                }
+                holdingAudioFocus = false;
+            }
+            out.put("ok", true);
+            out.put("holding", holdingAudioFocus);
+            call.resolve(out);
+        } catch (Exception e) {
+            out.put("ok", false);
+            call.resolve(out);
+        }
+    }
+
+    @Override
+    protected void handleOnPause() {
+        // leaving the app must hand the music back even if the web layer
+        // never got its visibilitychange in
+        try {
+            if (holdingAudioFocus) {
+                AudioManager am = (AudioManager)
+                    getContext().getSystemService(Context.AUDIO_SERVICE);
+                if (am != null) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                            && audioFocusRequest != null) {
+                        am.abandonAudioFocusRequest(audioFocusRequest);
+                        audioFocusRequest = null;
+                    } else {
+                        am.abandonAudioFocus(null);
+                    }
+                }
+                holdingAudioFocus = false;
+            }
+        } catch (Exception ignored) {
+            // never let this stop the activity pausing
+        }
+        super.handleOnPause();
+    }
+
     @PluginMethod
     public void vibrate(PluginCall call) {
         try {

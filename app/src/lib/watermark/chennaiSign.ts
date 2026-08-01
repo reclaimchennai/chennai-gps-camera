@@ -403,7 +403,7 @@ export function renderChennaiSign(
 
   // ---- header strip -------------------------------------------------
   const withStrip = style?.topStrip !== false;
-  const bandH = Math.round(72 * s);
+  const bandH = Math.round(66 * s);
   const emblemH = Math.round(bandH * 0.86);
   const authPx = Math.round(19 * s);
 
@@ -442,7 +442,7 @@ export function renderChennaiSign(
     rows.push(`${t.traffic}: ${traffic}`);
   }
   if (data.mockLocation) rows.push(t.mock);
-  const rowGap = Math.round(rowPx * 0.5);
+  const rowGap = Math.round(rowPx * 0.34); // was 0.5 — the rows drove the height
 
   // ---- footer strip: ward / zone / pincode --------------------------
   const footBits: string[] = [];
@@ -462,7 +462,7 @@ export function renderChennaiSign(
   const pin = pincodeOf(data);
   if (pin) footBits.push(`${t.pincode} : ${pin}`);
   const wantsFoot = style?.bottomStrip !== false && footBits.length > 0;
-  const footH = wantsFoot ? Math.round(40 * s) : 0;
+  const footH = wantsFoot ? Math.round(34 * s) : 0;
   // no bottom bar: the same facts still belong on the board, so they go
   // in as an ordinary white-on-blue row rather than being dropped
   if (!wantsFoot && footBits.length) rows.push(footBits.join("  ·  "));
@@ -541,7 +541,9 @@ export function renderChennaiSign(
     Math.min(availW, Math.ceil(need0))
   );
   const qrIdeal = content0 * QR_PLATE_FRAC;
-  const qrSize = qr
+  // provisional, only so the badge row can reserve space; the real size
+  // is taken from the FINAL plate width below
+  const qrProvisional = qr
     ? preview
       ? Math.round(qrIdeal)
       : Math.round(Math.min(170, Math.max(96, qrIdeal)))
@@ -549,19 +551,29 @@ export function renderChennaiSign(
 
   // the crest is centred and the QR sits hard right, so the plate has to
   // be wide enough that they cannot meet
-  const badgeRowW = qrSize ? 2 * (qrSize + gapMin) + singaraW : 0;
+  const badgeRowW = qrProvisional
+    ? 2 * (qrProvisional + gapMin) + singaraW
+    : 0;
   // The address is the one row that can run far longer than everything
   // else. Left in the width calculation it stretched the plate across the
   // whole photo; shrunk to fit it became a thread. It is wrapped instead,
   // to the width the REST of the board already needs, over at most two
   // lines — so the plate stays the size its other content asks for.
-  const needed = Math.max(need0, badgeRowW);
+  let needed = Math.max(need0, badgeRowW);
   if (addressText) {
-    const cap = Math.max(needed, Math.round(availW * 0.55));
-    const addrLines = wrapTo(
-      ctx, addressText, rowPx, fontFor(lang), Math.min(cap, availW), 2
-    );
+    // Prefer letting the address WIDEN the plate over stacking another
+    // row. A board is meant to be wide; capping the wrap at the width the
+    // rest of the board happened to need made the address fold and the
+    // plate come out nearly square (877x806).
+    const cap = Math.min(availW, Math.max(needed, Math.round(availW * 0.55)));
+    const addrLines = wrapTo(ctx, addressText, rowPx, fontFor(lang), cap, 2);
     rows.unshift(...addrLines);
+    // and the plate must actually adopt that width — wrapping to a cap
+    // the plate never took would just hand a too-long line to fitText,
+    // which shrinks it to a thread. This is the bug the wrap replaced.
+    for (const l of addrLines) {
+      needed = Math.max(needed, measure(l, rowPx, fontFor(lang)));
+    }
   }
   // Measured only now. The address lines join `rows` above, and computing
   // this before that left the plate short by two rows — the footer strip
@@ -573,6 +585,15 @@ export function renderChennaiSign(
     Math.min(availW, Math.ceil(needed))
   );
   const width = insetL + contentW + insetR;
+  // Sized against the FINAL plate, so the code keeps the same share of the
+  // board however wide the address made it. Taking it from the pre-address
+  // width left the QR at 7% of a wide plate when the approved look is
+  // ~13.5%.
+  const qrSize = qr
+    ? preview
+      ? Math.round(contentW * QR_PLATE_FRAC)
+      : Math.round(Math.min(170, Math.max(96, contentW * QR_PLATE_FRAC)))
+    : 0;
   const placePx = fitText(
     ctx, place, Math.round(46 * s), fontFor(lang), contentW
   );
@@ -594,7 +615,7 @@ export function renderChennaiSign(
   const qrTop = qr ? Math.round(8 * s) : 0;
   const badgeH = Math.max(overhang, qrTop + qrSize);
 
-  const gapS = Math.round(10 * s);
+  const gapS = Math.round(7 * s);
   const height =
     pad +
     bandH +
