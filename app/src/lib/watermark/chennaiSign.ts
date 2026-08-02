@@ -689,21 +689,26 @@ export function renderChennaiSign(
   // the frame cannot spare the width the QR simply ends up a little
   // larger, which is the honest trade: a code that scans beats a tidy one
   // that does not.
-  if (qr) {
-    const floor = preview ? 0 : 96;
-    const wantW = Math.max(floor, contentW * QR_PLATE_FRAC) / QR_PLATE_FRAC;
-    contentW = Math.min(availW, Math.max(contentW, Math.round(wantW)));
-  }
+  // NO widening for the QR. The plate is sized by its content and the
+  // code takes a fixed share of it, in the preview and in the file alike
+  // — so what the viewfinder shows is what gets saved. Widening the plate
+  // to honour an absolute scannability floor is what made a 720p capture
+  // balloon to full width while its own viewfinder stayed compact.
+  //
+  // The cost is real and deliberate: on a low-resolution capture the code
+  // ends up below the size that reliably scans. The card carries the
+  // coordinates and the DIGIPIN as text regardless, and covering the
+  // photograph is the worse failure.
   const width = insetL + contentW + insetR;
   // Sized against the FINAL plate, so the code keeps the same share of the
   // board however wide the address made it. Taking it from the pre-address
   // width left the QR at 7% of a wide plate when the approved look is
   // ~13.5%.
-  const qrSize = qr
-    ? preview
-      ? Math.round(contentW * QR_PLATE_FRAC)
-      : Math.round(Math.max(96, contentW * QR_PLATE_FRAC))
-    : 0;
+  // Proportional in BOTH passes now. Forcing the floor here after the
+  // plate had been capped put an oversized code on a card that had
+  // refused to grow for it — which is exactly the mismatch reported
+  // between viewfinder and photo.
+  const qrSize = qr ? Math.round(contentW * QR_PLATE_FRAC) : 0;
   const placePx = fitText(
     ctx, place, Math.round(46 * s), fontFor(lang), contentW
   );
