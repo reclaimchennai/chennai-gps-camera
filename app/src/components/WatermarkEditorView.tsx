@@ -3,6 +3,8 @@ import { Screen, Row, Toggle, blurOnEnter } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
 import { renderMiniMap } from "../lib/watermark/minimap";
+import { renderLocationQr } from "../lib/watermark/qr";
+import { latLngToDigipin } from "../lib/geo/digipin";
 import { chennaiSignAssets, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { FIELD_META, langMeta, PRESET_META, SIGN_SHAPE_META } from "../lib/watermark/presets";
 import { currentPackId } from "../lib/geo/geodata";
@@ -35,6 +37,11 @@ const SAMPLE: WatermarkData = {
   address: "Kamarajar Salai, Marina Beach, Chennai 600005",
   locality: "Mylapore, Chennai",
   bearing: 74,
+  // the preview is an example card, so it carries example readings — a
+  // live noise level does not exist in photo mode (the microphone is
+  // released) and without one the toggle looked like it did nothing
+  db: 68,
+  dbStats: { avg: 62, min: 51, max: 79 },
   timestamp: 0,
   tzOffsetMinutes: new Date().getTimezoneOffset(),
 };
@@ -95,13 +102,35 @@ export default function WatermarkEditorView() {
       const data: WatermarkData = live.fix
         ? { ...collectWatermarkData(), timestamp: Date.now() }
         : { ...SAMPLE, timestamp: Date.now() };
+      if (config.fields.soundLevel && data.db == null && !data.dbStats) {
+        // photo mode holds no microphone, so there is no live level to
+        // show; the example one keeps the toggle honest about what the
+        // card will carry
+        data.db = SAMPLE.db;
+        data.dbStats = SAMPLE.dbStats;
+      }
+      // Every asset is cleared as well as set. They were only ever
+      // assigned, so switching the mini-map or the QR OFF left the old
+      // one on the preview until the screen was reopened — the toggle
+      // appeared to do nothing.
       if (config.fields.miniMap && data.fix) {
         const m = await renderMiniMap(
           data.fix.lat,
           data.fix.lng,
           live.fix ? live.lookupResult : null
         );
-        if (m) assetsRef.current.miniMap = m;
+        assetsRef.current.miniMap = m ?? null;
+      } else {
+        assetsRef.current.miniMap = null;
+      }
+      if (config.fields.qrCode && data.fix) {
+        assetsRef.current.qr = await renderLocationQr({
+          lat: data.fix.lat,
+          lng: data.fix.lng,
+          digipin: data.digipin ?? latLngToDigipin(data.fix.lat, data.fix.lng) ?? undefined,
+        });
+      } else {
+        assetsRef.current.qr = null;
       }
       assetsRef.current.profilePhoto = await getProfilePhoto();
       Object.assign(assetsRef.current, await chennaiSignAssets(config, data));

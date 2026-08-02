@@ -10,6 +10,7 @@ import { camera } from "./camera";
 import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
 import { renderLocationQr } from "./watermark/qr";
+import { sampleNoiseOnce } from "./audio/meter";
 import { loadCrest } from "./watermark/crests";
 import { ensureCardFont } from "./i18n/languages";
 import { resetScriptCache } from "./watermark/signboard";
@@ -123,6 +124,17 @@ export interface CaptureJob {
   lookupResult: ReturnType<typeof useLiveStore.getState>["lookupResult"];
   liveBlur: boolean;
   wantsDeviceCopy: boolean;
+  /**
+   * A noise reading still in flight.
+   *
+   * Photo mode keeps the microphone released, so the level has to be
+   * sampled at the shutter — but the reading takes about half a second
+   * and the card was stamped within milliseconds of firing it, so the dB
+   * never made it into the photo. The frame is still grabbed instantly;
+   * the BACKGROUND queue waits for the reading before compositing, which
+   * costs the user nothing.
+   */
+  noise?: Promise<number | null> | null;
 }
 
 /**
@@ -138,6 +150,13 @@ export async function grabFrame(): Promise<{
   const { watermark: config, settings } = useSettingsStore.getState();
   const live = useLiveStore.getState();
   const data = collectWatermarkData();
+
+  // start the reading BEFORE the frame grab so the two overlap, and hand
+  // the promise to the queue rather than waiting on it here
+  const noise =
+    config.fields.soundLevel && data.db == null && !data.dbStats
+      ? sampleNoiseOnce()
+      : null;
 
   const frame = await camera.captureFrame();
   const w = frame.width;
@@ -222,6 +241,7 @@ export async function grabFrame(): Promise<{
       lookupResult: live.lookupResult,
       liveBlur: settings.liveFaceBlur,
       wantsDeviceCopy: settings.autoSaveToDevice || isNativeApp(),
+      noise,
     },
   };
 }
@@ -235,6 +255,11 @@ export async function grabFrame(): Promise<{
 export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
   const { profile } = useSettingsStore.getState();
   const { canvas, w, h, data, config, lookupResult, liveBlur } = job;
+  // resolve the shutter-time noise reading into the card before it draws
+  if (job.noise) {
+    const db = await job.noise;
+    if (db != null && data.db == null) data.db = db;
+  }
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("2d context unavailable");
 

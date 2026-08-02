@@ -241,7 +241,14 @@ export class CameraController {
    * watermark field. ensureAudio() acquires it on demand before a
    * recording starts, so nothing is lost by waiting.
    */
-  audioWanted = true;
+  /**
+   * FALSE by default. It used to start true, and the effect that clears
+   * it runs only AFTER the camera has opened — so the very first open
+   * always requested the microphone, stopped whatever the user was
+   * listening to, and then released it again. The music never came back.
+   * Video mode and the recorder turn it on when they actually need it.
+   */
+  audioWanted = false;
 
 
   /** Release the microphone without disturbing the picture. */

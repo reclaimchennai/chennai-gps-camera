@@ -6,7 +6,7 @@ import {
 } from "react";
 import { camera } from "../lib/camera";
 import { qualityPlan } from "../lib/quality";
-import { startMeter, stopMeter, sampleNoiseOnce } from "../lib/audio/meter";
+import { startMeter, stopMeter } from "../lib/audio/meter";
 import { scheduleBackfill } from "../lib/backfill";
 import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
@@ -805,17 +805,9 @@ export default function CameraView({ active }: { active: boolean }) {
     grabbing.current = true;
     hapticTap(); // confirm the shutter fired, before any of the slow work
     setFlashFx((k) => k + 1);
-    // Photo mode keeps the microphone released so other apps can keep
-    // playing audio. If the watermark carries a noise level, take one
-    // short reading — started here, NOT awaited, so it never delays the
-    // shutter; the capture pipeline reads whatever has landed by the time
-    // it stamps the card.
-    if (
-      useSettingsStore.getState().watermark.fields.soundLevel &&
-      !camera.audioWanted
-    ) {
-      void sampleNoiseOnce();
-    }
+    // the noise reading is started inside grabFrame() and awaited by the
+    // background queue, so it lands in the card without delaying the
+    // shutter — firing it here left the reading racing the stamp
     try {
       const { job, preview } = await grabFrame();
       if (preview) setFlyImg({ src: preview, key: Date.now() });
