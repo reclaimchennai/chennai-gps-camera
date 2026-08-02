@@ -644,7 +644,7 @@ export function renderChennaiSign(
   const qrProvisional = qr
     ? preview
       ? Math.round(qrIdeal)
-      : Math.round(Math.min(170, Math.max(96, qrIdeal)))
+      : Math.round(Math.max(96, qrIdeal))
     : 0;
 
   // the crest is centred and the QR sits hard right, so the plate has to
@@ -678,10 +678,22 @@ export function renderChennaiSign(
   // fell out of the bottom of the board. Same mistake as the ward row
   // before it; the rule is that nothing may touch `rows` after this line.
   const rowsH = rows.length ? rows.length * (rowPx + rowGap) : 0;
-  const contentW = Math.max(
+  let contentW = Math.max(
     Math.round(220 * s), // never so narrow the header collapses
     Math.min(availW, Math.ceil(needed))
   );
+  // The QR has an absolute floor so it survives being photographed, and
+  // on a small capture that floor was a big share of a narrow plate — a
+  // 720p frame put a 96 px code on a ~400 px board. Widen the PLATE to
+  // suit the code rather than letting the code dominate the plate. Where
+  // the frame cannot spare the width the QR simply ends up a little
+  // larger, which is the honest trade: a code that scans beats a tidy one
+  // that does not.
+  if (qr) {
+    const floor = preview ? 0 : 96;
+    const wantW = Math.max(floor, contentW * QR_PLATE_FRAC) / QR_PLATE_FRAC;
+    contentW = Math.min(availW, Math.max(contentW, Math.round(wantW)));
+  }
   const width = insetL + contentW + insetR;
   // Sized against the FINAL plate, so the code keeps the same share of the
   // board however wide the address made it. Taking it from the pre-address
@@ -690,7 +702,7 @@ export function renderChennaiSign(
   const qrSize = qr
     ? preview
       ? Math.round(contentW * QR_PLATE_FRAC)
-      : Math.round(Math.min(170, Math.max(96, contentW * QR_PLATE_FRAC)))
+      : Math.round(Math.max(96, contentW * QR_PLATE_FRAC))
     : 0;
   const placePx = fitText(
     ctx, place, Math.round(46 * s), fontFor(lang), contentW
