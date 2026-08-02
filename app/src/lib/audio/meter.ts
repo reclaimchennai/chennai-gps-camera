@@ -246,18 +246,22 @@ export function dbFromAnalyser(node: AnalyserNode): number | null {
  * second: long enough for the level to settle, short enough that a music
  * app barely notices.
  */
-export async function sampleNoiseOnce(ms = 600): Promise<number | null> {
+export async function sampleNoiseOnce(ms = 2000): Promise<number | null> {
   if (useLiveStore.getState().db != null) return useLiveStore.getState().db;
   try {
     startMeter(null);
     const started = Date.now();
-    let value: number | null = null;
     while (Date.now() - started < ms) {
-      await new Promise((r) => window.setTimeout(r, 100));
+      await new Promise((r) => window.setTimeout(r, 80));
       const db = useLiveStore.getState().db;
-      if (db != null) value = db;
+      // return on the FIRST reading rather than burning the whole window
+      if (db != null) return db;
+      // Deliberately NOT retrying startMeter here. Calling it again bumps
+      // the generation counter, so the mic open already in flight aborts
+      // itself and starts over — against a 1.4 s mic that pushed the first
+      // reading past the window and lost every sample.
     }
-    return value;
+    return useLiveStore.getState().db;
   } catch {
     return null;
   } finally {
