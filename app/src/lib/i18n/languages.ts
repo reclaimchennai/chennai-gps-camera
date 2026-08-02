@@ -207,6 +207,8 @@ const PACK_LANGS: Record<string, CardLang[]> = {
   pune: ["mr"],
   kolkata: ["bn"],
   delhi: ["hi"],
+  chandigarh: ["hi"],
+  gurugram: ["hi"],
 };
 
 /**

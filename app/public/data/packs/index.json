@@ -45,17 +45,17 @@
   },
   {
    "id": "delhi",
-   "name": "Delhi (MCD)",
+   "name": "Delhi (MCD · NDMC · Cantonment)",
    "file": "delhi.json",
    "bbox": [
-    76.83897,
-    28.4047,
-    77.34756,
-    28.88353
+    76.83877,
+    28.40425,
+    77.34747,
+    28.8835
    ],
-   "version": "ae5943bd145a",
-   "bytes": 412076,
-   "attribution": "Boundary data from Vonter/city-officials (GPL-3.0), built on data.opencity.in and government sources"
+   "version": "ccb719aa5b56",
+   "bytes": 382381,
+   "attribution": "Ward boundaries from DataMeet Municipal_Spatial_Data (open government data)"
   },
   {
    "id": "kolkata",
@@ -126,6 +126,34 @@
    "version": "705c7ab2eafb",
    "bytes": 8945884,
    "attribution": "TNGIS / Tamil Nadu Government (local bodies, village panchayats); cantonments © OpenStreetMap contributors (ODbL); police boundaries: Reclaim Chennai"
+  },
+  {
+   "id": "chandigarh",
+   "name": "Chandigarh (MCC)",
+   "file": "chandigarh.json",
+   "bbox": [
+    76.70498,
+    30.66494,
+    76.84903,
+    30.79495
+   ],
+   "version": "9edd37586000",
+   "bytes": 27026,
+   "attribution": "Ward boundaries from DataMeet Municipal_Spatial_Data (CC-BY / open government data)"
+  },
+  {
+   "id": "gurugram",
+   "name": "Gurugram (MCG)",
+   "file": "gurugram.json",
+   "bbox": [
+    76.92822,
+    28.36923,
+    77.16579,
+    28.53176
+   ],
+   "version": "c2229fb9a394",
+   "bytes": 124379,
+   "attribution": "Ward boundaries from data.opencity.in (Municipal Corporation of Gurugram)"
   }
  ]
 }

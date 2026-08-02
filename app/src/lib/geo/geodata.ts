@@ -107,7 +107,15 @@ export async function loadGeodataFor(
 ): Promise<GeoPack | null> {
   const idx = await loadIndex();
   if (!idx) return null;
-  const entry = idx.packs.find((p) => containsPoint(p.bbox, lng, lat));
+  // The SMALLEST matching bbox wins, not the first listed. City bboxes
+  // overlap — Delhi's covers Gurugram, and the statewide Tamil Nadu pack
+  // covers Chennai — so first-match made coverage depend on the order of
+  // the index. Gurugram resolved to the Delhi pack and found no ward at
+  // all; Chennai only worked because it happened to be listed first.
+  const area = (b: number[]) => (b[2] - b[0]) * (b[3] - b[1]);
+  const entry = idx.packs
+    .filter((p) => containsPoint(p.bbox, lng, lat))
+    .sort((a, b) => area(a.bbox) - area(b.bbox))[0];
   if (!entry) return null;
 
   if (current?.id === entry.id && current.version === entry.version) {

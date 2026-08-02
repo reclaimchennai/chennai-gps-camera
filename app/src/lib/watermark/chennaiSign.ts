@@ -75,6 +75,8 @@ export type LogoSlot =
   | "bbmp"
   | "ndmc"
   | "mcd"
+  | "chandigarh"
+  | "gurugram"
   /** Tamil Nadu city corporations, keyed by city */
   | string
   | null;
@@ -162,6 +164,8 @@ const LOCAL_NAMES: { match: RegExp; local: string; slot?: LogoSlot }[] = [
   { match: /greater hyderabad/i, local: "గ్రేటర్ హైదరాబాద్ మున్సిపల్ కార్పొరేషన్" },
   { match: /visakhapatnam/i, local: "గ్రేటర్ విశాఖపట్నం మున్సిపల్ కార్పొరేషన్" },
   { match: /new delhi municipal/i, local: "नई दिल्ली नगरपालिका परिषद", slot: "ndmc" },
+  { match: /chandigarh/i, local: "नगर निगम चंडीगढ़", slot: "chandigarh" },
+  { match: /gurugram|gurgaon/i, local: "नगर निगम गुरुग्राम", slot: "gurugram" },
   { match: /municipal corporation of delhi|^delhi/i, local: "दिल्ली नगर निगम", slot: "mcd" },
 ];
 
@@ -170,6 +174,15 @@ const NASTALIQ = `'Noto Nastaliq Urdu', ${LATIN}`;
 const DEVA = `'Noto Sans Devanagari', ${LATIN}`;
 
 /** Delhi's boards name the body in four scripts, two each side of the crest. */
+/** Chandigarh names in three scripts, the way its boards do. */
+const CHANDIGARH_NAMES = {
+  left: [
+    { text: "नगर निगम चंडीगढ़", font: DEVA },
+    { text: "Municipal Corporation Chandigarh", font: LATIN },
+  ],
+  right: [{ text: "ਨਗਰ ਨਿਗਮ ਚੰਡੀਗੜ੍ਹ", font: GURMUKHI }],
+};
+
 const DELHI_NAMES: Record<
   string,
   { left: { text: string; font: string }[]; right: { text: string; font: string }[] }
@@ -253,7 +266,12 @@ export function signStyle(data: WatermarkData): SignStyle | null {
   // which is always present.
   const hit = LOCAL_NAMES.find((l) => l.match.test(name));
   const local = hit?.local ?? tamilBodyName(name);
-  const four = hit?.slot ? DELHI_NAMES[hit.slot] : undefined;
+  const four =
+    hit?.slot === "chandigarh"
+      ? CHANDIGARH_NAMES
+      : hit?.slot
+        ? DELHI_NAMES[hit.slot]
+        : undefined;
   return {
     tamil: local,
     english: name,
