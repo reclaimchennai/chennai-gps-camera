@@ -69,7 +69,7 @@
   --text: #f1f5f9;
   --dim: #94a3b8;
   --accent: #38bdf8;
-  --accent-strong: #0ea5e9;
+  --accent-strong: #0369a1;
   --danger: #f43f5e;
   --ok: #34d399;
   --radius: 14px;
@@ -85,7 +85,11 @@
   --text: #101828;
   --dim: #5b6572;
   --accent: #0284c7;
-  --accent-strong: #0284c7;
+  /* White text on the accent measured 4.09:1 — under WCAG AA's 4.5:1 for
+     normal text, on every active chip and segmented control in the app.
+     #0369a1 takes it to 5.93:1 and is close enough to be unnoticeable
+     next to the unchanged --accent used for borders and icons. */
+  --accent-strong: #0369a1;
 }
 
 /* Camera and editors keep the conventional dark chrome in both themes —
@@ -98,7 +102,7 @@
   --text: #f1f5f9;
   --dim: #94a3b8;
   --accent: #38bdf8;
-  --accent-strong: #0ea5e9;
+  --accent-strong: #0369a1;
 }
 
 * {

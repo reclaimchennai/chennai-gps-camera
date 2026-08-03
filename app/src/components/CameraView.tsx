@@ -1557,9 +1557,12 @@ export default function CameraView({ active }: { active: boolean }) {
       {/* Viewfinder zone — the live watermark card anchors to the bottom
           of the video box, which ends ABOVE the opaque controls bar, so
           nothing ever covers it (GPS-Map-Camera-style layout). */}
-      <div
+      {/* a landmark, so a screen reader can reach the viewfinder as
+          content rather than as an unlabelled div among the controls */}
+      <main
         ref={viewportRef}
         className="cam-viewport"
+        aria-label="Viewfinder"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -1605,7 +1608,15 @@ export default function CameraView({ active }: { active: boolean }) {
               }}
             />
           )}
-          <canvas ref={overlayRef} className="cam-overlay" />
+          {/* the card is drawn, so its content is invisible to a screen
+              reader — describe what it carries rather than leaving a bare
+              canvas that reads as nothing at all */}
+          <canvas
+            ref={overlayRef}
+            className="cam-overlay"
+            role="img"
+            aria-label="Location watermark preview: the card stamped onto your photo"
+          />
           {/* Lens stops, OVER the picture: living in the controls strip
                 resized that strip as they came and went, so the viewfinder
                 kept growing and shrinking. With a focus group on screen
@@ -1759,7 +1770,7 @@ export default function CameraView({ active }: { active: boolean }) {
           </div>
         )}
 
-      </div>
+      </main>
 
       <div key={flashFx} className={`flash-fx${flashFx ? " animate" : ""}`} />
       {flyImg && (

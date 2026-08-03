@@ -1,3 +1,4 @@
+import { createContext, useContext, useId } from "react";
 import type { ReactNode } from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
 import { goBack } from "../nav";
@@ -34,26 +35,46 @@ export function Screen({
         <h1>{title}</h1>
         {actions}
       </header>
-      <div className="screen-body" style={noPad ? { padding: 0, display: "flex", flexDirection: "column" } : undefined}>
+      <main
+        className="screen-body"
+        style={noPad ? { padding: 0, display: "flex", flexDirection: "column" } : undefined}
+      >
         {children}
-      </div>
+      </main>
     </div>
   );
 }
 
+/**
+ * The id of the Row label a control sits beside.
+ *
+ * Every switch in Settings is an empty <button role="switch"> — visually
+ * it is obviously paired with the label to its left, but a screen reader
+ * announces "switch, on" with no indication of WHAT is on. Rather than
+ * repeat the label at 40-odd call sites, the Row publishes its label's id
+ * and the control points at it.
+ */
+const RowLabelId = createContext<string | undefined>(undefined);
+
 export function Toggle({
   on,
   onChange,
+  label,
 }: {
   on: boolean;
   onChange: (v: boolean) => void;
+  /** overrides the surrounding Row's label, for switches used alone */
+  label?: string;
 }) {
+  const labelledBy = useContext(RowLabelId);
   return (
     <button
       className="switch"
       data-on={on}
       role="switch"
       aria-checked={on}
+      aria-label={label}
+      aria-labelledby={label ? undefined : labelledBy}
       onClick={() => onChange(!on)}
     />
   );
@@ -70,13 +91,16 @@ export function Row({
   onClick?: () => void;
   children?: ReactNode;
 }) {
+  const labelId = useId();
   return (
     <div className={`row${onClick ? " tappable" : ""}`} onClick={onClick}>
       <div className="grow">
-        <div className="label">{label}</div>
+        <div className="label" id={labelId}>
+          {label}
+        </div>
         {hint && <div className="hint">{hint}</div>}
       </div>
-      {children}
+      <RowLabelId.Provider value={labelId}>{children}</RowLabelId.Provider>
       {onClick && !children && (
         <span className="chev">
           <ChevronRight size={18} />

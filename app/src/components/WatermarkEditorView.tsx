@@ -8,6 +8,7 @@ import { latLngToDigipin } from "../lib/geo/digipin";
 import { chennaiSignAssets, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { FIELD_META, langMeta, PRESET_META, SIGN_SHAPE_META } from "../lib/watermark/presets";
 import { currentPackId } from "../lib/geo/geodata";
+import { langIsAwayFromHome } from "../lib/i18n/languages";
 import { isChennaiJurisdiction } from "../lib/watermark/signboard";
 import { fmtDateOnly } from "../lib/geo/format";
 import ProfileFields from "./ProfileFields";
@@ -266,6 +267,16 @@ export default function WatermarkEditorView() {
           <div className="hint" style={{ margin: "2px 0 8px" }}>
             Falls back to English if your phone has no font for the script
           </div>
+          {langIsAwayFromHome(config.language, currentPackId()) && (
+            <div
+              className="hint"
+              style={{ margin: "-4px 0 8px", color: "#fbbf24" }}
+            >
+              Showing English here — this language isn't used in this area, and
+              we don't hold local place or station names in it. Your choice is
+              kept and returns when you're back.
+            </div>
+          )}
           <div className="seg">
             {langMeta(currentPackId(), config.language).map((l) => (
               <button
@@ -405,6 +416,7 @@ export default function WatermarkEditorView() {
         <Row label="Text size">
           <input
             type="range"
+            aria-label="Text size"
             style={{ width: 150 }}
             min={0.8}
             max={1.4}
@@ -416,6 +428,7 @@ export default function WatermarkEditorView() {
         <Row label="Panel opacity">
           <input
             type="range"
+            aria-label="Panel opacity"
             style={{ width: 150 }}
             min={0.15}
             max={0.9}

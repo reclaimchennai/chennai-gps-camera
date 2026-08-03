@@ -224,6 +224,38 @@ export function langsFor(packId: string | null | undefined): CardLang[] {
 }
 
 /**
+ * The language the card should actually RENDER in, here.
+ *
+ * The user's choice is a preference, not a promise that we hold every
+ * name in that language everywhere. Outside the region where a language
+ * is used we hold neither place names nor station names in it, so a
+ * "Tamil" card in Delhi came out as Tamil labels wrapped around English
+ * content — half-translated, and no easier to read for anyone.
+ *
+ * So the card falls back to English away from home. Crucially it does
+ * NOT rewrite the stored preference: travel to Delhi and the card reads
+ * English, come back to Chennai and it is Tamil again, with nothing to
+ * set back. Overwriting the setting would punish the user for travelling.
+ */
+export function renderLang(
+  chosen: unknown,
+  packId: string | null | undefined
+): CardLang {
+  const want = langOf(chosen);
+  if (want === "en") return "en";
+  return langsFor(packId).includes(want) ? want : "en";
+}
+
+/** True when the choice is being overridden because it is not local. */
+export function langIsAwayFromHome(
+  chosen: unknown,
+  packId: string | null | undefined
+): boolean {
+  const want = langOf(chosen);
+  return want !== "en" && !langsFor(packId).includes(want);
+}
+
+/**
  * Make the card's script resident before anything measures or draws it.
  *
  * The fonts are bundled but fetched lazily by `unicode-range`, so the

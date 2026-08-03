@@ -21,10 +21,13 @@ import type { WatermarkData } from "../../types";
 import {
   LANGS,
   SAMPLES,
+  renderLang,
   langOf as registryLangOf,
   type CardLang,
   type CardStrings,
 } from "../i18n/languages";
+
+import { currentPackId } from "../geo/geodata";
 
 export type WatermarkLang = CardLang;
 export type { CardStrings };
@@ -120,7 +123,7 @@ export function stringsFor(
   ctx: CanvasRenderingContext2D,
   langIn: unknown
 ): CardStrings {
-  const lang = registryLangOf(langIn);
+  const lang = renderLang(langIn, currentPackId());
   return LANGS[scriptAvailable(ctx, lang) ? lang : "en"].strings;
 }
 

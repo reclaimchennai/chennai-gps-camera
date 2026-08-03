@@ -54,7 +54,15 @@ function WheelPicker({
   const count = max - min + 1;
   return (
     <div className="wheel-wrap">
-      <div className="wheel" ref={ref} onScroll={onScroll}>
+      {/* keyboard users must be able to reach and scroll this list; a
+          scrollable div with no tabindex is unreachable without a mouse */}
+      <div
+        className="wheel"
+        ref={ref}
+        onScroll={onScroll}
+        tabIndex={0}
+        aria-label="Value"
+      >
         <div className="wheel-pad" />
         {Array.from({ length: count }, (_, i) => (
           <div
@@ -493,6 +501,7 @@ export default function SettingsView() {
               hint="Addresses are fetched in the background — never before a photo saves"
             >
               <select
+                aria-label="Address provider"
                 style={{ width: 160 }}
                 value={settings.geocoder}
                 onChange={(e) =>

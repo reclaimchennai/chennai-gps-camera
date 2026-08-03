@@ -1,7 +1,8 @@
 /** Display formatting for coordinates, dates, and jurisdiction lines. */
 import { useSettingsStore } from "../../store";
 import { tamilPlace } from "./tamil-places";
-import { LANGS, langOf, type CardLang } from "../i18n/languages";
+import { LANGS, renderLang, type CardLang } from "../i18n/languages";
+import { currentPackId } from "./geodata";
 
 export function fmtLat(lat: number): string {
   return `${Math.abs(lat).toFixed(6)}°${lat >= 0 ? "N" : "S"}`;
@@ -30,8 +31,9 @@ export function fmtLng(lng: number): string {
  * from the labels beside them.
  */
 function cardLang(explicit?: unknown): CardLang {
-  return langOf(
-    explicit ?? useSettingsStore.getState().watermark?.language
+  return renderLang(
+    explicit ?? useSettingsStore.getState().watermark?.language,
+    currentPackId()
   );
 }
 
