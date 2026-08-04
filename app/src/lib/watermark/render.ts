@@ -23,7 +23,7 @@ import {
 } from "../geo/format";
 import { renderSocialStrip } from "./socialStrip";
 import { latLngToDigipin } from "../geo/digipin";
-import { tamilStation } from "../geo/tamil-places";
+import { localStation } from "../geo/local-names";
 import { stringsFor, fontFor, type CardStrings } from "./signboard";
 import { renderChennaiSign, signAuthority } from "./chennaiSign";
 
@@ -259,8 +259,7 @@ function buildLines(
   if (j && j.scope !== "out") {
     // declared before the ward/zone rows below use it — the police block
     // further down is not the first caller
-    const ta = config.language === "ta";
-    const tr = (v: string | undefined) => (v && ta ? tamilStation(v) : v);
+    const tr = (v: string | undefined) => localStation(config.language, v);
     const wardPending = j.wardPending || j.scope === "avadi";
     let firstJurLine = true;
     const pushJur = (text: string, wrapMax = 2) => {

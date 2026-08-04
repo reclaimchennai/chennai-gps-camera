@@ -1,0 +1,99 @@
+/**
+ * Remembered addresses, by place.
+ *
+ * People photograph the same places over and over — the street outside
+ * their house, the corner that always floods, the stretch of road they
+ * walk every morning. Re-asking a geocoder for an address we already
+ * hold is a wait the user pays for and a request the provider counts,
+ * both for an answer that has not changed.
+ *
+ * Keyed by a ~110 m grid cell AND the language, because the same cell in
+ * Tamil and in English are different answers. Kept in IndexedDB so it
+ * survives a restart, which is the whole point: the second morning is
+ * faster than the first.
+ */
+import { kvGet, kvSet } from "./db";
+
+interface Entry {
+  address?: string;
+  locality?: string;
+  at: number;
+}
+
+const KEY = "geocache";
+/** ~110 m at 3 decimal places — about a city block, which is the scale an
+ *  address is accurate to anyway. Finer would cache one entry per step. */
+const PRECISION = 3;
+/** Addresses change when a road is renamed, which is rare; a month keeps
+ *  the cache useful without pinning a stale name forever. */
+const TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Bounded so a long drive cannot grow this without limit. Least
+ *  recently written is dropped first. */
+const MAX_ENTRIES = 600;
+
+let mem: Record<string, Entry> | null = null;
+let writeTimer: number | null = null;
+
+function cell(lat: number, lng: number, lang: string): string {
+  return `${lat.toFixed(PRECISION)},${lng.toFixed(PRECISION)}|${lang}`;
+}
+
+async function load(): Promise<Record<string, Entry>> {
+  if (mem) return mem;
+  mem = (await kvGet<Record<string, Entry>>(KEY)) ?? {};
+  return mem;
+}
+
+/** Batched: a drive would otherwise write the whole map on every fix. */
+function scheduleFlush(): void {
+  if (writeTimer != null) return;
+  writeTimer = window.setTimeout(() => {
+    writeTimer = null;
+    void kvSet(KEY, mem ?? {});
+  }, 4000);
+}
+
+export async function cachedAddress(
+  lat: number,
+  lng: number,
+  lang: string
+): Promise<{ address?: string; locality?: string } | null> {
+  try {
+    const all = await load();
+    const hit = all[cell(lat, lng, lang)];
+    if (!hit) return null;
+    if (Date.now() - hit.at > TTL_MS) return null;
+    return { address: hit.address, locality: hit.locality };
+  } catch {
+    return null; // a cache miss is never worth failing a capture over
+  }
+}
+
+export async function rememberAddress(
+  lat: number,
+  lng: number,
+  lang: string,
+  value: { address?: string; locality?: string }
+): Promise<void> {
+  if (!value.address && !value.locality) return;
+  try {
+    const all = await load();
+    all[cell(lat, lng, lang)] = { ...value, at: Date.now() };
+    const keys = Object.keys(all);
+    if (keys.length > MAX_ENTRIES) {
+      keys
+        .sort((a, b) => (all[a]?.at ?? 0) - (all[b]?.at ?? 0))
+        .slice(0, keys.length - MAX_ENTRIES)
+        .forEach((k) => delete all[k]);
+    }
+    scheduleFlush();
+  } catch {
+    // storage full or unavailable — the app works, just without the cache
+  }
+}
+
+/** Settings → clear cached data. */
+export async function clearAddressCache(): Promise<void> {
+  mem = {};
+  await kvSet(KEY, {});
+}

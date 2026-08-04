@@ -27,7 +27,7 @@ import {
   fmtZone,
 } from "../geo/format";
 import { latLngToDigipin } from "../geo/digipin";
-import { tamilStation, tamilPlace } from "../geo/tamil-places";
+import { localStation, localPlace } from "../geo/local-names";
 import { tamilBodyName } from "../geo/tn-body-names";
 import {
   isChennaiJurisdiction,
@@ -78,6 +78,8 @@ export type LogoSlot =
   | "chandigarh"
   | "gurugram"
   | "mumbai"
+  | "ghmc"
+  | "gvmc"
   /** Tamil Nadu city corporations, keyed by city */
   | string
   | null;
@@ -162,7 +164,7 @@ const LOCAL_NAMES: { match: RegExp; local: string; slot?: LogoSlot }[] = [
   { match: /brihanmumbai|greater mumbai|^mumbai/i, local: "बृहन्मुंबई महानगरपालिका", slot: "mumbai" },
   { match: /pune municipal/i, local: "पुणे महानगरपालिका" },
   { match: /kolkata municipal/i, local: "কলকাতা পৌরসংস্থা" },
-  { match: /greater hyderabad/i, local: "గ్రేటర్ హైదరాబాద్ మున్సిపల్ కార్పొరేషన్" },
+  { match: /greater hyderabad|^hyderabad/i, local: "గ్రేటర్ హైదరాబాద్ మున్సిపల్ కార్పొరేషన్", slot: "ghmc" },
   { match: /visakhapatnam/i, local: "గ్రేటర్ విశాఖపట్నం మున్సిపల్ కార్పొరేషన్" },
   { match: /new delhi municipal/i, local: "नई दिल्ली नगरपालिका परिषद", slot: "ndmc" },
   { match: /chandigarh/i, local: "नगर निगम चंडीगढ़", slot: "chandigarh" },
@@ -298,9 +300,9 @@ function aspect(img: CanvasImageSource, fallback: number): number {
 }
 
 
-/** Localise a data value (station, zone name) when the card is Tamil. */
+/** Localise a data value (station, zone name) to the card's language. */
 function loc(lang: string, v: string | undefined): string | undefined {
-  return v && lang === "ta" ? tamilStation(v) : v;
+  return localStation(lang, v);
 }
 
 /** Pull a 6-digit Indian pincode out of the reverse-geocoded address. */
@@ -313,9 +315,9 @@ function pincodeOf(data: WatermarkData): string | null {
 function placeName(data: WatermarkData, lang: string): string {
   const raw = data.locality ?? data.jurisdiction?.city ?? "Chennai";
   const head = raw.split(",")[0].trim() || "Chennai";
-  // the geocoder usually answers in Tamil already; this covers the
-  // offline path, where the locality comes from the English pack
-  return (lang === "ta" ? tamilPlace(head) : null) ?? head;
+  // the geocoder usually answers in the local language already; this
+  // covers the offline path, where the locality comes from the English pack
+  return localPlace(lang, head) ?? head;
 }
 
 /**

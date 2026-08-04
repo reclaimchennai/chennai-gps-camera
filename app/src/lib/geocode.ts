@@ -14,6 +14,7 @@
 import { useSettingsStore } from "../store";
 import { langOf } from "./watermark/signboard";
 import { langsFor } from "./i18n/languages";
+import { cachedAddress, rememberAddress } from "./geocache";
 import { currentPackId } from "./geo/geodata";
 import { nativeReverseGeocode } from "./native";
 
@@ -216,6 +217,16 @@ function inLanguage(text: string | undefined, lang: string): boolean {
   return !!text && re.test(text);
 }
 
+async function remember(
+  lat: number,
+  lng: number,
+  lang: string,
+  r: GeocodeResult | null
+): Promise<GeocodeResult | null> {
+  if (r) void rememberAddress(lat, lng, lang, r);
+  return r;
+}
+
 export async function reverseGeocode(
   lat: number,
   lng: number
@@ -233,6 +244,16 @@ export async function reverseGeocode(
   const local = langsFor(currentPackId());
   const lang = local.includes(chosen) ? chosen : "en";
   const stateFallback = STATE_FALLBACK[lang] ?? STATE_FALLBACK.en;
+
+  // A place we have already asked about answers instantly and costs the
+  // provider nothing. Same cell, same language, within a month.
+  const remembered = await cachedAddress(lat, lng, lang);
+  // `address` is required on a result; a cache entry holding only a
+  // locality is not a usable answer, so fall through and ask properly
+  if (remembered?.address) {
+    return { address: remembered.address, locality: remembered.locality };
+  }
+
   try {
     const trySystem = async () => {
       // APK build: the OS geocoder answers offline-fast and costs nothing
@@ -267,29 +288,31 @@ export async function reverseGeocode(
       return first;
     };
 
-    if (mode === "system") return await localised(await trySystem());
+    if (mode === "system")
+      return remember(lat, lng, lang, await localised(await trySystem()));
     if (mode === "google")
       return settings.googleApiKey
-        ? await google(lat, lng, settings.googleApiKey, lang)
+        ? remember(lat, lng, lang, await google(lat, lng, settings.googleApiKey, lang))
         : null;
     if (mode === "mappls")
       return settings.mapplsApiKey
-        ? await mappls(lat, lng, settings.mapplsApiKey)
+        ? remember(lat, lng, lang, await mappls(lat, lng, settings.mapplsApiKey))
         : null;
-    if (mode === "nominatim") return await nominatim(lat, lng, lang);
+    if (mode === "nominatim")
+      return remember(lat, lng, lang, await nominatim(lat, lng, lang));
 
     // auto: system → google (keyed) → mappls (keyed) → nominatim
     const sys = await trySystem();
-    if (sys) return await localised(sys);
+    if (sys) return remember(lat, lng, lang, await localised(sys));
     if (settings.googleApiKey) {
       const g = await google(lat, lng, settings.googleApiKey, lang);
-      if (g) return g;
+      if (g) return remember(lat, lng, lang, g);
     }
     if (settings.mapplsApiKey) {
       const m = await mappls(lat, lng, settings.mapplsApiKey);
-      if (m) return m;
+      if (m) return remember(lat, lng, lang, m);
     }
-    return await nominatim(lat, lng, lang);
+    return remember(lat, lng, lang, await nominatim(lat, lng, lang));
   } catch {
     return null;
   }

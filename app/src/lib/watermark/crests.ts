@@ -22,8 +22,12 @@ import mcdUrl from "../../assets/mcd.png";
 import chandigarhUrl from "../../assets/chandigarh.png";
 import gurugramUrl from "../../assets/gurugram.png";
 import mumbaiUrl from "../../assets/mumbai.png";
+import ghmcUrl from "../../assets/ghmc.png";
 import blrEastUrl from "../../assets/blr-east.png";
 import blrCentralUrl from "../../assets/blr-central.png";
+import blrNorthUrl from "../../assets/blr-north.png";
+import blrSouthUrl from "../../assets/blr-south.png";
+import blrWestUrl from "../../assets/blr-west.png";
 import tambaramUrl from "../../assets/tambaram.png";
 import cuddaloreUrl from "../../assets/tn-cuddalore.png";
 import dindigulUrl from "../../assets/tn-dindigul.png";
@@ -53,8 +57,12 @@ export const CREST_URLS: Record<string, string> = {
   chandigarh: chandigarhUrl,
   gurugram: gurugramUrl,
   mumbai: mumbaiUrl,
+  ghmc: ghmcUrl,
   "blr-east": blrEastUrl,
   "blr-central": blrCentralUrl,
+  "blr-north": blrNorthUrl,
+  "blr-south": blrSouthUrl,
+  "blr-west": blrWestUrl,
   tambaram: tambaramUrl,
   cuddalore: cuddaloreUrl,
   dindigul: dindigulUrl,
