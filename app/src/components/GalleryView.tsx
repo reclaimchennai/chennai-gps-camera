@@ -306,10 +306,17 @@ export default function GalleryView() {
                 );
               }}
             >
+              {/* A tile whose thumbnail has not decoded yet used to render
+                  nothing but its caption, so a big gallery opened as rows of
+                  empty boxes. Each tile now carries its own shimmer until
+                  its image arrives — the grid-level skeleton only covered
+                  the very first paint. */}
               {url ? (
-                <img src={url} alt="" loading="lazy" />
-              ) : (
+                <img src={url} alt="" loading="lazy" decoding="async" />
+              ) : rec.kind === "video" ? (
                 <Play size={22} style={{ margin: "auto" }} />
+              ) : (
+                <span className="cell-skel" aria-hidden="true" />
               )}
               <span className="cell-meta">
                 {loc && (

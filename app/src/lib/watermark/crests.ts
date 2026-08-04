@@ -21,6 +21,7 @@ import ndmcUrl from "../../assets/ndmc.png";
 import mcdUrl from "../../assets/mcd.png";
 import chandigarhUrl from "../../assets/chandigarh.png";
 import gurugramUrl from "../../assets/gurugram.png";
+import mumbaiUrl from "../../assets/mumbai.png";
 import blrEastUrl from "../../assets/blr-east.png";
 import blrCentralUrl from "../../assets/blr-central.png";
 import tambaramUrl from "../../assets/tambaram.png";
@@ -51,6 +52,7 @@ export const CREST_URLS: Record<string, string> = {
   mcd: mcdUrl,
   chandigarh: chandigarhUrl,
   gurugram: gurugramUrl,
+  mumbai: mumbaiUrl,
   "blr-east": blrEastUrl,
   "blr-central": blrCentralUrl,
   tambaram: tambaramUrl,

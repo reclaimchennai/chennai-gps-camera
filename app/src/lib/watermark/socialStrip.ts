@@ -4,7 +4,14 @@
  * platform's logo (simple-icons paths, drawn as Path2D) — unobtrusive,
  * separate from the main info card.
  */
-import { siInstagram, siX, siFacebook, siYoutube, siReddit } from "simple-icons";
+import {
+  siInstagram,
+  siX,
+  siFacebook,
+  siYoutube,
+  siReddit,
+  siTelegram,
+} from "simple-icons";
 import type { Profile, WatermarkConfig } from "../../types";
 import type { WatermarkRect } from "./render";
 
@@ -14,10 +21,11 @@ const ICON_PATHS: Record<string, string> = {
   facebook: siFacebook.path,
   youtube: siYoutube.path,
   reddit: siReddit.path,
+  telegram: siTelegram.path,
 };
 
 /** Per-platform username domains, for stripping a pasted profile URL. */
-const URL_HINT = /https?:\/\/|(?:^|\.)(?:instagram|twitter|x|youtube|youtu\.be|reddit|facebook|fb|linkedin)\.[a-z]/i;
+const URL_HINT = /https?:\/\/|(?:^|\.)(?:instagram|twitter|x|youtube|youtu\.be|reddit|facebook|fb|linkedin|telegram|t\.me)\.[a-z]/i;
 
 /** Pull the username out of a pasted profile URL, per platform. */
 function fromUrl(key: string, raw: string): string {
@@ -78,6 +86,7 @@ export function formatHandle(platform: string, rawHandle: string): string {
     case "x":
     case "twitter":
     case "youtube":
+    case "telegram":
       return `@${h}`;
     case "reddit":
       return `/u/${h}`;

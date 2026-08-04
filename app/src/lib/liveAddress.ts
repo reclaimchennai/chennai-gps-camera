@@ -1,21 +1,39 @@
 /**
- * Best-effort live address for the viewfinder preview. Throttled hard:
- * at most one reverse-geocode every 25 s and only after moving ~120 m.
- * Purely cosmetic for the overlay — the capture path never waits on it
- * (a fresh nearby result just gets baked in for free, §7).
+ * Best-effort live address for the viewfinder preview.
+ *
+ * The throttle ADAPTS to how fast the phone is actually moving, because a
+ * fixed one did the wrong thing at both ends. At 25 s and 120 m, someone
+ * walking a street took two minutes to see the road name change, while a
+ * phone sitting on a desk still woke the geocoder every time GPS jitter
+ * nudged it. Standing still costs nothing now; moving costs roughly one
+ * lookup per block.
+ *
+ * Speed comes from consecutive fixes rather than `coords.speed`, which
+ * Android frequently reports as null and which is meaningless when the
+ * fix is coarse. Never faster than MIN_GAP_MS, so a car on a motorway
+ * cannot turn this into a request loop.
  */
 import { useLiveStore } from "../store";
 import { useSettingsStore } from "../store";
 import { reverseGeocode } from "./geocode";
 
-const MIN_INTERVAL_MS = 25_000;
-const MIN_MOVE_METERS = 120;
+/** Floor on request rate, whatever the speed. */
+const MIN_GAP_MS = 6_000;
+/** Ceiling: refresh at least this often even standing still, so a stale
+ *  address does not follow the user around all afternoon. */
+const MAX_GAP_MS = 180_000;
+/** Below this, treat the phone as stationary — GPS jitter alone moves a
+ *  resting handset tens of metres. */
+const STILL_METERS = 25;
 
 let started = false;
 let lastAt = 0;
 let lastPos: { lat: number; lng: number } | null = null;
 let lastLang = "";
 let inFlight = false;
+/** metres per second, smoothed across fixes */
+let speed = 0;
+let lastFix: { lat: number; lng: number; t: number } | null = null;
 
 function moved(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const dLat = (a.lat - b.lat) * 111_320;
@@ -34,9 +52,35 @@ async function maybeGeocode(): Promise<void> {
   const lang = useSettingsStore.getState().watermark.language ?? "en";
   const langChanged = lang !== lastLang;
   const now = Date.now();
+
+  // track speed from consecutive fixes
+  if (lastFix) {
+    const dt = (now - lastFix.t) / 1000;
+    if (dt > 0.5) {
+      const v = moved(lastFix, fix) / dt;
+      // exponential smoothing: one GPS glitch should not read as a sprint
+      speed = speed * 0.6 + Math.min(v, 40) * 0.4;
+      lastFix = { lat: fix.lat, lng: fix.lng, t: now };
+    }
+  } else {
+    lastFix = { lat: fix.lat, lng: fix.lng, t: now };
+  }
+
   if (!langChanged) {
-    if (now - lastAt < MIN_INTERVAL_MS) return;
-    if (lastPos && moved(lastPos, fix) < MIN_MOVE_METERS) return;
+    const gone = lastPos ? moved(lastPos, fix) : Infinity;
+    const since = now - lastAt;
+    // Distance that should trigger a refresh: a street name changes every
+    // block or so on foot, but a passenger at 60 km/h does not need one
+    // every 60 m. Scale the trigger with speed and cap the rate.
+    const trigger = speed < 1.2 ? 120 : Math.min(60 + speed * 45, 700);
+    const moving = gone >= STILL_METERS;
+    const haveAddress = !!useLiveStore.getState().address;
+    if (since < MIN_GAP_MS) return;
+    // A phone on a desk has nothing new to say. The periodic refresh is
+    // only there to fill a gap — once an address is in hand, standing
+    // still costs no requests at all.
+    if (!moving && (haveAddress || since < MAX_GAP_MS)) return;
+    if (moving && gone < trigger && since < MAX_GAP_MS) return;
   }
   lastLang = lang;
 

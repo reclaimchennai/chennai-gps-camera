@@ -77,6 +77,7 @@ export type LogoSlot =
   | "mcd"
   | "chandigarh"
   | "gurugram"
+  | "mumbai"
   /** Tamil Nadu city corporations, keyed by city */
   | string
   | null;
@@ -158,7 +159,7 @@ const LOCAL_NAMES: { match: RegExp; local: string; slot?: LogoSlot }[] = [
   { match: /bengaluru west/i, local: "ಬೆಂಗಳೂರು ಪಶ್ಚಿಮ ನಗರ ಪಾಲಿಕೆ", slot: "blr-west" },
   { match: /bengaluru central/i, local: "ಬೆಂಗಳೂರು ಕೇಂದ್ರ ನಗರ ಪಾಲಿಕೆ", slot: "blr-central" },
   { match: /bruhat bengaluru|bbmp/i, local: "ಬೃಹತ್ ಬೆಂಗಳೂರು ಮಹಾನಗರ ಪಾಲಿಕೆ", slot: "bbmp" },
-  { match: /brihanmumbai|greater mumbai/i, local: "बृहन्मुंबई महानगरपालिका" },
+  { match: /brihanmumbai|greater mumbai|^mumbai/i, local: "बृहन्मुंबई महानगरपालिका", slot: "mumbai" },
   { match: /pune municipal/i, local: "पुणे महानगरपालिका" },
   { match: /kolkata municipal/i, local: "কলকাতা পৌরসংস্থা" },
   { match: /greater hyderabad/i, local: "గ్రేటర్ హైదరాబాద్ మున్సిపల్ కార్పొరేషన్" },

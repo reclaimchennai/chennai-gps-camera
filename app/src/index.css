@@ -1381,6 +1381,27 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
 }
 
 /* first-load placeholder shimmer */
+.cell-skel {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    var(--panel) 30%,
+    color-mix(in srgb, var(--panel) 70%, var(--text) 12%) 50%,
+    var(--panel) 70%
+  );
+  background-size: 220% 100%;
+  animation: cell-shimmer 1.15s ease-in-out infinite;
+}
+@keyframes cell-shimmer {
+  from { background-position: 180% 0; }
+  to { background-position: -80% 0; }
+}
+/* people who ask for less motion get a flat tone, not a moving sweep */
+@media (prefers-reduced-motion: reduce) {
+  .cell-skel { animation: none; }
+}
+
 .gallery-cell.skeleton {
   background: linear-gradient(
     100deg,
