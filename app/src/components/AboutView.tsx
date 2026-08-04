@@ -81,7 +81,8 @@ export default function AboutView() {
             OpenStreetMap
           </a>{" "}
           (ODbL); police boundaries processed by the Reclaim Chennai project. Bengaluru, Delhi,
-          Hyderabad, Kolkata, Mumbai, Pune and Visakhapatnam boundaries from{" "}
+          Hyderabad, Kolkata, Mumbai, Pune and Visakhapatnam boundaries — and
+          Bengaluru's Kannada ward, zone and police-station names — from{" "}
           <a
             href="https://github.com/Vonter/city-officials"
             target="_blank"
@@ -89,7 +90,7 @@ export default function AboutView() {
           >
             Vonter/city-officials
           </a>{" "}
-          (GPL-3.0, visualised at cityofficials.bengawalk.com), built on
+          (data CC BY 4.0, visualised at cityofficials.bengawalk.com), built on
           datasets published at{" "}
           <a
             href="https://data.opencity.in"

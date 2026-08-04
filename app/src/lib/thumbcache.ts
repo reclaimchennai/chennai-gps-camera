@@ -28,6 +28,30 @@ export function getThumbUrl(id: string): string | null {
  *  generous working set, not the whole library. */
 const MAX_THUMBS = 400;
 
+/**
+ * Told when a URL is revoked, so whatever is displaying it can stop.
+ *
+ * Eviction used to be silent, which was a bug with teeth: a gallery over
+ * MAX_THUMBS revoked the URLs it had just created, and the holder went on
+ * rendering <img src="blob:…"> pointing at nothing. A revoked URL is still
+ * a non-empty string, so every "do we have a thumbnail?" check passed and
+ * the grid filled with broken-image icons instead of falling back to its
+ * placeholder. Anything that keeps a URL from here must subscribe.
+ */
+const evictionListeners = new Set<(id: string) => void>();
+
+export function onThumbEvicted(fn: (id: string) => void): () => void {
+  evictionListeners.add(fn);
+  return () => evictionListeners.delete(fn);
+}
+
+function release(id: string): void {
+  const u = urls.get(id);
+  if (u) URL.revokeObjectURL(u);
+  urls.delete(id);
+  for (const fn of evictionListeners) fn(id);
+}
+
 export function setThumbUrl(id: string, url: string): void {
   const old = urls.get(id);
   if (old && old !== url) URL.revokeObjectURL(old);
@@ -36,27 +60,20 @@ export function setThumbUrl(id: string, url: string): void {
   while (urls.size > MAX_THUMBS) {
     const oldest = urls.keys().next().value as string | undefined;
     if (oldest === undefined) break;
-    const u = urls.get(oldest);
-    if (u) URL.revokeObjectURL(u);
-    urls.delete(oldest);
+    release(oldest);
   }
 }
 
 /** Release anything whose record no longer exists. */
 export function pruneThumbs(keepIds: Iterable<string>): void {
   const keep = new Set(keepIds);
-  for (const [id, url] of urls) {
-    if (!keep.has(id)) {
-      URL.revokeObjectURL(url);
-      urls.delete(id);
-    }
+  for (const id of [...urls.keys()]) {
+    if (!keep.has(id)) release(id);
   }
 }
 
 export function dropThumb(id: string): void {
-  const url = urls.get(id);
-  if (url) URL.revokeObjectURL(url);
-  urls.delete(id);
+  release(id);
 }
 
 export function rememberCells<T>(cells: T): void {

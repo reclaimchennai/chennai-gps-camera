@@ -15,6 +15,7 @@ import { listMedia, getBlob } from "../lib/db";
 import {
   getThumbUrl,
   setThumbUrl,
+  onThumbEvicted,
   pruneThumbs,
   rememberCells,
   recallCells,
@@ -30,6 +31,68 @@ import { usePeek } from "./peek";
 interface Cell {
   rec: MediaRecord;
   url: string | null;
+}
+
+/**
+ * One tile's thumbnail, fetched only once the tile nears the viewport.
+ *
+ * The grid used to build an object URL for EVERY record the moment the
+ * gallery mounted. Past the cache's ceiling that evicted — and revoked —
+ * the URLs it had just made, and because `listMedia()` is newest-first the
+ * casualties were the newest photos: the top of the grid came back as
+ * broken-image icons on any library big enough. Fetching per tile means a
+ * 2,000-photo gallery does the same work as a 20-photo one, and an
+ * eviction now resets the tile to its shimmer instead of stranding it.
+ */
+function CellThumb({ rec }: { rec: MediaRecord }) {
+  const [url, setUrl] = useState<string | null>(() => getThumbUrl(rec.id));
+  const holder = useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => onThumbEvicted((id) => {
+    if (id === rec.id) setUrl(null);
+  }), [rec.id]);
+
+  useEffect(() => {
+    if (url) return;
+    const el = holder.current;
+    if (!el) return;
+    let cancelled = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        io.disconnect();
+        void (async () => {
+          let u = getThumbUrl(rec.id);
+          if (!u) {
+            const blob = await getBlob(rec.id, "thumb");
+            if (!blob || cancelled) return;
+            u = URL.createObjectURL(blob);
+            // registers with the LRU, which may evict some other tile
+            setThumbUrl(rec.id, u);
+          }
+          if (!cancelled) setUrl(u);
+        })();
+      },
+      // start a screen early, so scrolling lands on decoded images
+      { rootMargin: "400px 0px" }
+    );
+    io.observe(el);
+    return () => {
+      cancelled = true;
+      io.disconnect();
+    };
+  }, [rec.id, url]);
+
+  if (url) return <img src={url} alt="" decoding="async" />;
+  // the shimmer is also the observer's target: it is inset:0, so it has a
+  // box to intersect with, which display:contents would not
+  return (
+    <span ref={holder} className="cell-skel" aria-hidden="true">
+      {rec.kind === "video" && (
+        <Play size={22} style={{ position: "absolute", inset: 0, margin: "auto" }} />
+      )}
+    </span>
+  );
 }
 
 /** Short location label for a grid cell: suburb, else ward, else nothing. */
@@ -114,23 +177,12 @@ export default function GalleryView() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      // records only — each tile fetches its own thumbnail when it nears
+      // the viewport (CellThumb). Building them all here is what broke a
+      // big gallery: the cache evicted and revoked the URLs mid-flight.
       const items = await listMedia();
-      const loaded = await Promise.all(
-        items.map(async (rec) => {
-          // reuse the URL we already hold for this record; only build one
-          // for thumbnails we have never seen
-          let url = getThumbUrl(rec.id);
-          if (!url) {
-            const t = await getBlob(rec.id, "thumb");
-            if (t) {
-              url = URL.createObjectURL(t);
-              setThumbUrl(rec.id, url);
-            }
-          }
-          return { rec, url };
-        })
-      );
       if (cancelled) return;
+      const loaded = items.map((rec) => ({ rec, url: null }));
       pruneThumbs(items.map((i) => i.id));
       setCells(loaded);
       rememberCells(loaded);
@@ -304,7 +356,7 @@ export default function GalleryView() {
       )}
 
       <div className="gallery-grid">
-        {visible?.map(({ rec, url }) => {
+        {visible?.map(({ rec }) => {
           const loc = cellLocation(rec);
           return (
             <button
@@ -323,18 +375,10 @@ export default function GalleryView() {
                 );
               }}
             >
-              {/* A tile whose thumbnail has not decoded yet used to render
-                  nothing but its caption, so a big gallery opened as rows of
-                  empty boxes. Each tile now carries its own shimmer until
-                  its image arrives — the grid-level skeleton only covered
-                  the very first paint. */}
-              {url ? (
-                <img src={url} alt="" loading="lazy" decoding="async" />
-              ) : rec.kind === "video" ? (
-                <Play size={22} style={{ margin: "auto" }} />
-              ) : (
-                <span className="cell-skel" aria-hidden="true" />
-              )}
+              {/* A tile whose thumbnail has not decoded yet carries its own
+                  shimmer until its image arrives — the grid-level skeleton
+                  only covers the very first paint. */}
+              <CellThumb rec={rec} />
               <span className="cell-meta">
                 {loc && (
                   <span className="cell-loc">
