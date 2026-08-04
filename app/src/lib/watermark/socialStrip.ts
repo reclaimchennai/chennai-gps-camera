@@ -69,17 +69,22 @@ function fromUrl(key: string, raw: string): string {
  *   Facebook / LinkedIn     → user (URL stripped to the handle)
  *   Other                   → the text exactly as entered
  */
-export function formatHandle(platform: string, rawHandle: string): string {
+export function bareHandle(platform: string, rawHandle: string): string {
   const key = platform.trim().toLowerCase();
   let h = rawHandle.trim();
   if (URL_HINT.test(h)) h = fromUrl(key, h);
   // strip prefixes the user may have typed (@, /u/, u/, /in/, in/)
-  h = h
+  return h
     .replace(/^\/+/, "")
     .replace(/^(?:u|user|in)\//i, "")
     .replace(/^@+/, "")
     .replace(/\/+$/, "")
     .trim();
+}
+
+export function formatHandle(platform: string, rawHandle: string): string {
+  const key = platform.trim().toLowerCase();
+  const h = bareHandle(platform, rawHandle);
   if (!h) return "";
   switch (key) {
     case "instagram":
@@ -93,6 +98,58 @@ export function formatHandle(platform: string, rawHandle: string): string {
     default: // facebook, linkedin, other — no prefix
       return h;
   }
+}
+
+/** One row of the strip: the logos that share a handle, and the handle. */
+export interface HandleGroup {
+  /** platforms sharing this handle, in the order the user added them */
+  platforms: string[];
+  /** the formatted handle, drawn once for the whole group */
+  text: string;
+}
+
+/**
+ * Collapse handles that are the same username on different platforms into
+ * one row of logos.
+ *
+ * Most people who post civic complaints use one name everywhere, so the
+ * strip used to repeat "@reclaimchennai" four times down the edge. Showing
+ * the four logos once and the name once says the same thing in a quarter
+ * of the space — and it is how organisations print it on their own posters.
+ *
+ * Grouping is on the BARE username, not the formatted text, so the same
+ * name lands in one row even where platforms print it differently —
+ * Instagram shows "@name" and Facebook shows "name", and splitting those
+ * apart was exactly the repetition this removes. The row is then labelled
+ * with the first platform's formatting.
+ *
+ * Platforms without a glyph never group: "Other" draws text alone, so
+ * merging it under someone else's logo would attribute it to the wrong
+ * place.
+ */
+export function groupHandles(
+  handles: { platform: string; handle: string; show: boolean }[]
+): HandleGroup[] {
+  const out: HandleGroup[] = [];
+  const byName = new Map<string, HandleGroup>();
+  for (const h of handles) {
+    if (!h.show) continue;
+    const bare = bareHandle(h.platform, h.handle);
+    const text = formatHandle(h.platform, h.handle);
+    if (!bare || !text) continue;
+    const key = bare.toLowerCase();
+    const existing = hasGlyph(h.platform) ? byName.get(key) : undefined;
+    if (existing) {
+      if (!existing.platforms.includes(h.platform)) {
+        existing.platforms.push(h.platform);
+      }
+      continue;
+    }
+    const group: HandleGroup = { platforms: [h.platform], text };
+    out.push(group);
+    if (hasGlyph(h.platform)) byName.set(key, group);
+  }
+  return out;
 }
 
 /** LinkedIn withdrew from simple-icons — draw its rounded-square "in". */
@@ -115,7 +172,7 @@ function drawLinkedIn(ctx: CanvasRenderingContext2D, size: number): void {
   ctx.restore();
 }
 
-function drawIcon(
+export function drawIcon(
   ctx: CanvasRenderingContext2D,
   platform: string,
   x: number,
@@ -139,7 +196,7 @@ function drawIcon(
 }
 
 /** Platforms with a drawable logo; "Other" renders text-only. */
-function hasGlyph(platform: string): boolean {
+export function hasGlyph(platform: string): boolean {
   const key = platform.trim().toLowerCase();
   return key === "linkedin" || Boolean(ICON_PATHS[key]);
 }

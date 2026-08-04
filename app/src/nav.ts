@@ -10,6 +10,7 @@ export interface Route {
     | "gallery"
     | "map"
     | "collage"
+    | "poster"
     | "group"
     | "media"
     | "edit"
@@ -30,6 +31,7 @@ function parse(hash: string): Route {
         return { name: "group", id: parts[2] };
       if (parts[1] === "map") return { name: "map" };
       if (parts[1] === "collage") return { name: "collage" };
+      if (parts[1] === "poster") return { name: "poster" };
       return { name: "gallery" };
     case "media":
       return { name: "media", id: parts[1] };
@@ -102,7 +104,12 @@ if (isNativeApp()) {
       // history.back() from here could land on a replaced entry and look
       // dead: go straight back to whatever opened it
       navigate(viewerOrigin(), { replace: true });
-    else if (route.name === "group" || route.name === "map" || route.name === "collage")
+    else if (
+      route.name === "group" ||
+      route.name === "map" ||
+      route.name === "collage" ||
+      route.name === "poster"
+    )
       navigate("/gallery", { replace: true });
     else goBack();
   });

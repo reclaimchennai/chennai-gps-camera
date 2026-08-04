@@ -298,6 +298,20 @@ export default function ProfileFields() {
         />
       </div>
 
+      {/* Used as the poster's byline. Optional — a poster with no name
+          falls back to the first handle, which is how most people sign. */}
+      <label className="hint" htmlFor="profile-name">
+        Name (shown on before/after posters)
+      </label>
+      <input
+        id="profile-name"
+        value={profile.displayName ?? ""}
+        maxLength={40}
+        placeholder="optional"
+        onChange={(e) => setProfile({ ...profile, displayName: e.target.value })}
+        onKeyDown={blurOnEnter}
+      />
+
       {profile.handles.map((h) => (
         <div className="handle-row" key={h.id}>
           <PlatformSelect

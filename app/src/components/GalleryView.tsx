@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Play, RefreshCw, Search, X, MapPin, Layers, Map as MapIcon, LayoutGrid } from "lucide-react";
+import {
+  Play,
+  RefreshCw,
+  Search,
+  X,
+  MapPin,
+  Layers,
+  Map as MapIcon,
+  LayoutGrid,
+  GitCompareArrows,
+} from "lucide-react";
 import { Screen } from "./ui";
 import { listMedia, getBlob } from "../lib/db";
 import {
@@ -203,6 +213,13 @@ export default function GalleryView() {
       title="Gallery"
       actions={
         <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+          <button
+            className="icon-btn"
+            onClick={() => navigate("/gallery/poster")}
+            aria-label="Make a before and after poster"
+          >
+            <GitCompareArrows size={20} />
+          </button>
           <button
             className="icon-btn"
             onClick={() => navigate("/gallery/collage")}

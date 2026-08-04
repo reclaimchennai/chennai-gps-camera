@@ -17,6 +17,7 @@ const ReportView = lazy(() => import("./components/ReportView"));
 // Leaflet + plugins are heavy — the photo map loads on demand.
 const PhotoMapView = lazy(() => import("./components/PhotoMapView"));
 const CollageView = lazy(() => import("./components/CollageView"));
+const PosterView = lazy(() => import("./components/PosterView"));
 
 export default function App() {
   const route = useRoute();
@@ -31,6 +32,7 @@ export default function App() {
       <Suspense fallback={null}>
         {route.name === "map" && <PhotoMapView />}
         {route.name === "collage" && <CollageView />}
+        {route.name === "poster" && <PosterView />}
       </Suspense>
       {route.name === "media" && route.id && <MediaDetailView id={route.id} />}
       <Suspense fallback={null}>

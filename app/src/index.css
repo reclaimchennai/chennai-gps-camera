@@ -1147,6 +1147,20 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
   place-items: center;
   border: 2px solid #fff;
 }
+/* Poster preview: the square sits under the headline field and never
+   grows past the width it is given, so a tall phone shows the whole
+   card without the body scrolling. */
+.poster-preview {
+  margin-top: 10px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  max-width: min(100%, 70vh);
+  align-self: center;
+  width: 100%;
+}
+
 .collage-board {
   flex: 1;
   min-height: 0;
