@@ -87,6 +87,31 @@ import { isNativeApp, minimizeNativeApp } from "./lib/native";
 import { viewerOrigin } from "./lib/viewer-order";
 
 /**
+ * Screens that need to swallow one Back before the router acts — the
+ * gallery's selection mode is the first: Back there means "drop the
+ * selection", not "leave for the camera". An intercept returns true when
+ * it consumed the press. Registered last wins, so the innermost mode
+ * (a modal inside a selection) gets first refusal.
+ */
+type BackIntercept = () => boolean;
+const backIntercepts: BackIntercept[] = [];
+
+export function registerBackIntercept(fn: BackIntercept): () => void {
+  backIntercepts.push(fn);
+  return () => {
+    const i = backIntercepts.indexOf(fn);
+    if (i >= 0) backIntercepts.splice(i, 1);
+  };
+}
+
+function backIntercepted(): boolean {
+  for (let i = backIntercepts.length - 1; i >= 0; i--) {
+    if (backIntercepts[i]()) return true;
+  }
+  return false;
+}
+
+/**
  * Android back (gesture or button), relayed by MainActivity. Deterministic
  * where it matters: the gallery ALWAYS returns to the camera in one step —
  * history.back() could land on dead swipe entries and appear to do nothing
@@ -96,6 +121,8 @@ import { viewerOrigin } from "./lib/viewer-order";
  */
 if (isNativeApp()) {
   window.addEventListener("gpscamBack", () => {
+    // a screen-local mode (gallery selection) gets the press first
+    if (backIntercepted()) return;
     const route = parse(location.hash);
     if (route.name === "camera") void minimizeNativeApp();
     else if (route.name === "gallery") navigate("/", { replace: true });

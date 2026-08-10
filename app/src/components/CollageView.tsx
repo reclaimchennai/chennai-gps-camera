@@ -281,6 +281,22 @@ export default function CollageView() {
       <div className="screen-body" style={{ display: "flex", flexDirection: "column" }}>
         {phase === "pick" && (
           <>
+            {/* The two things this screen can make. The before/after poster
+                used to have its own gallery-header icon; it lives here now,
+                so one door leads to both and the choice is visible rather
+                than hidden behind a second glyph. */}
+            <div className="mode-tabs" role="tablist" aria-label="What to make">
+              <button role="tab" aria-selected="true" data-active="true">
+                Collage
+              </button>
+              <button
+                role="tab"
+                aria-selected="false"
+                onClick={() => navigate("/gallery/poster", { replace: true })}
+              >
+                Before &amp; after
+              </button>
+            </div>
             <div className="hint" style={{ padding: "0 2px 8px" }}>
               Tap to select — the order you pick is the starting order. Hold
               a photo to preview it. Frames from videos are listed too.

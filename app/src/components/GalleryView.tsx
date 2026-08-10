@@ -8,10 +8,12 @@ import {
   Layers,
   Map as MapIcon,
   LayoutGrid,
-  GitCompareArrows,
+  Trash2,
+  Tag as TagIcon,
+  Check,
 } from "lucide-react";
-import { Screen } from "./ui";
-import { listMedia, getBlob } from "../lib/db";
+import { Screen, blurOnEnter } from "./ui";
+import { listMedia, getBlob, deleteMedia, putMedia } from "../lib/db";
 import {
   getThumbUrl,
   setThumbUrl,
@@ -24,9 +26,10 @@ import {
 } from "../lib/thumbcache";
 import { clearViewerOrder, setViewerOrigin } from "../lib/viewer-order";
 import type { MediaRecord } from "../types";
-import { navigate } from "../nav";
+import { navigate, registerBackIntercept } from "../nav";
 import { fmtWard } from "../lib/geo/format";
-import { usePeek } from "./peek";
+import { useLongPress } from "./longpress";
+import { hapticTap } from "../lib/haptics";
 
 interface Cell {
   rec: MediaRecord;
@@ -151,7 +154,67 @@ export default function GalleryView() {
   const [chip, setChip] = useState<Chip>("all");
   // ids the backfill queue just upgraded — briefly highlighted
   const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
-  const { bind: bindPeek, layer: peekLayer } = usePeek();
+  // selection mode: null = off. Entered by holding a cell; the held photo
+  // is already selected, so one gesture both arms the mode and picks.
+  const [sel, setSel] = useState<Set<string> | null>(null);
+  const selecting = sel !== null;
+  const [tagDraft, setTagDraft] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const exitSelection = () => {
+    setSel(null);
+    setTagDraft(null);
+    setConfirmDelete(false);
+  };
+
+  const toggle = (id: string) =>
+    setSel((s) => {
+      const n = new Set(s ?? []);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      // deselecting the last one leaves selection mode, so the grid can
+      // never strand the user in an empty selection with no way out
+      return n.size ? n : null;
+    });
+
+  const bindHold = useLongPress((id) => {
+    hapticTap(); // the hold registered — confirm by feel, before any repaint
+    setSel(new Set([id]));
+  }, !selecting);
+
+  // Back (Android gesture/button) drops the selection rather than leaving
+  // the gallery. Modals inside it get first refusal.
+  useEffect(() => {
+    return registerBackIntercept(() => {
+      if (confirmDelete) {
+        setConfirmDelete(false);
+        return true;
+      }
+      if (tagDraft !== null) {
+        setTagDraft(null);
+        return true;
+      }
+      if (selecting) {
+        exitSelection();
+        return true;
+      }
+      return false;
+    });
+  }, [selecting, tagDraft, confirmDelete]);
+
+  // Desktop/web equivalent of the same escape hatch
+  useEffect(() => {
+    if (!selecting) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (confirmDelete) setConfirmDelete(false);
+      else if (tagDraft !== null) setTagDraft(null);
+      else exitSelection();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selecting, tagDraft, confirmDelete]);
 
   // Opening a photo unmounts this screen; keep the scroll offset so coming
   // back lands exactly where the user was, not at the top of the grid.
@@ -260,32 +323,93 @@ export default function GalleryView() {
   const fmtDur = (s: number) =>
     `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
+  // ---- bulk actions on the selection ----------------------------------
+  const reload = async () => {
+    const items = await listMedia();
+    const loaded = items.map((rec) => ({ rec, url: null }));
+    pruneThumbs(items.map((i) => i.id));
+    setCells(loaded);
+    rememberCells(loaded);
+  };
+
+  /** Add one or more comma-separated tags to every selected item. */
+  const applyTags = async () => {
+    const parts = (tagDraft ?? "")
+      .split(",")
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean);
+    setTagDraft(null);
+    if (!parts.length || !sel?.size || busy) return;
+    setBusy(true);
+    try {
+      // tags MERGE — a bulk tag never drops what a photo already carries
+      for (const { rec } of cells ?? []) {
+        if (!sel.has(rec.id)) continue;
+        const existing = rec.tags ?? [];
+        const merged = [...existing];
+        for (const p of parts) if (!merged.includes(p)) merged.push(p);
+        if (merged.length !== existing.length) {
+          await putMedia({ ...rec, tags: merged } as MediaRecord);
+        }
+      }
+      await reload();
+      exitSelection();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteSelected = async () => {
+    if (!sel?.size || busy) return;
+    setBusy(true);
+    try {
+      for (const id of sel) await deleteMedia(id);
+      await reload();
+      exitSelection();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectAllVisible = () =>
+    setSel(new Set((visible ?? []).map((c) => c.rec.id)));
+
   return (
     <Screen
-      title="Gallery"
+      title={selecting ? `${sel.size} selected` : "Gallery"}
+      onBack={selecting ? exitSelection : undefined}
+      backLabel={selecting ? "Cancel selection" : undefined}
+      backIcon={selecting ? <X size={20} /> : undefined}
       actions={
         <span style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-          <button
-            className="icon-btn"
-            onClick={() => navigate("/gallery/poster")}
-            aria-label="Make a before and after poster"
-          >
-            <GitCompareArrows size={20} />
-          </button>
-          <button
-            className="icon-btn"
-            onClick={() => navigate("/gallery/collage")}
-            aria-label="Make a collage"
-          >
-            <LayoutGrid size={20} />
-          </button>
-          <button
-            className="icon-btn"
-            onClick={() => navigate("/gallery/map")}
-            aria-label="Photo map"
-          >
-            <MapIcon size={20} />
-          </button>
+          {selecting ? (
+            <button
+              className="icon-btn"
+              onClick={selectAllVisible}
+              aria-label="Select all"
+            >
+              <Check size={20} />
+            </button>
+          ) : (
+            <>
+              {/* the before/after poster now lives INSIDE the collage
+                  screen — one "make something" door, two things to make */}
+              <button
+                className="icon-btn"
+                onClick={() => navigate("/gallery/collage")}
+                aria-label="Make a collage or poster"
+              >
+                <LayoutGrid size={20} />
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => navigate("/gallery/map")}
+                aria-label="Photo map"
+              >
+                <MapIcon size={20} />
+              </button>
+            </>
+          )}
         </span>
       }
     >
@@ -358,12 +482,22 @@ export default function GalleryView() {
       <div className="gallery-grid">
         {visible?.map(({ rec }) => {
           const loc = cellLocation(rec);
+          const picked = sel?.has(rec.id) ?? false;
           return (
             <button
               key={rec.id}
-              className={`gallery-cell${flashIds.has(rec.id) ? " updated" : ""}`}
-              {...bindPeek(rec)}
+              // ONLY the selected cells jiggle — the unselected grid stays
+              // dead still, so what is picked is obvious at a glance
+              className={`gallery-cell${flashIds.has(rec.id) ? " updated" : ""}${
+                picked ? " selected jiggle" : ""
+              }`}
+              aria-pressed={selecting ? picked : undefined}
+              {...bindHold(rec.id)}
               onClick={() => {
+                if (selecting) {
+                  toggle(rec.id);
+                  return;
+                }
                 // browsing from the grid swipes in gallery order, not in
                 // whatever neighbourhood order the map may have set up
                 clearViewerOrder();
@@ -403,11 +537,102 @@ export default function GalleryView() {
                   <RefreshCw size={10} />
                 </span>
               )}
+              {selecting && (
+                <span className="sel-tick" data-on={picked} aria-hidden>
+                  {picked && <Check size={13} strokeWidth={3} />}
+                </span>
+              )}
             </button>
           );
         })}
       </div>
-      {peekLayer}
+
+      {/* bulk actions — only ever visible with something selected */}
+      {selecting && (
+        <div className="sel-bar">
+          <span className="sel-count">
+            {sel.size} selected
+          </span>
+          <button
+            className="pill-action"
+            disabled={busy}
+            onClick={() => setTagDraft("")}
+          >
+            <TagIcon size={18} />
+            <span>Tag</span>
+          </button>
+          <button
+            className="pill-action danger"
+            disabled={busy}
+            onClick={() => setConfirmDelete(true)}
+          >
+            <Trash2 size={18} />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+
+      {tagDraft !== null && (
+        <div className="modal-scrim" onClick={() => setTagDraft(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Tag {sel?.size} item{sel?.size === 1 ? "" : "s"}</h2>
+            <p>
+              Separate several tags with commas. Existing tags are kept.
+            </p>
+            <input
+              autoFocus
+              placeholder="e.g. pothole, ward 173, urgent"
+              value={tagDraft}
+              onChange={(e) => setTagDraft(e.target.value)}
+              onKeyDown={blurOnEnter}
+              style={{ marginTop: 10 }}
+            />
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button
+                className="ghost-btn"
+                style={{ flex: 1 }}
+                onClick={() => setTagDraft(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-btn"
+                style={{ flex: 1 }}
+                disabled={busy || !tagDraft.trim()}
+                onClick={() => void applyTags()}
+              >
+                Add tags
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="modal-scrim" onClick={() => setConfirmDelete(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete {sel?.size} item{sel?.size === 1 ? "" : "s"}?</h2>
+            <p>They will be removed permanently from this device.</p>
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button
+                className="ghost-btn"
+                style={{ flex: 1 }}
+                onClick={() => setConfirmDelete(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-btn"
+                style={{ flex: 1, background: "var(--danger)", color: "#fff" }}
+                disabled={busy}
+                onClick={() => void deleteSelected()}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Screen>
   );
 }

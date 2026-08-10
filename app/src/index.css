@@ -1443,6 +1443,127 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
   100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
 }
 
+/* ---------- gallery selection mode ---------- */
+
+/* A hold must not also trigger the WebView's own "copy / save image"
+   sheet — on Android that popped over the selection the instant it
+   armed, and on desktop the thumbnail dragged away as a ghost. */
+.gallery-cell {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.gallery-cell img {
+  -webkit-user-drag: none;
+}
+
+/* ONLY the picked cells move. The rest of the grid stays perfectly still,
+   which is what makes the selection readable at a glance. */
+.gallery-cell.jiggle {
+  animation: cell-jiggle 0.24s ease-in-out infinite;
+}
+/* nudge neighbours out of lockstep — a grid jiggling in unison reads as
+   the whole screen shaking rather than as individual picked tiles */
+.gallery-cell.jiggle:nth-child(2n) { animation-delay: -0.08s; }
+.gallery-cell.jiggle:nth-child(3n) { animation-delay: -0.14s; }
+
+@keyframes cell-jiggle {
+  0%   { transform: rotate(-0.85deg) scale(0.985); }
+  50%  { transform: rotate(0.85deg) scale(0.985); }
+  100% { transform: rotate(-0.85deg) scale(0.985); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-cell.jiggle {
+    animation: none;
+    /* the outline from .selected still marks it; add a gentle inset so
+       the picked state survives without motion */
+    transform: scale(0.96);
+  }
+}
+
+/* per-cell tick, shown on every cell once selection mode is armed so the
+   unpicked ones advertise that they are tappable targets */
+.sel-tick {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  background: rgba(10, 14, 20, 0.35);
+  color: #fff;
+}
+.sel-tick[data-on="true"] {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+/* sticky rather than fixed: it takes real space at the end of the grid,
+   so the last row can never hide underneath it */
+.sel-bar {
+  position: sticky;
+  bottom: 8px;
+  z-index: 5;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+}
+.sel-count {
+  flex: 1;
+  padding-left: 10px;
+  font-size: 13px;
+  color: var(--dim);
+}
+.sel-bar .pill-action {
+  color: var(--text);
+}
+.sel-bar .pill-action svg {
+  color: var(--text);
+}
+.sel-bar .pill-action.danger,
+.sel-bar .pill-action.danger svg {
+  color: var(--danger);
+}
+.sel-bar .pill-action:disabled {
+  opacity: 0.45;
+}
+
+/* ---------- collage / poster mode tabs ---------- */
+
+.mode-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.mode-tabs button {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--dim);
+  background: transparent;
+}
+.mode-tabs button[data-active="true"] {
+  background: var(--accent-strong);
+  color: #fff;
+  font-weight: 600;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .gallery-cell.skeleton { animation: none; }
   .gallery-cell.updated { animation: none; }

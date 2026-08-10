@@ -260,6 +260,21 @@ export default function PosterView() {
       <div className="screen-body" style={{ display: "flex", flexDirection: "column" }}>
         {phase === "pick" && (
           <>
+            {/* Same pair of tabs the collage picker shows — this screen is
+                reached through the collage icon, so the way back to the
+                other mode has to be here too. */}
+            <div className="mode-tabs" role="tablist" aria-label="What to make">
+              <button
+                role="tab"
+                aria-selected="false"
+                onClick={() => navigate("/gallery/collage", { replace: true })}
+              >
+                Collage
+              </button>
+              <button role="tab" aria-selected="true" data-active="true">
+                Before &amp; after
+              </button>
+            </div>
             <div className="hint" style={{ padding: "0 2px 8px" }}>
               Pick the complaint first, then the photo that shows it fixed.
               Hold a photo to preview it.
