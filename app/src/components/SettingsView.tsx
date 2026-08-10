@@ -138,11 +138,6 @@ export default function SettingsView() {
           hint="Fields, layout, style, profile & social handles"
           onClick={() => navigate("/settings/watermark")}
         />
-        <Row
-          label="Backup & restore"
-          hint="Save your settings and tags; rebuild the gallery after a reinstall"
-          onClick={() => navigate("/settings/backup")}
-        />
       </div>
 
       <div className="card">
@@ -555,6 +550,11 @@ export default function SettingsView() {
                 }
               />
             </Row>
+            <Row
+              label="Backup & restore"
+              hint="Save your settings and tags, or recover photos after a reinstall"
+              onClick={() => navigate("/settings/backup")}
+            />
           </div>
         </div>
       </div>

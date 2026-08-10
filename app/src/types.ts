@@ -149,6 +149,8 @@ export interface PhotoRecord {
   download?: "queued" | "done";
   annotatedFrom?: string; // id of source photo if this is a flattened copy
   tags?: string[]; // user-assigned, searchable in the gallery
+  /** named collections this item belongs to (distinct from free-form tags) */
+  albums?: string[];
   /** EXPERIMENTAL on-device licence-plate OCR results. undefined = not
    *  scanned; [] = scanned, none found. */
   plates?: string[];
@@ -172,6 +174,8 @@ export interface VideoRecord {
   config: WatermarkConfig;
   exported?: boolean; // true for editor-exported (burned) copies
   tags?: string[]; // user-assigned, searchable in the gallery
+  /** named collections this item belongs to (distinct from free-form tags) */
+  albums?: string[];
   /** recorded with the experimental live-blur setting on — the editor
    *  pre-enables auto face blur for the export */
   liveBlur?: boolean;

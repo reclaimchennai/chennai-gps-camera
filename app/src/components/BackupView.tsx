@@ -1,26 +1,24 @@
 /**
- * Backup & restore (§ settings).
+ * Backup & restore (§ settings → advanced).
  *
- * Two halves that are deliberately separate, because they have wildly
- * different sizes: a small metadata file that carries everything the app
- * knows, and the photos themselves, which stay where they already are —
- * in the device's own gallery. Restoring is therefore "load the small
- * file, then point the app at your photos", and the screen walks the user
- * through it in that order rather than making them work it out.
+ * Two halves with wildly different sizes: a small metadata file carrying
+ * everything the app knows, and the photos, which stay where they already
+ * are — in the device's own gallery. So restoring is "load the small file,
+ * then let the app re-read your photos".
+ *
+ * This is a REPAIR tool, not a sync service. Photos taken from here on are
+ * written to the gallery and to the app's own store at capture time, so
+ * there is nothing to watch for: recovery only matters after a reinstall,
+ * or when photos arrive from another device. The screen says exactly that,
+ * because an earlier draft claiming to be "watching" a folder read as an
+ * ongoing background job that does not exist.
+ *
+ * Kept to plain Rows rather than prose-and-buttons: this screen is reached
+ * from Settings and should look and behave like the rest of it.
  */
 import { useEffect, useRef, useState } from "react";
-import {
-  Download,
-  Upload,
-  Images,
-  Cpu,
-  Check,
-  FolderSearch,
-  RefreshCw,
-  AlertTriangle,
-  Loader,
-} from "lucide-react";
-import { Screen } from "./ui";
+import { Check, AlertTriangle, Loader } from "lucide-react";
+import { Row, Screen } from "./ui";
 import { shareBlob } from "../lib/share";
 import { listMedia } from "../lib/db";
 import {
@@ -251,10 +249,11 @@ export default function BackupView() {
   };
 
   const total = (counts?.photos ?? 0) + (counts?.videos ?? 0);
+  const native = isNativeApp();
 
   return (
     <Screen title="Backup & restore">
-      {/* hidden pickers — the buttons below drive them */}
+      {/* hidden pickers — the rows below drive them */}
       <input
         ref={backupInput}
         type="file"
@@ -279,136 +278,82 @@ export default function BackupView() {
         }}
       />
 
-      {note && (
-        <div className={`backup-note ${note.kind}`}>
-          {note.kind === "ok" ? <Check size={16} /> : <AlertTriangle size={16} />}
-          <span>{note.text}</span>
-        </div>
-      )}
-
-      {busy && (
-        <div className="backup-note ok">
-          <Loader size={16} className="spin" />
+      {(busy || note) && (
+        <div className={`backup-note ${busy ? "ok" : note!.kind}`}>
+          {busy ? (
+            <Loader size={16} className="spin" />
+          ) : note!.kind === "ok" ? (
+            <Check size={16} />
+          ) : (
+            <AlertTriangle size={16} />
+          )}
           <span>
-            {busy}
-            {progress && progress.total > 1
-              ? ` ${progress.done} / ${progress.total}`
-              : ""}
+            {busy
+              ? `${busy}${progress && progress.total > 1 ? ` ${progress.done} / ${progress.total}` : ""}`
+              : note!.text}
           </span>
         </div>
       )}
 
       <div className="card">
         <div className="card-title">Backup</div>
-        <p className="hint" style={{ margin: "0 0 10px" }}>
-          Saves your settings, watermark layout, profile, camera calibration
-          and the details of all {total} item{total === 1 ? "" : "s"} — tags,
-          places and times. It does <b>not</b> include the pictures
-          themselves, so it stays small enough to keep in an email; the
-          pictures come back from your device gallery.
-        </p>
-        <button
-          className="primary-btn"
-          style={{ width: "100%" }}
-          disabled={!!busy}
-          onClick={() => void onBackup()}
-        >
-          <Download size={17} /> Save a backup file
-        </button>
+        <Row
+          label="Save a backup file"
+          hint={`Settings, watermark, profile, calibration and the tags and places of ${total} item${total === 1 ? "" : "s"}. Not the pictures — those stay in your gallery.`}
+          onClick={busy ? undefined : () => void onBackup()}
+        />
       </div>
 
       <div className="card">
         <div className="card-title">Restore</div>
-        <p className="hint" style={{ margin: "0 0 10px" }}>
-          Step 1 — load the backup file. Settings, watermark, profile and
-          calibration come back immediately.
-        </p>
-        <button
-          className="ghost-btn"
-          style={{ width: "100%" }}
-          disabled={!!busy}
-          onClick={() => backupInput.current?.click()}
-        >
-          <Upload size={17} /> Choose backup file
-        </button>
-
-        <p className="hint" style={{ margin: "14px 0 10px" }}>
-          Step 2 — bring your photos back. Each one already carries its own
-          location and time, so the ward, zone and police stations are worked
-          out again on the device — nothing is sent anywhere.
-          {pending && (
-            <>
-              {" "}
-              <b>
-                A restored backup is waiting, so your tags will be put back
-                too.
-              </b>
-            </>
-          )}
-        </p>
-
-        {isNativeApp() ? (
+        <Row
+          label="Load a backup file"
+          hint="Brings back settings, watermark, profile, calibration and tags"
+          onClick={busy ? undefined : () => backupInput.current?.click()}
+        />
+        {native ? (
           <>
-            <button
-              className={pending || !folder ? "primary-btn" : "ghost-btn"}
-              style={{ width: "100%" }}
-              disabled={!!busy}
-              onClick={() => void onScan(!folder)}
-            >
-              {folder ? <RefreshCw size={17} /> : <FolderSearch size={17} />}{" "}
-              {folder ? "Scan for new photos" : "Choose your GPS Camera folder"}
-            </button>
-            <p className="hint" style={{ margin: "8px 0 0" }}>
-              {folder ? (
-                <>
-                  Watching <b>{folder}</b>. Photos already in your gallery are
-                  recognised by their filename, so a scan only reads what is
-                  genuinely new.{" "}
-                  <button
-                    className="link-btn"
-                    onClick={() => void nativeForgetMediaFolder().then(() => setFolder(null))}
-                  >
-                    Use a different folder
-                  </button>
-                </>
-              ) : (
-                <>
-                  Pick <b>DCIM &rsaquo; GPS Camera</b> once and the app can
-                  check it for new photos from then on. This grants access to
-                  that one folder and nothing else — no photo permission is
-                  requested.
-                </>
-              )}
-            </p>
+            <Row
+              label={folder ? "Recover photos" : "Recover photos from this device"}
+              hint={
+                folder
+                  ? `Reads ${folder} and adds anything missing`
+                  : "Pick the folder your photos are saved in — that one folder only, no photo permission"
+              }
+              onClick={busy ? undefined : () => void onScan(!folder)}
+            />
+            {folder && (
+              <Row
+                label="Change folder"
+                hint={folder}
+                onClick={
+                  busy
+                    ? undefined
+                    : () => void nativeForgetMediaFolder().then(() => setFolder(null))
+                }
+              />
+            )}
           </>
         ) : (
-          <button
-            className={pending ? "primary-btn" : "ghost-btn"}
-            style={{ width: "100%" }}
-            disabled={!!busy}
-            onClick={() => photosInput.current?.click()}
-          >
-            <Images size={17} /> Import photos from this device
-          </button>
+          <Row
+            label="Recover photos from this device"
+            hint="Select your saved photos — in a browser they are in your Downloads folder"
+            onClick={busy ? undefined : () => photosInput.current?.click()}
+          />
         )}
+        <div className="card-note">
+          Only needed after a reinstall, or for photos copied from another
+          device — new photos are added automatically as you take them.
+        </div>
       </div>
 
       <div className="card">
         <div className="card-title">Model files</div>
-        <p className="hint" style={{ margin: "0 0 10px" }}>
-          The face-detection, pose and licence-plate models that run on this
-          device, as one archive (~37 MB). They are the same for every
-          install and never change — this is for sharing them with someone
-          who can't download them, or for a self-hosted copy of the app.
-        </p>
-        <button
-          className="ghost-btn"
-          style={{ width: "100%" }}
-          disabled={!!busy}
-          onClick={() => void onModels()}
-        >
-          <Cpu size={17} /> Export model files
-        </button>
+        <Row
+          label="Export model files"
+          hint="37 MB — the face, pose and plate models that run on this device. Identical for every install; for sharing offline or self-hosting."
+          onClick={busy ? undefined : () => void onModels()}
+        />
       </div>
     </Screen>
   );

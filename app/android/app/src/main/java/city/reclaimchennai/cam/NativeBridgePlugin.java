@@ -40,6 +40,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.ByteArrayOutputStream;
 import com.getcapacitor.JSArray;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -918,6 +919,60 @@ public class NativeBridgePlugin extends Plugin {
             out.put("error", String.valueOf(e.getMessage()));
         } finally {
             if (in != null) try { in.close(); } catch (Exception ignored) { }
+        }
+        call.resolve(out);
+    }
+
+    /**
+     * Share several already-written files as one ACTION_SEND_MULTIPLE.
+     *
+     * Each file is streamed in through shareBegin/shareChunk exactly as a
+     * single share is; this replaces the final shareEnd and fires one
+     * chooser for the lot, so the user picks a target once instead of
+     * once per photo.
+     */
+    @PluginMethod
+    public void shareMany(PluginCall call) {
+        final JSArray ids = call.getArray("ids");
+        final String text = call.getString("text", "");
+        final Context ctx = getContext();
+        JSObject out = new JSObject();
+        ArrayList<Uri> uris = new ArrayList<>();
+        String mime = null;
+        boolean mixed = false;
+        try {
+            List<Object> list = ids != null ? ids.toList() : null;
+            if (list == null || list.isEmpty()) throw new IllegalStateException("no files");
+            for (Object o : list) {
+                String id = String.valueOf(o);
+                PendingShare ps;
+                synchronized (shares) {
+                    ps = shares.remove(id);
+                }
+                if (ps == null) continue;
+                ps.stream.close();
+                uris.add(FileProvider.getUriForFile(
+                    ctx, ctx.getPackageName() + ".fileprovider", ps.file));
+                if (mime == null) mime = ps.mime;
+                else if (!mime.equals(ps.mime)) mixed = true;
+            }
+            if (uris.isEmpty()) throw new IllegalStateException("nothing to share");
+            Intent send = new Intent(Intent.ACTION_SEND_MULTIPLE);
+            // photos and videos together have no single type; */* is what
+            // every gallery app expects for a mixed batch
+            send.setType(mixed || mime == null ? "*/*" : mime);
+            send.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+            if (text != null && !text.isEmpty()) {
+                send.putExtra(Intent.EXTRA_TEXT, text);
+            }
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            Intent chooser = Intent.createChooser(send, "Share");
+            chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(chooser);
+            out.put("ok", true);
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", String.valueOf(e.getMessage()));
         }
         call.resolve(out);
     }

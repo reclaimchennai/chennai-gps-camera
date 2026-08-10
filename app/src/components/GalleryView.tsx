@@ -11,6 +11,9 @@ import {
   Trash2,
   Tag as TagIcon,
   Check,
+  Share2,
+  FolderPlus,
+  Folder,
 } from "lucide-react";
 import { Screen, blurOnEnter } from "./ui";
 import { listMedia, getBlob, deleteMedia, putMedia } from "../lib/db";
@@ -30,6 +33,7 @@ import { navigate, registerBackIntercept } from "../nav";
 import { fmtWard } from "../lib/geo/format";
 import { useLongPress } from "./longpress";
 import { hapticTap } from "../lib/haptics";
+import { shareRecords } from "../lib/shareMany";
 
 interface Cell {
   rec: MediaRecord;
@@ -133,6 +137,7 @@ function haystack(rec: MediaRecord): string {
     j?.loStation,
     j?.trafficStation,
     ...(rec.tags ?? []),
+    ...(rec.albums ?? []),
     ...(rec.kind === "photo" ? (rec.plates ?? []) : []),
     new Date(rec.createdAt).toDateString(),
   ]
@@ -141,7 +146,7 @@ function haystack(rec: MediaRecord): string {
     .toLowerCase();
 }
 
-type Chip = "all" | "photos" | "videos" | `tag:${string}`;
+type Chip = "all" | "photos" | "videos" | `tag:${string}` | `album:${string}`;
 
 export default function GalleryView() {
   // Start from the grid we painted last time. Opening a photo unmounts this
@@ -160,12 +165,18 @@ export default function GalleryView() {
   const selecting = sel !== null;
   const [tagDraft, setTagDraft] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** album sheet: null = closed, else the name being typed */
+  const [albumDraft, setAlbumDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** transient one-line feedback shown in the selection bar */
+  const [note, setNote] = useState<string | null>(null);
 
   const exitSelection = () => {
     setSel(null);
+    setNote(null);
     setTagDraft(null);
     setConfirmDelete(false);
+    setAlbumDraft(null);
   };
 
   const toggle = (id: string) =>
@@ -195,13 +206,17 @@ export default function GalleryView() {
         setTagDraft(null);
         return true;
       }
+      if (albumDraft !== null) {
+        setAlbumDraft(null);
+        return true;
+      }
       if (selecting) {
         exitSelection();
         return true;
       }
       return false;
     });
-  }, [selecting, tagDraft, confirmDelete]);
+  }, [selecting, tagDraft, confirmDelete, albumDraft]);
 
   // Desktop/web equivalent of the same escape hatch
   useEffect(() => {
@@ -210,11 +225,12 @@ export default function GalleryView() {
       if (e.key !== "Escape") return;
       if (confirmDelete) setConfirmDelete(false);
       else if (tagDraft !== null) setTagDraft(null);
+      else if (albumDraft !== null) setAlbumDraft(null);
       else exitSelection();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selecting, tagDraft, confirmDelete]);
+  }, [selecting, tagDraft, confirmDelete, albumDraft]);
 
   // Opening a photo unmounts this screen; keep the scroll offset so coming
   // back lands exactly where the user was, not at the top of the grid.
@@ -282,6 +298,13 @@ export default function GalleryView() {
     return [...tags].sort();
   }, [cells]);
 
+  const allAlbums = useMemo(() => {
+    const albums = new Set<string>();
+    for (const c of cells ?? [])
+      for (const a of c.rec.albums ?? []) albums.add(a);
+    return [...albums].sort();
+  }, [cells]);
+
   // frame photos grabbed from a video group under it (folder-in-folder);
   // count per video drives the stack badge on its cell
   const frameCounts = useMemo(() => {
@@ -314,6 +337,11 @@ export default function GalleryView() {
       if (chip === "photos" && rec.kind !== "photo") return false;
       if (chip === "videos" && rec.kind !== "video") return false;
       if (chip.startsWith("tag:") && !(rec.tags ?? []).includes(chip.slice(4)))
+        return false;
+      if (
+        chip.startsWith("album:") &&
+        !(rec.albums ?? []).includes(chip.slice(6))
+      )
         return false;
       if (q && !haystack(rec).includes(q)) return false;
       return true;
@@ -364,6 +392,47 @@ export default function GalleryView() {
     setBusy(true);
     try {
       for (const id of sel) await deleteMedia(id);
+      await reload();
+      exitSelection();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** The selected records themselves, in the grid's own order. */
+  const selectedRecs = (): MediaRecord[] =>
+    (cells ?? []).filter((c) => sel?.has(c.rec.id)).map((c) => c.rec);
+
+  const shareSelection = async () => {
+    if (!sel?.size || busy) return;
+    setBusy(true);
+    try {
+      const result = await shareRecords(selectedRecs());
+      if (result.kind === "shared") exitSelection();
+      else if (result.kind === "blocked") {
+        setNote("Tap Share once more to open the share sheet.");
+      } else if (result.kind === "empty") {
+        setNote("Those files are no longer on this device.");
+      } else {
+        setNote(`Couldn't share: ${result.error}`);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Add every selected item to `name`, creating the album if it is new. */
+  const applyAlbum = async (name: string) => {
+    const album = name.trim();
+    setAlbumDraft(null);
+    if (!album || !sel?.size || busy) return;
+    setBusy(true);
+    try {
+      for (const rec of selectedRecs()) {
+        const existing = rec.albums ?? [];
+        if (existing.includes(album)) continue;
+        await putMedia({ ...rec, albums: [...existing, album] } as MediaRecord);
+      }
       await reload();
       exitSelection();
     } finally {
@@ -442,6 +511,19 @@ export default function GalleryView() {
             onClick={() => setChip(key)}
           >
             {label}
+          </button>
+        ))}
+        {allAlbums.map((a) => (
+          <button
+            key={`album:${a}`}
+            className="gal-chip"
+            data-active={chip === `album:${a}`}
+            onClick={() =>
+              setChip(chip === `album:${a}` ? "all" : `album:${a}`)
+            }
+          >
+            <Folder size={12} style={{ verticalAlign: "-2px", marginRight: 4 }} />
+            {a}
           </button>
         ))}
         {allTags.map((t) => (
@@ -547,28 +629,100 @@ export default function GalleryView() {
         })}
       </div>
 
-      {/* bulk actions — only ever visible with something selected */}
+      {/* bulk actions — only ever visible with something selected. The
+          band scrolls horizontally so adding a fifth action later does not
+          squeeze the labels into ellipses. */}
       {selecting && (
         <div className="sel-bar">
-          <span className="sel-count">
-            {sel.size} selected
-          </span>
-          <button
-            className="pill-action"
-            disabled={busy}
-            onClick={() => setTagDraft("")}
-          >
-            <TagIcon size={18} />
-            <span>Tag</span>
-          </button>
-          <button
-            className="pill-action danger"
-            disabled={busy}
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 size={18} />
-            <span>Delete</span>
-          </button>
+          {note && <div className="sel-note">{note}</div>}
+          <div className="sel-actions">
+            <button
+              className="pill-action"
+              disabled={busy}
+              onClick={() => void shareSelection()}
+            >
+              <Share2 size={20} />
+              <span>Share</span>
+            </button>
+            <button
+              className="pill-action"
+              disabled={busy}
+              onClick={() => setAlbumDraft("")}
+            >
+              <FolderPlus size={20} />
+              <span>Add to album</span>
+            </button>
+            <button
+              className="pill-action"
+              disabled={busy}
+              onClick={() => setTagDraft("")}
+            >
+              <TagIcon size={20} />
+              <span>Tag</span>
+            </button>
+            <button
+              className="pill-action danger"
+              disabled={busy}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 size={20} />
+              <span>Delete</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {albumDraft !== null && (
+        <div className="modal-scrim" onClick={() => setAlbumDraft(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>
+              Add {sel?.size} item{sel?.size === 1 ? "" : "s"} to an album
+            </h2>
+            {allAlbums.length > 0 && (
+              <>
+                <p style={{ marginBottom: 6 }}>Existing albums</p>
+                <div className="album-list">
+                  {allAlbums.map((a) => (
+                    <button
+                      key={a}
+                      className="album-row"
+                      disabled={busy}
+                      onClick={() => void applyAlbum(a)}
+                    >
+                      <Folder size={16} />
+                      <span>{a}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            <p style={{ margin: "12px 0 0" }}>New album</p>
+            <input
+              autoFocus={allAlbums.length === 0}
+              placeholder="e.g. Ward 133 drains"
+              value={albumDraft}
+              onChange={(e) => setAlbumDraft(e.target.value)}
+              onKeyDown={blurOnEnter}
+              style={{ marginTop: 6 }}
+            />
+            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <button
+                className="ghost-btn"
+                style={{ flex: 1 }}
+                onClick={() => setAlbumDraft(null)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-btn"
+                style={{ flex: 1 }}
+                disabled={busy || !albumDraft.trim()}
+                onClick={() => void applyAlbum(albumDraft)}
+              >
+                Create &amp; add
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

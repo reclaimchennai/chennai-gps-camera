@@ -1510,19 +1510,34 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
   bottom: 8px;
   z-index: 5;
   margin-top: 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 999px;
+  border-radius: 18px;
   background: var(--surface);
   border: 1px solid var(--border);
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
 }
-.sel-count {
-  flex: 1;
-  padding-left: 10px;
-  font-size: 13px;
+
+/* the actions scroll sideways rather than compressing their labels, so a
+   fifth action can be added without redesigning the band */
+.sel-actions {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 4px;
+}
+.sel-actions::-webkit-scrollbar {
+  display: none;
+}
+.sel-actions .pill-action {
+  flex: 1 0 auto;
+  min-width: 76px;
+}
+
+.sel-note {
+  padding: 9px 14px 3px;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--dim);
 }
 .sel-bar .pill-action {
@@ -1537,6 +1552,35 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
 }
 .sel-bar .pill-action:disabled {
   opacity: 0.45;
+}
+
+/* album picker inside the selection sheet */
+.album-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.album-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+}
+.album-row:active {
+  background: var(--surface);
+}
+.album-row svg {
+  flex-shrink: 0;
+  color: var(--accent-strong);
 }
 
 /* ---------- collage / poster mode tabs ---------- */
@@ -1916,6 +1960,15 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
   font-size: 12px;
   color: var(--dim);
   margin-top: 2px;
+}
+
+/* small print at the foot of a card — .hint is only styled inside a .row,
+   so a bare one lands at body size and overflows the card */
+.card-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dim);
+  padding: 0 14px 12px;
 }
 
 .row.tappable:active {

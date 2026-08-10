@@ -37,6 +37,7 @@ interface NativeBridgePlugin {
   }): Promise<{ ok: boolean; id?: string }>;
   shareChunk(opts: { id: string; base64: string }): Promise<{ ok: boolean }>;
   shareEnd(opts: { id: string; text: string }): Promise<{ ok: boolean }>;
+  shareMany(opts: { ids: string[]; text: string }): Promise<{ ok: boolean }>;
   getAppInfo(): Promise<{
     ok: boolean;
     versionName?: string;
@@ -471,5 +472,49 @@ export async function nativeReadMediaFile(
     return new File([bytes], name, { type: "image/jpeg" });
   } catch {
     return null;
+  }
+}
+
+/**
+ * Share several files in ONE chooser (Android ACTION_SEND_MULTIPLE).
+ *
+ * Each file is streamed across the bridge exactly as a single share is,
+ * then one `shareMany` fires the chooser for the batch — so the user
+ * picks a target once, not once per photo. False in the browser, where
+ * navigator.share takes the files directly.
+ */
+export async function nativeShareFiles(
+  files: { blob: Blob; filename: string }[],
+  text: string
+): Promise<boolean> {
+  const b = bridge();
+  if (!b || !files.length) return false;
+  const ids: string[] = [];
+  try {
+    for (const f of files) {
+      const begin = await b.shareBegin({
+        filename: f.filename,
+        mime: f.blob.type || "application/octet-stream",
+      });
+      if (!begin.ok || !begin.id) throw new Error("begin failed");
+      ids.push(begin.id);
+      for (let off = 0; off < f.blob.size; off += SAVE_CHUNK_BYTES) {
+        const base64 = await blobChunkToBase64(
+          f.blob.slice(off, off + SAVE_CHUNK_BYTES)
+        );
+        const r = await b.shareChunk({ id: begin.id, base64 });
+        if (!r.ok) throw new Error("chunk failed");
+      }
+    }
+    return (await b.shareMany({ ids, text })).ok;
+  } catch {
+    for (const id of ids) {
+      try {
+        await b.shareEnd({ id, text: "" });
+      } catch {
+        // best effort: the temp file is in the app's own cache
+      }
+    }
+    return false;
   }
 }

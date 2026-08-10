@@ -32,6 +32,7 @@ import { viewerOrderFor } from "../lib/viewer-order";
 import type { MediaRecord, PhotoRecord } from "../types";
 import { navigate, appBack } from "../nav";
 import { shareBlob, downloadBlob, suggestedName } from "../lib/share";
+import { captionFor } from "../lib/shareText";
 import { isNativeApp } from "../lib/native";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../lib/geo/format";
 import { canvasToBlob, makeThumbnail } from "../lib/img";
@@ -490,6 +491,9 @@ export default function MediaDetailView({ id }: { id: string }) {
       gesturePointers.current.delete(e.pointerId);
       if (gesturePointers.current.size < 2) gestureBase.current = null;
       if (gesturePointers.current.size !== 0) return;
+      // capture the pan origin before clearing it — a tap while zoomed has
+      // no dragRef, so this is the only record of where the finger landed
+      const pan = panBase.current;
       panBase.current = null;
       const drag = dragRef.current;
       dragRef.current = null;
@@ -519,10 +523,20 @@ export default function MediaDetailView({ id }: { id: string }) {
         return;
       }
 
-      // a tap (no directional drag)
-      const dx = e.clientX - (drag?.x0 ?? e.clientX);
-      const dy = e.clientY - (drag?.y0 ?? e.clientY);
-      if (zoomRef.current.scale === 1 && Math.hypot(dx, dy) < 8) {
+      // A tap: no directional drag and the finger barely moved. Measure
+      // from whichever gesture was actually in play — when zoomed in there
+      // is no dragRef, only panBase, and gating this on scale === 1 (as it
+      // used to) meant a zoomed photo never saw a tap at all: double-tap
+      // could zoom IN but never back OUT, and the chrome stopped toggling.
+      const origin = drag
+        ? { x: drag.x0, y: drag.y0 }
+        : pan
+          ? { x: pan.x, y: pan.y }
+          : null;
+      const moved = origin
+        ? Math.hypot(e.clientX - origin.x, e.clientY - origin.y)
+        : 0;
+      if (moved < 8) {
         const now = Date.now();
         if (rec?.kind === "photo" && now - lastTap.current < 300) {
           const z = zoomRef.current;
@@ -701,51 +715,11 @@ export default function MediaDetailView({ id }: { id: string }) {
         (await getBlob(curId, rec.kind === "photo" ? "final" : "source"));
     }
     if (!blob) return;
-    // Location context rides along with the file (§ share: ward, zone,
-    // address, and a Google Maps link for the exact coordinates).
-    const d = rec.data;
-    const jd = d.jurisdiction;
-    const lines: string[] = [];
-    if (d.locality) lines.push(d.locality);
-    if (d.address) lines.push(d.address);
-    if (d.digipin) lines.push(`DIGIPIN: ${d.digipin}`);
-    if (jd && jd.scope !== "out") {
-      const pending = jd.wardPending || jd.scope === "avadi";
-      const parts = [jd.corporation];
-      if (pending) parts.push("Ward: not yet available");
-      else if (jd.ward)
-        parts.push(
-          `Ward ${fmtWard(jd.ward)}${jd.wardName ? ` (${jd.wardName})` : ""}`
-        );
-      if (jd.zone && !pending) parts.push(fmtZone(jd.zone));
-      if (!jd.ward && !jd.zone) {
-        if (jd.block) parts.push(`${jd.block} Block`);
-        if (jd.district)
-          parts.push(
-            /board$/i.test(jd.district) ? jd.district : `${jd.district} District`
-          );
-      }
-      lines.push(parts.filter(Boolean).join(" · "));
-      if (jd.loStation) lines.push(`Police (L&O): ${jd.loStation}`);
-      if (jd.trafficStation) lines.push(`Traffic: ${jd.trafficStation}`);
-    }
-    if (rec.kind === "photo" && rec.plates?.length) {
-      lines.push(
-        `Licence plate${rec.plates.length > 1 ? "s" : ""} (OCR, verify): ${rec.plates.join(", ")}`
-      );
-    }
-    if (d.mockLocation) {
-      lines.push("Warning: mock location detected - GPS may be spoofed");
-    }
-    if (d.fix) {
-      lines.push(
-        `https://maps.google.com/?q=${d.fix.lat.toFixed(6)},${d.fix.lng.toFixed(6)}`
-      );
-    }
+    // one caption builder for the viewer and for bulk share (shareText)
     await shareBlob(
       blob,
       suggestedName(rec.kind, rec.createdAt, blob.type),
-      lines.join("\n")
+      captionFor(rec)
     );
   };
 
