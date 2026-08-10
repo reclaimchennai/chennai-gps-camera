@@ -18,7 +18,7 @@
  * the one value stamped into the JPEG, printed on the card and used in
  * the filename.
  */
-import { getBlob, listMedia, newId, putBlob, putMedia } from "./db";
+import { getBlob, importTombstones, listMedia, newId, putBlob, putMedia } from "./db";
 import { readExif } from "./exif";
 import { loadImage, makeThumbnail } from "./img";
 import { loadGeodataFor } from "./geo/geodata";
@@ -27,6 +27,11 @@ import { latLngToDigipin } from "./geo/digipin";
 import { DEFAULT_WATERMARK_CONFIG } from "./watermark/presets";
 import { useSettingsStore } from "../store";
 import { indexByCaptureSecond, type BackupFile } from "./backup";
+import {
+  nativeListMediaFolder,
+  nativeReadMediaFile,
+  type MediaFolderFile,
+} from "./native";
 import type { Jurisdiction, PhotoRecord, WatermarkData } from "../types";
 
 export interface ImportProgress {
@@ -58,6 +63,26 @@ async function existingCaptureSeconds(): Promise<Set<number>> {
 }
 
 /**
+ * Capture time straight from the app's own filename, e.g.
+ * `IMG_20260807_183241_gpscam.jpg` → that second, local time.
+ *
+ * This is what makes a folder scan cheap. Deciding whether a photo is
+ * already in the gallery costs a filename parse instead of reading and
+ * decoding a multi-megabyte JPEG, so a folder of 2,000 photos with
+ * nothing new in it does no I/O at all.
+ */
+export function timestampFromName(name: string): number | null {
+  const m = name.match(/(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, sec] = m.map(Number) as unknown as number[];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 59) {
+    return null;
+  }
+  const t = new Date(y, mo - 1, d, h, mi, sec).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
  * Import a set of image files chosen by the user.
  *
  * Deliberately tolerant: any file that cannot be read is counted and
@@ -80,6 +105,7 @@ export async function importPhotos(
     withoutLocation: 0,
   };
   const seen = await existingCaptureSeconds();
+  for (const t of await importTombstones()) seen.add(t);
   const fromBackup = indexByCaptureSecond(opts.backup ?? null);
   const { settings } = useSettingsStore.getState();
 
@@ -96,9 +122,15 @@ export async function importPhotos(
 
     try {
       const exif = await readExif(file);
-      // fall back to the file's own modified time so a stripped copy still
-      // lands somewhere sensible on the timeline
-      const timestamp = exif.timestamp ?? file.lastModified ?? Date.now();
+      // EXIF first; then the app's own filename (IMG_<date>_<time>_gpscam),
+      // which survives copying and sharing where EXIF often does not; then
+      // the file's modified time so a stripped copy still lands somewhere
+      // sensible on the timeline
+      const timestamp =
+        exif.timestamp ??
+        timestampFromName(file.name) ??
+        file.lastModified ??
+        Date.now();
       const second = Math.floor(timestamp / 1000);
 
       if (seen.has(second)) {
@@ -238,4 +270,92 @@ export async function mergeBackupIntoLibrary(
 /** Whether a photo's pixels are present — used to report a stale restore. */
 export async function hasPixels(id: string): Promise<boolean> {
   return !!(await getBlob(id, "final"));
+}
+
+export interface ScanReport extends ImportReport {
+  /** files in the folder the scan never had to open */
+  alreadyHad: number;
+  /** total JPEGs seen in the folder */
+  scanned: number;
+}
+
+/**
+ * Scan the granted device folder and import anything new.
+ *
+ * Two passes on purpose. First the cheap one: list the folder (metadata
+ * only) and drop every file whose filename timestamp is already in the
+ * gallery or deliberately deleted. Only what survives is read across the
+ * bridge and decoded. Android-only — the browser has no folder grant, so
+ * this returns null and the caller offers the file picker instead.
+ */
+export async function scanMediaFolder(
+  opts: {
+    backup?: BackupFile | null;
+    onProgress?: (p: ImportProgress) => void;
+    signal?: { cancelled: boolean };
+  } = {}
+): Promise<ScanReport | null> {
+  const files = await nativeListMediaFolder();
+  if (!files) return null;
+
+  const seen = await existingCaptureSeconds();
+  for (const t of await importTombstones()) seen.add(t);
+
+  const fresh: MediaFolderFile[] = [];
+  let alreadyHad = 0;
+  for (const f of files) {
+    const t = timestampFromName(f.name);
+    // an unparseable name is NOT assumed new or old — it goes through the
+    // normal path, where EXIF decides
+    if (t != null && seen.has(Math.floor(t / 1000))) {
+      alreadyHad++;
+      continue;
+    }
+    fresh.push(f);
+  }
+
+  const report: ScanReport = {
+    imported: 0,
+    skipped: 0,
+    failed: 0,
+    matchedFromBackup: 0,
+    withoutLocation: 0,
+    alreadyHad,
+    scanned: files.length,
+  };
+  if (!fresh.length) return report;
+
+  // read them one at a time — a phone should never hold twenty
+  // full-resolution JPEGs in memory at once
+  let done = 0;
+  const batch: File[] = [];
+  for (const f of fresh) {
+    if (opts.signal?.cancelled) break;
+    done++;
+    opts.onProgress?.({ done, total: fresh.length, file: f.name });
+    const file = await nativeReadMediaFile(f.id, f.name);
+    if (!file) {
+      report.failed++;
+      continue;
+    }
+    batch.push(file);
+    // import in small groups so progress is visible and memory stays flat
+    if (batch.length >= 4) {
+      const r = await importPhotos(batch.splice(0), { backup: opts.backup });
+      report.imported += r.imported;
+      report.skipped += r.skipped;
+      report.failed += r.failed;
+      report.matchedFromBackup += r.matchedFromBackup;
+      report.withoutLocation += r.withoutLocation;
+    }
+  }
+  if (batch.length) {
+    const r = await importPhotos(batch, { backup: opts.backup });
+    report.imported += r.imported;
+    report.skipped += r.skipped;
+    report.failed += r.failed;
+    report.matchedFromBackup += r.matchedFromBackup;
+    report.withoutLocation += r.withoutLocation;
+  }
+  return report;
 }

@@ -53,8 +53,34 @@ export async function listMedia(): Promise<MediaRecord[]> {
   return all.reverse(); // newest first
 }
 
+/** Capture seconds the user deleted deliberately — never re-import them. */
+export async function importTombstones(): Promise<Set<number>> {
+  const d = await db();
+  return new Set(((await d.get("kv", "import-tombstones")) as number[]) ?? []);
+}
+
 export async function deleteMedia(id: string): Promise<void> {
   const d = await db();
+  // Remember that this capture was deleted ON PURPOSE. The photo file may
+  // still be sitting in the device gallery, and the folder scan would
+  // otherwise import it straight back the next time it runs — deleting
+  // something twice and watching it return is worse than never having the
+  // scan at all.
+  try {
+    const rec = await d.get("media", id);
+    const t = rec?.data?.timestamp ?? rec?.createdAt;
+    if (typeof t === "number") {
+      const key = Math.floor(t / 1000);
+      const prev = ((await d.get("kv", "import-tombstones")) as number[]) ?? [];
+      if (!prev.includes(key)) {
+        // keep it bounded; the oldest are the least likely to be re-offered
+        const next = [...prev, key].slice(-20_000);
+        await d.put("kv", next, "import-tombstones");
+      }
+    }
+  } catch {
+    // a missing record just means there is nothing to remember
+  }
   await d.delete("media", id);
   const tx = d.transaction("blobs", "readwrite");
   for (const variant of ["final", "raw", "thumb", "source"]) {

@@ -2864,3 +2864,12 @@ a {
 @media (prefers-reduced-motion: reduce) {
   .spin { animation: none; }
 }
+
+/* inline text button (e.g. "Use a different folder") */
+.link-btn {
+  padding: 0;
+  background: none;
+  color: var(--accent-strong);
+  text-decoration: underline;
+  font: inherit;
+}

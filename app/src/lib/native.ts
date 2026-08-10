@@ -67,6 +67,25 @@ interface NativeBridgePlugin {
   setShutterKeys(opts: { enabled: boolean }): Promise<void>;
   minimizeApp(): Promise<void>;
   vibrate(opts: { pattern: number[] }): Promise<void>;
+  getMediaFolder(): Promise<{ ok: boolean; uri?: string; name?: string }>;
+  pickMediaFolder(): Promise<{
+    ok: boolean;
+    uri?: string;
+    name?: string;
+    cancelled?: boolean;
+    error?: string;
+  }>;
+  forgetMediaFolder(): Promise<{ ok: boolean }>;
+  listMediaFolder(): Promise<{
+    ok: boolean;
+    files?: { id: string; name: string; size: number; modified: number }[];
+    error?: string;
+  }>;
+  readMediaFile(opts: { id: string }): Promise<{
+    ok: boolean;
+    base64?: string;
+    error?: string;
+  }>;
 }
 
 export interface NativePermStates {
@@ -374,5 +393,83 @@ export async function nativeSaveToGallery(
       }
     }
     return false;
+  }
+}
+
+// ---- media folder (Storage Access Framework) --------------------------
+//
+// One-time folder grant instead of READ_MEDIA_IMAGES: see the long note in
+// NativeBridgePlugin.java. Every helper is a no-op in the browser, where
+// the Backup screen falls back to the ordinary multi-select file picker.
+
+export interface MediaFolderFile {
+  id: string;
+  name: string;
+  size: number;
+  modified: number;
+}
+
+/** The folder the user already granted, or null. */
+export async function nativeMediaFolder(): Promise<string | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    const r = await b.getMediaFolder();
+    return r.ok && r.name ? r.name : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Ask for the folder. Returns its label, or null if refused/cancelled. */
+export async function nativePickMediaFolder(): Promise<string | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    const r = await b.pickMediaFolder();
+    return r.ok && r.name ? r.name : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function nativeForgetMediaFolder(): Promise<void> {
+  const b = bridge();
+  if (!b) return;
+  try {
+    await b.forgetMediaFolder();
+  } catch {
+    // nothing granted to release
+  }
+}
+
+/** Metadata for every JPEG in the folder — no file bytes are read. */
+export async function nativeListMediaFolder(): Promise<MediaFolderFile[] | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    const r = await b.listMediaFolder();
+    return r.ok && r.files ? r.files : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Read one file from the folder as a Blob. */
+export async function nativeReadMediaFile(
+  id: string,
+  name: string
+): Promise<File | null> {
+  const b = bridge();
+  if (!b) return null;
+  try {
+    const r = await b.readMediaFile({ id });
+    if (!r.ok || !r.base64) return null;
+    const bin = atob(r.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new File([bytes], name, { type: "image/jpeg" });
+  } catch {
+    return null;
   }
 }

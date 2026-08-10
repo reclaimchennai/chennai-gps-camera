@@ -13,6 +13,9 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.database.Cursor;
+import android.content.SharedPreferences;
+import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.util.Base64;
 
@@ -28,10 +31,15 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.annotation.ActivityCallback;
+import androidx.activity.result.ActivityResult;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.ByteArrayOutputStream;
+import com.getcapacitor.JSArray;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -694,5 +702,223 @@ public class NativeBridgePlugin extends Plugin {
             out.put("ok", false);
             call.resolve(out);
         }
+    }
+
+    // ---- media-folder access (Storage Access Framework) ----------------
+    //
+    // Re-importing the user's own photos after a reinstall needs to READ
+    // DCIM/GPS Camera. MediaStore only lets an app read files it still
+    // owns, and a reinstalled app owns nothing it wrote before — so that
+    // path would require READ_MEDIA_IMAGES, a dangerous permission that
+    // also drags in Google Play's Photo and Video Permissions declaration.
+    //
+    // SAF avoids both: the user points at the folder ONCE, we take a
+    // persistable grant, and from then on the app can list and read that
+    // one folder across restarts and reinstalls — with no permission in
+    // the manifest and nothing to declare. Access is exactly as narrow as
+    // the user chose, which is also the honest thing for this app.
+
+    private static final String PREFS = "gpscam";
+    private static final String KEY_TREE = "media-folder-uri";
+
+    private SharedPreferences prefs() {
+        return getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    /** The remembered folder, or null when it was never chosen/revoked. */
+    private Uri treeUri() {
+        String saved = prefs().getString(KEY_TREE, null);
+        if (saved == null) return null;
+        Uri uri = Uri.parse(saved);
+        // the grant can be revoked from Settings; verify rather than assume
+        for (android.content.UriPermission p : getContext().getContentResolver()
+                .getPersistedUriPermissions()) {
+            if (p.getUri().equals(uri) && p.isReadPermission()) return uri;
+        }
+        return null;
+    }
+
+    @PluginMethod
+    public void getMediaFolder(PluginCall call) {
+        Uri uri = treeUri();
+        JSObject out = new JSObject();
+        out.put("ok", uri != null);
+        if (uri != null) {
+            out.put("uri", uri.toString());
+            out.put("name", folderLabel(uri));
+        }
+        call.resolve(out);
+    }
+
+    private String folderLabel(Uri uri) {
+        try {
+            String id = DocumentsContract.getTreeDocumentId(uri);
+            int colon = id.lastIndexOf(':');
+            String path = colon >= 0 ? id.substring(colon + 1) : id;
+            return path.isEmpty() ? "Selected folder" : path;
+        } catch (Exception e) {
+            return "Selected folder";
+        }
+    }
+
+    @PluginMethod
+    public void pickMediaFolder(PluginCall call) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            if (Build.VERSION.SDK_INT >= 26) {
+                // open on DCIM so "GPS Camera" is one tap away rather than
+                // leaving the user to find it from the storage root
+                Uri hint = DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents", "primary:DCIM");
+                intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, hint);
+            }
+            startActivityForResult(call, intent, "onFolderPicked");
+        } catch (Exception e) {
+            JSObject out = new JSObject();
+            out.put("ok", false);
+            out.put("error", String.valueOf(e.getMessage()));
+            call.resolve(out);
+        }
+    }
+
+    @ActivityCallback
+    private void onFolderPicked(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+        JSObject out = new JSObject();
+        Intent data = result.getData();
+        Uri uri = data != null ? data.getData() : null;
+        if (uri == null) {
+            out.put("ok", false);
+            out.put("cancelled", true);
+            call.resolve(out);
+            return;
+        }
+        try {
+            getContext().getContentResolver().takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            prefs().edit().putString(KEY_TREE, uri.toString()).apply();
+            out.put("ok", true);
+            out.put("uri", uri.toString());
+            out.put("name", folderLabel(uri));
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", String.valueOf(e.getMessage()));
+        }
+        call.resolve(out);
+    }
+
+    @PluginMethod
+    public void forgetMediaFolder(PluginCall call) {
+        Uri uri = treeUri();
+        if (uri != null) {
+            try {
+                getContext().getContentResolver().releasePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (Exception ignored) { }
+        }
+        prefs().edit().remove(KEY_TREE).apply();
+        JSObject out = new JSObject();
+        out.put("ok", true);
+        call.resolve(out);
+    }
+
+    /**
+     * List the JPEGs in the chosen folder. Returns metadata only — name,
+     * size and modified time — so the caller can decide what it still
+     * needs BEFORE any bytes move across the bridge. With the app's
+     * IMG_<date>_<time>_gpscam.jpg convention that is enough to skip
+     * everything already imported without reading a single file.
+     */
+    @PluginMethod
+    public void listMediaFolder(PluginCall call) {
+        JSObject out = new JSObject();
+        Uri tree = treeUri();
+        if (tree == null) {
+            out.put("ok", false);
+            out.put("error", "no folder");
+            call.resolve(out);
+            return;
+        }
+        JSArray files = new JSArray();
+        Cursor c = null;
+        try {
+            Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
+                tree, DocumentsContract.getTreeDocumentId(tree));
+            c = getContext().getContentResolver().query(children, new String[] {
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_SIZE,
+                DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                DocumentsContract.Document.COLUMN_MIME_TYPE,
+            }, null, null, null);
+            while (c != null && c.moveToNext()) {
+                String mime = c.getString(4);
+                String name = c.getString(1);
+                boolean isJpeg = (mime != null && mime.startsWith("image/"))
+                    || (name != null && name.toLowerCase(Locale.US).endsWith(".jpg"))
+                    || (name != null && name.toLowerCase(Locale.US).endsWith(".jpeg"));
+                if (!isJpeg) continue;
+                JSObject f = new JSObject();
+                f.put("id", c.getString(0));
+                f.put("name", name);
+                f.put("size", c.getLong(2));
+                f.put("modified", c.getLong(3));
+                files.put(f);
+            }
+            out.put("ok", true);
+            out.put("files", files);
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", String.valueOf(e.getMessage()));
+        } finally {
+            if (c != null) try { c.close(); } catch (Exception ignored) { }
+        }
+        call.resolve(out);
+    }
+
+    /**
+     * Read one file from the chosen folder, base64 in a single reply.
+     *
+     * Photos are a few MB, which the bridge handles; anything larger than
+     * the cap is refused rather than risking an OOM on a low-RAM phone —
+     * the caller reports it as skipped.
+     */
+    private static final int MAX_READ_BYTES = 32 * 1024 * 1024;
+
+    @PluginMethod
+    public void readMediaFile(PluginCall call) {
+        JSObject out = new JSObject();
+        Uri tree = treeUri();
+        String docId = call.getString("id", "");
+        if (tree == null || docId == null || docId.isEmpty()) {
+            out.put("ok", false);
+            call.resolve(out);
+            return;
+        }
+        InputStream in = null;
+        try {
+            Uri file = DocumentsContract.buildDocumentUriUsingTree(tree, docId);
+            in = getContext().getContentResolver().openInputStream(file);
+            if (in == null) throw new IllegalStateException("cannot open");
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            byte[] chunk = new byte[64 * 1024];
+            int n;
+            int total = 0;
+            while ((n = in.read(chunk)) > 0) {
+                total += n;
+                if (total > MAX_READ_BYTES) throw new IllegalStateException("too large");
+                buf.write(chunk, 0, n);
+            }
+            out.put("ok", true);
+            out.put("base64", Base64.encodeToString(buf.toByteArray(), Base64.NO_WRAP));
+        } catch (Exception e) {
+            out.put("ok", false);
+            out.put("error", String.valueOf(e.getMessage()));
+        } finally {
+            if (in != null) try { in.close(); } catch (Exception ignored) { }
+        }
+        call.resolve(out);
     }
 }

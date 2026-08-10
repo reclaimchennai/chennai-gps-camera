@@ -15,6 +15,8 @@ import {
   Images,
   Cpu,
   Check,
+  FolderSearch,
+  RefreshCw,
   AlertTriangle,
   Loader,
 } from "lucide-react";
@@ -36,11 +38,18 @@ import {
 import {
   importPhotos,
   mergeBackupIntoLibrary,
+  scanMediaFolder,
   type ImportProgress,
   type ImportReport,
 } from "../lib/importPhotos";
 import { buildModelPack, type ModelPackProgress } from "../lib/modelpack";
-import { nativeAppVersion } from "../lib/native";
+import {
+  isNativeApp,
+  nativeAppVersion,
+  nativeForgetMediaFolder,
+  nativeMediaFolder,
+  nativePickMediaFolder,
+} from "../lib/native";
 
 const fmtBytes = (n: number) =>
   n > 1024 * 1024
@@ -62,6 +71,8 @@ export default function BackupView() {
     null
   );
   const [pending, setPending] = useState<BackupFile | null>(null);
+  /** the granted device folder's label, on Android only */
+  const [folder, setFolder] = useState<string | null>(null);
 
   const backupInput = useRef<HTMLInputElement | null>(null);
   const photosInput = useRef<HTMLInputElement | null>(null);
@@ -74,6 +85,7 @@ export default function BackupView() {
         videos: items.filter((i) => i.kind === "video").length,
       });
       setPending(await takePendingBackup());
+      setFolder(await nativeMediaFolder());
     })();
   }, [restored, imported]);
 
@@ -160,6 +172,52 @@ export default function BackupView() {
       if (report.imported && pending) await clearPendingBackup();
     } catch (e) {
       setNote({ kind: "warn", text: `Import failed: ${String(e)}` });
+    } finally {
+      setBusy(null);
+      setProgress(null);
+    }
+  };
+
+  // ---- scan the granted device folder ---------------------------------
+  const onScan = async (grantFirst: boolean) => {
+    setNote(null);
+    let label = folder;
+    if (grantFirst || !label) {
+      label = await nativePickMediaFolder();
+      setFolder(label);
+      if (!label) {
+        setNote({
+          kind: "warn",
+          text: "No folder chosen — nothing was scanned.",
+        });
+        return;
+      }
+    }
+    setBusy("Scanning your photos…");
+    setProgress(null);
+    try {
+      const report = await scanMediaFolder({
+        backup: pending,
+        onProgress: setProgress,
+      });
+      if (!report) {
+        setNote({ kind: "warn", text: "Couldn't read that folder." });
+        return;
+      }
+      setImported(report);
+      const bits: string[] = [];
+      bits.push(`${report.imported} imported`);
+      if (report.alreadyHad) bits.push(`${report.alreadyHad} already here`);
+      if (report.matchedFromBackup)
+        bits.push(`${report.matchedFromBackup} matched to your backup`);
+      if (report.failed) bits.push(`${report.failed} unreadable`);
+      setNote({
+        kind: "ok",
+        text: `Scanned ${report.scanned} photo${report.scanned === 1 ? "" : "s"} — ${bits.join(" · ")}.`,
+      });
+      if (report.imported && pending) await clearPendingBackup();
+    } catch (e) {
+      setNote({ kind: "warn", text: `Scan failed: ${String(e)}` });
     } finally {
       setBusy(null);
       setProgress(null);
@@ -275,10 +333,9 @@ export default function BackupView() {
         </button>
 
         <p className="hint" style={{ margin: "14px 0 10px" }}>
-          Step 2 — point the app at your photos. Select everything in{" "}
-          <b>DCIM/GPS Camera</b>. Each photo already carries its own location
-          and time, so the ward, zone and police stations are worked out again
-          on the device — nothing is sent anywhere.
+          Step 2 — bring your photos back. Each one already carries its own
+          location and time, so the ward, zone and police stations are worked
+          out again on the device — nothing is sent anywhere.
           {pending && (
             <>
               {" "}
@@ -289,14 +346,51 @@ export default function BackupView() {
             </>
           )}
         </p>
-        <button
-          className={pending ? "primary-btn" : "ghost-btn"}
-          style={{ width: "100%" }}
-          disabled={!!busy}
-          onClick={() => photosInput.current?.click()}
-        >
-          <Images size={17} /> Import photos from this device
-        </button>
+
+        {isNativeApp() ? (
+          <>
+            <button
+              className={pending || !folder ? "primary-btn" : "ghost-btn"}
+              style={{ width: "100%" }}
+              disabled={!!busy}
+              onClick={() => void onScan(!folder)}
+            >
+              {folder ? <RefreshCw size={17} /> : <FolderSearch size={17} />}{" "}
+              {folder ? "Scan for new photos" : "Choose your GPS Camera folder"}
+            </button>
+            <p className="hint" style={{ margin: "8px 0 0" }}>
+              {folder ? (
+                <>
+                  Watching <b>{folder}</b>. Photos already in your gallery are
+                  recognised by their filename, so a scan only reads what is
+                  genuinely new.{" "}
+                  <button
+                    className="link-btn"
+                    onClick={() => void nativeForgetMediaFolder().then(() => setFolder(null))}
+                  >
+                    Use a different folder
+                  </button>
+                </>
+              ) : (
+                <>
+                  Pick <b>DCIM &rsaquo; GPS Camera</b> once and the app can
+                  check it for new photos from then on. This grants access to
+                  that one folder and nothing else — no photo permission is
+                  requested.
+                </>
+              )}
+            </p>
+          </>
+        ) : (
+          <button
+            className={pending ? "primary-btn" : "ghost-btn"}
+            style={{ width: "100%" }}
+            disabled={!!busy}
+            onClick={() => photosInput.current?.click()}
+          >
+            <Images size={17} /> Import photos from this device
+          </button>
+        )}
       </div>
 
       <div className="card">
