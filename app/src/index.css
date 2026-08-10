@@ -2816,3 +2816,51 @@ a {
   height: 100%;
   object-fit: contain;
 }
+
+/* ---------- backup & restore ---------- */
+
+.backup-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.backup-note.warn {
+  border-color: var(--danger);
+}
+.backup-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.backup-note.ok svg {
+  color: var(--accent-strong);
+}
+.backup-note.warn svg {
+  color: var(--danger);
+}
+
+/* the buttons on this screen carry an icon beside their label */
+.backup-note + .card button,
+.card .primary-btn,
+.card .ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.spin {
+  animation: backup-spin 1s linear infinite;
+}
+@keyframes backup-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+}

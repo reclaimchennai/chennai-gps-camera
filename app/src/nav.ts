@@ -17,6 +17,7 @@ export interface Route {
     | "video-edit"
     | "settings"
     | "watermark"
+    | "backup"
     | "about"
     | "report";
   id?: string;
@@ -41,6 +42,7 @@ function parse(hash: string): Route {
       return { name: "video-edit", id: parts[1] };
     case "settings":
       if (parts[1] === "watermark") return { name: "watermark" };
+      if (parts[1] === "backup") return { name: "backup" };
       return { name: "settings" };
     case "about":
       return { name: "about" };
@@ -112,32 +114,47 @@ function backIntercepted(): boolean {
 }
 
 /**
- * Android back (gesture or button), relayed by MainActivity. Deterministic
- * where it matters: the gallery ALWAYS returns to the camera in one step —
- * history.back() could land on dead swipe entries and appear to do nothing
- * — and at the camera the app hands the screen back to Android. Everywhere
- * else, contextual history back (viewer returns to the group it came from,
- * watermark editor to settings, and so on).
+ * What Back means — for the Android gesture AND every on-screen back
+ * button. One function, deliberately: they used to disagree.
+ *
+ * The gesture was already deterministic here, but the buttons called
+ * `goBack()` (raw `history.back()`), and the history stack is NOT a
+ * truthful record of where the user has been. Several paths rewrite it:
+ * the viewer replaces its own entry on every swipe, and returning from
+ * the viewer replaces the media entry with `/gallery` — which leaves the
+ * PREVIOUS entry also pointing at `/gallery`. `history.back()` then moved
+ * from one `/gallery` entry to an identical one and the screen did not
+ * change, so Back looked broken and took two or three presses. The
+ * gesture never showed this because it never consulted history.
+ *
+ * So: screens whose parent is unambiguous jump straight there, and only
+ * genuinely nested screens (settings → watermark) consult history.
  */
+export function appBack(): void {
+  // a screen-local mode (gallery selection) gets the press first
+  if (backIntercepted()) return;
+  const route = parse(location.hash);
+  if (route.name === "camera") {
+    // at the root the app hands the screen back to Android; on the web
+    // there is nothing above us, so do nothing
+    if (isNativeApp()) void minimizeNativeApp();
+  } else if (route.name === "gallery") navigate("/", { replace: true });
+  else if (route.name === "media")
+    // the viewer rewrites its own history entry on every swipe, so
+    // history.back() from here could land on a replaced entry and look
+    // dead: go straight back to whatever opened it
+    navigate(viewerOrigin(), { replace: true });
+  else if (
+    route.name === "group" ||
+    route.name === "map" ||
+    route.name === "collage" ||
+    route.name === "poster"
+  )
+    navigate("/gallery", { replace: true });
+  else goBack();
+}
+
+/** Android back (gesture or button), relayed by MainActivity. */
 if (isNativeApp()) {
-  window.addEventListener("gpscamBack", () => {
-    // a screen-local mode (gallery selection) gets the press first
-    if (backIntercepted()) return;
-    const route = parse(location.hash);
-    if (route.name === "camera") void minimizeNativeApp();
-    else if (route.name === "gallery") navigate("/", { replace: true });
-    else if (route.name === "media")
-      // the viewer rewrites its own history entry on every swipe, so
-      // history.back() from here could land on a replaced entry and look
-      // dead: go straight back to whatever opened it
-      navigate(viewerOrigin(), { replace: true });
-    else if (
-      route.name === "group" ||
-      route.name === "map" ||
-      route.name === "collage" ||
-      route.name === "poster"
-    )
-      navigate("/gallery", { replace: true });
-    else goBack();
-  });
+  window.addEventListener("gpscamBack", appBack);
 }

@@ -30,7 +30,7 @@ import {
 import { getThumbUrl } from "../lib/thumbcache";
 import { viewerOrderFor } from "../lib/viewer-order";
 import type { MediaRecord, PhotoRecord } from "../types";
-import { navigate, goBack } from "../nav";
+import { navigate, appBack } from "../nav";
 import { shareBlob, downloadBlob, suggestedName } from "../lib/share";
 import { isNativeApp } from "../lib/native";
 import { fmtCoordsLine, fmtDateLine, fmtWard, fmtZone } from "../lib/geo/format";
@@ -189,7 +189,7 @@ export default function MediaDetailView({ id }: { id: string }) {
     void (async () => {
       const r = await getMedia(curId);
       if (!r) {
-        goBack();
+        appBack();
         return;
       }
       setRec(r);
@@ -759,7 +759,10 @@ export default function MediaDetailView({ id }: { id: string }) {
 
   const onDelete = async () => {
     await deleteMedia(curId);
-    navigate("/gallery");
+    // replace, never push: pushing left the deleted item in the forward
+    // history AND stacked a second /gallery entry under this one, which
+    // is what made Back need two presses afterwards
+    navigate("/gallery", { replace: true });
   };
 
   const saveTags = async (tags: string[]) => {
@@ -901,7 +904,7 @@ export default function MediaDetailView({ id }: { id: string }) {
 
       {/* immersive chrome: slides in on tap */}
       <header className={`viewer-top${chrome ? " show" : ""}`}>
-        <button className="icon-btn" onClick={goBack} aria-label="Back">
+        <button className="icon-btn" onClick={appBack} aria-label="Back">
           <ArrowLeft size={20} />
         </button>
         <h1>

@@ -18,6 +18,8 @@ const ReportView = lazy(() => import("./components/ReportView"));
 const PhotoMapView = lazy(() => import("./components/PhotoMapView"));
 const CollageView = lazy(() => import("./components/CollageView"));
 const PosterView = lazy(() => import("./components/PosterView"));
+// Backup/restore is a rarely-opened maintenance screen — lazy.
+const BackupView = lazy(() => import("./components/BackupView"));
 
 export default function App() {
   const route = useRoute();
@@ -43,6 +45,9 @@ export default function App() {
       </Suspense>
       {route.name === "settings" && <SettingsView />}
       {route.name === "watermark" && <WatermarkEditorView />}
+      <Suspense fallback={null}>
+        {route.name === "backup" && <BackupView />}
+      </Suspense>
       {route.name === "about" && <AboutView />}
       <Suspense fallback={null}>
         {route.name === "report" && <ReportView />}

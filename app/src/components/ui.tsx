@@ -1,7 +1,7 @@
 import { createContext, useContext, useId } from "react";
 import type { ReactNode } from "react";
 import { ArrowLeft, ChevronRight } from "lucide-react";
-import { goBack } from "../nav";
+import { appBack } from "../nav";
 
 /**
  * Enter commits + dismisses the keyboard on single-line inputs (the tags
@@ -39,7 +39,7 @@ export function Screen({
       <header className="screen-header">
         <button
           className="icon-btn"
-          onClick={onBack ?? goBack}
+          onClick={onBack ?? appBack}
           aria-label={backLabel ?? "Back"}
         >
           {backIcon ?? <ArrowLeft size={20} />}

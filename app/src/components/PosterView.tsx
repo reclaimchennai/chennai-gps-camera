@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, ArrowRight } from "lucide-react";
 import { listMedia, getBlob, putBlob, putMedia, newId } from "../lib/db";
 import type { PhotoRecord } from "../types";
-import { navigate, goBack } from "../nav";
+import { navigate, appBack } from "../nav";
 import { canvasToBlob, makeThumbnail, loadImage } from "../lib/img";
 import { writeExif } from "../lib/exif";
 import { scheduleDownloads } from "../lib/downloadQueue";
@@ -224,7 +224,7 @@ export default function PosterView() {
       <header className="screen-header">
         <button
           className="icon-btn"
-          onClick={() => (phase === "compose" ? setPhase("pick") : goBack())}
+          onClick={() => (phase === "compose" ? setPhase("pick") : appBack())}
           aria-label="Back"
         >
           <ArrowLeft size={20} />
