@@ -20,7 +20,13 @@ interface Entry {
   at: number;
 }
 
-const KEY = "geocache";
+/**
+ * v2: entries written before the corroboration check could hold an answer
+ * our own data contradicts ("Velachery" for a point in Maraimalainagar),
+ * and a cache hit returns before any provider is consulted — so a bad
+ * entry outlived the fix by up to its TTL. A new key retires them all.
+ */
+const KEY = "geocache-v2";
 /** ~110 m at 3 decimal places — about a city block, which is the scale an
  *  address is accurate to anyway. Finer would cache one entry per step. */
 const PRECISION = 3;

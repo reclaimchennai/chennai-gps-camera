@@ -312,11 +312,16 @@ export async function reverseGeocode(
 
   // A place we have already asked about answers instantly and costs the
   // provider nothing. Same cell, same language, within a month.
+  const truth = await localTruth(lat, lng);
   const remembered = await cachedAddress(lat, lng, lang);
   // `address` is required on a result; a cache entry holding only a
-  // locality is not a usable answer, so fall through and ask properly
+  // locality is not a usable answer, so fall through and ask properly.
+  // A hit is also re-checked: the cache is consulted BEFORE any provider,
+  // so an entry that disagrees with our own data would otherwise outlive
+  // every fix for the length of its TTL.
   if (remembered?.address) {
-    return { address: remembered.address, locality: remembered.locality };
+    const hit = { address: remembered.address, locality: remembered.locality };
+    if (corroborated(hit, truth)) return hit;
   }
 
   try {
@@ -376,29 +381,63 @@ export async function reverseGeocode(
      * this can only ever improve on the old "first non-null wins", never
      * leave a capture with no address.
      */
-    const truth = await localTruth(lat, lng);
-    let fallback: GeocodeResult | null = null;
-    const consider = (r: GeocodeResult | null): GeocodeResult | null => {
+    // a holder, not a plain `let`: the assignment happens inside consider(),
+    // and TypeScript cannot see through the closure to know it was written
+    const first: { uncorroborated: GeocodeResult | null } = { uncorroborated: null };
+    /**
+     * Ask a provider, and treat a thrown request as "no answer".
+     *
+     * The chain used to stop at the first non-null answer, so a later
+     * provider's failure could never be reached. Now that every answer is
+     * checked, a provider IS reached after an uncorroborated one — and
+     * offline that call throws. Without this the exception escapes to the
+     * outer catch and the capture ends up with no address at all, which
+     * is worse than the imprecise one we already had in hand.
+     */
+    const consider = async (
+      ask: () => Promise<GeocodeResult | null>
+    ): Promise<GeocodeResult | null> => {
+      let r: GeocodeResult | null = null;
+      try {
+        r = await ask();
+      } catch {
+        return null; // unreachable provider — try the next rung
+      }
       if (!r) return null;
       if (corroborated(r, truth)) return r;
-      fallback ??= r;
+      first.uncorroborated ??= r;
       return null;
     };
 
-    const sys = consider(await trySystem());
+    const sys = await consider(trySystem);
     if (sys) return remember(lat, lng, lang, await localised(sys));
     if (settings.googleApiKey) {
-      const g = consider(await google(lat, lng, settings.googleApiKey, lang));
+      const g = await consider(() => google(lat, lng, settings.googleApiKey, lang));
       if (g) return remember(lat, lng, lang, g);
     }
     if (settings.mapplsApiKey) {
-      const m = consider(await mappls(lat, lng, settings.mapplsApiKey));
+      const m = await consider(() => mappls(lat, lng, settings.mapplsApiKey));
       if (m) return remember(lat, lng, lang, m);
     }
-    const n = consider(await nominatim(lat, lng, lang));
+    const n = await consider(() => nominatim(lat, lng, lang));
     if (n) return remember(lat, lng, lang, n);
-    // nobody agreed with our own data; the first answer still beats none
-    return remember(lat, lng, lang, fallback);
+    /**
+     * Nobody agreed with our own data. Keep the address — a rough address
+     * beats none, and offline there may be no other answer — but drop the
+     * LOCALITY, because that is what titles the card in 48pt. The
+     * renderer falls back to jurisdiction.city, which we resolved
+     * ourselves and can stand behind. This is what stops "Velachery"
+     * headlining a photo taken in Maraimalainagar even when the only
+     * provider reachable is the one that got it wrong.
+     */
+    return remember(
+      lat,
+      lng,
+      lang,
+      first.uncorroborated && truth.length
+        ? { address: first.uncorroborated.address }
+        : first.uncorroborated
+    );
   } catch {
     return null;
   }
