@@ -1687,34 +1687,66 @@ export class CameraController {
     if (!track) throw new Error("camera not running");
     const video = this.video;
 
-    // Native app at 1× with no digital crop: grab the live preview frame
-    // directly — instant, and there is no detail to gain. But when a
-    // DIGITAL crop is active, that shortcut is exactly what destroyed
-    // zoomed image quality: cropping a 1080p preview at 2× leaves ~540p
-    // of real detail, upscaled to full size (blurry, unreadable text).
-    // Zoomed digital captures therefore take the full-sensor photo path
-    // below, so the crop comes out of a many-megapixel frame instead.
-    if (
-      isNativeApp() &&
-      video &&
-      video.readyState >= 2 &&
-      this.captureZoom === 1
-    ) {
-      return await createImageBitmap(video);
-    }
-
+    /**
+     * Prefer the full sensor. Always.
+     *
+     * The native app used to shortcut straight to the preview frame at 1×
+     * — "instant, and there is no detail to gain". The second half was
+     * wrong. previewLongEdge is deliberately capped (1920, or 1280 on an
+     * entry phone) so the VIEWFINDER stays smooth, and grabbing the still
+     * from that frame handed the photo the same cap: a 2 MP file whose
+     * watermark text and QR were too coarse to read, while the browser —
+     * which never took the shortcut — wrote a full-sensor file from the
+     * same phone. Nobody would guess that a preview-smoothness dial
+     * silently set their photo resolution, and it took a report about an
+     * unscannable QR to find it.
+     *
+     * So the sensor path goes first now, and the preview frame is what it
+     * always should have been: the fallback for when there is no better
+     * source. Where ImageCapture is unavailable the behaviour is exactly
+     * as before.
+     */
     if (window.ImageCapture) {
       try {
         const ic = new window.ImageCapture(track);
         const blob = await ic.takePhoto();
-        return await createImageBitmap(blob);
+        const bmp = await createImageBitmap(blob);
+        lastCaptureInfo = {
+          source: "sensor",
+          width: bmp.width,
+          height: bmp.height,
+        };
+        return bmp;
       } catch {
-        // fall through to video-frame grab
+        // fall through to the preview frame
       }
     }
     if (!video || video.readyState < 2) throw new Error("no frame available");
-    return await createImageBitmap(video);
+    const bmp = await createImageBitmap(video);
+    lastCaptureInfo = {
+      source: "preview frame",
+      width: bmp.width,
+      height: bmp.height,
+    };
+    return bmp;
   }
+}
+
+/**
+ * Where the last still actually came from, and how big it was.
+ *
+ * Surfaced in Settings → Advanced: "sensor" vs "preview frame" is the
+ * difference between a full-resolution photo and one capped by the
+ * viewfinder's smoothness setting, and no user could otherwise tell.
+ */
+export interface CaptureInfo {
+  source: "sensor" | "preview frame";
+  width: number;
+  height: number;
+}
+let lastCaptureInfo: CaptureInfo | null = null;
+export function lastCapture(): CaptureInfo | null {
+  return lastCaptureInfo;
 }
 
 export const camera = new CameraController();

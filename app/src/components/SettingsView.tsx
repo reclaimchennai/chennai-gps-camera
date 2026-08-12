@@ -4,6 +4,7 @@ import { Screen, Row, Toggle, blurOnEnter } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
 import { lastGeocodeDiagnostic } from "../lib/geocode";
+import { lastCapture } from "../lib/camera";
 import { isNativeApp, isInstalledApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
@@ -105,6 +106,13 @@ export default function SettingsView() {
   const [advOpen, setAdvOpen] = useState(false);
   // tap the row to re-read; the value changes as the live address resolves
   const [, setDiagTick] = useState(0);
+  const diagText = (): string => {
+    const c = lastCapture();
+    const cap = c
+      ? `last photo: ${c.width}×${c.height} from the ${c.source}`
+      : "last photo: none yet this session";
+    return `${cap}\n${geoDiag()}`;
+  };
   const geoDiag = (): string => {
     const d = lastGeocodeDiagnostic();
     if (!d) return "No address looked up yet — tap after the card shows a place.";
@@ -564,8 +572,8 @@ export default function SettingsView() {
               />
             </Row>
             <Row
-              label="Address diagnostics"
-              hint={geoDiag()}
+              label="Diagnostics"
+              hint={diagText()}
               onClick={() => setDiagTick((t) => t + 1)}
             />
             <Row

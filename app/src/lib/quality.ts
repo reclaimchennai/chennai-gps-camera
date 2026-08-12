@@ -104,10 +104,24 @@ export function qualityPlan(): QualityPlan {
   }
 }
 
-/** Human-readable summary for the Settings row hint. */
+/**
+ * Human-readable summary for the Settings row hint.
+ *
+ * It used to describe only the preview and the video, which is how a
+ * degraded PHOTO went unexplained: in the app a still is taken from the
+ * sensor where possible, but falls back to the preview frame — and then
+ * this setting is what caps it. Say so, because the owner only found it
+ * by trying Max.
+ */
 export function qualitySummary(): string {
   const p = qualityPlan();
   const tierWord =
     p.tier === "high" ? "high-end" : p.tier === "mid" ? "mid-range" : "entry";
-  return `Detected ${tierWord} device. Preview ${p.previewLongEdge}p-class, video capped at ${p.recordLongEdge === 1280 ? "720p" : p.recordLongEdge === 1920 ? "1080p" : "1440p"}.`;
+  const rec =
+    p.recordLongEdge === 1280 ? "720p" : p.recordLongEdge === 1920 ? "1080p" : "1440p";
+  return (
+    `Detected ${tierWord} device. Preview ${p.previewLongEdge}p-class, video capped at ${rec}. ` +
+    `Photos come from the full sensor where the device allows it; where it does not, ` +
+    `they fall back to the preview size above — raise this if a photo's watermark looks soft.`
+  );
 }
