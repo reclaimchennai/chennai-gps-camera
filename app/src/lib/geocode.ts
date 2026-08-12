@@ -282,6 +282,31 @@ function corroborated(r: GeocodeResult | null, truth: string[]): boolean {
   });
 }
 
+/**
+ * What the last lookup actually decided.
+ *
+ * Two rounds of "it should work" were wrong about the device, so the
+ * decision is now readable on the phone (Settings → Advanced) instead of
+ * inferred from a photo.
+ */
+export interface GeocodeDiagnostic {
+  at: number;
+  lat: number;
+  lng: number;
+  /** what our own packs say is true here */
+  truth: string[];
+  provider: string;
+  corroborated: boolean;
+  address?: string;
+  locality?: string;
+  localitySuppressed: boolean;
+}
+
+let lastDiag: GeocodeDiagnostic | null = null;
+export function lastGeocodeDiagnostic(): GeocodeDiagnostic | null {
+  return lastDiag;
+}
+
 async function remember(
   lat: number,
   lng: number,
@@ -321,8 +346,42 @@ export async function reverseGeocode(
   // every fix for the length of its TTL.
   if (remembered?.address) {
     const hit = { address: remembered.address, locality: remembered.locality };
-    if (corroborated(hit, truth)) return hit;
+    if (corroborated(hit, truth)) {
+      lastDiag = {
+        at: Date.now(), lat, lng, truth, provider: "cache",
+        corroborated: true, address: hit.address, locality: hit.locality,
+        localitySuppressed: false,
+      };
+      return hit;
+    }
   }
+
+  /**
+   * The single exit. Applies the one rule that holds for every provider
+   * and every mode: an answer our own data cannot corroborate may still
+   * supply the street line, but it never titles the card — render.ts
+   * falls back to jurisdiction.city, which we resolved from our own
+   * polygons and can stand behind.
+   */
+  const settle = async (
+    provider: string,
+    r: GeocodeResult | null
+  ): Promise<GeocodeResult | null> => {
+    const ok = corroborated(r, truth);
+    const suppress = !!(r && !ok && truth.length > 0);
+    lastDiag = {
+      at: Date.now(),
+      lat,
+      lng,
+      truth,
+      provider,
+      corroborated: ok,
+      address: r?.address,
+      locality: r?.locality,
+      localitySuppressed: suppress,
+    };
+    return remember(lat, lng, lang, suppress ? { address: r!.address } : r);
+  };
 
   try {
     const trySystem = async () => {
@@ -358,19 +417,24 @@ export async function reverseGeocode(
       return first;
     };
 
-    // A pinned provider is a deliberate choice — honour it as asked.
+    /**
+     * A pinned provider is a deliberate choice, so it is NOT overridden by
+     * another — but our own boundary data still gets to title the card.
+     * The check used to run only in "auto", which meant a user on
+     * "System (Android)" kept the wrong headline no matter what.
+     */
     if (mode === "system")
-      return remember(lat, lng, lang, await localised(await trySystem()));
+      return settle("system", await localised(await trySystem()));
     if (mode === "google")
       return settings.googleApiKey
-        ? remember(lat, lng, lang, await google(lat, lng, settings.googleApiKey, lang))
+        ? settle("google", await google(lat, lng, settings.googleApiKey, lang))
         : null;
     if (mode === "mappls")
       return settings.mapplsApiKey
-        ? remember(lat, lng, lang, await mappls(lat, lng, settings.mapplsApiKey))
+        ? settle("mappls", await mappls(lat, lng, settings.mapplsApiKey))
         : null;
     if (mode === "nominatim")
-      return remember(lat, lng, lang, await nominatim(lat, lng, lang));
+      return settle("nominatim", await nominatim(lat, lng, lang));
 
     /**
      * auto: system → google (keyed) → mappls (keyed) → nominatim.
@@ -410,17 +474,17 @@ export async function reverseGeocode(
     };
 
     const sys = await consider(trySystem);
-    if (sys) return remember(lat, lng, lang, await localised(sys));
+    if (sys) return settle("system", await localised(sys));
     if (settings.googleApiKey) {
       const g = await consider(() => google(lat, lng, settings.googleApiKey, lang));
-      if (g) return remember(lat, lng, lang, g);
+      if (g) return settle("google", g);
     }
     if (settings.mapplsApiKey) {
       const m = await consider(() => mappls(lat, lng, settings.mapplsApiKey));
-      if (m) return remember(lat, lng, lang, m);
+      if (m) return settle("mappls", m);
     }
     const n = await consider(() => nominatim(lat, lng, lang));
-    if (n) return remember(lat, lng, lang, n);
+    if (n) return settle("nominatim", n);
     /**
      * Nobody agreed with our own data. Keep the address — a rough address
      * beats none, and offline there may be no other answer — but drop the
@@ -430,14 +494,7 @@ export async function reverseGeocode(
      * headlining a photo taken in Maraimalainagar even when the only
      * provider reachable is the one that got it wrong.
      */
-    return remember(
-      lat,
-      lng,
-      lang,
-      first.uncorroborated && truth.length
-        ? { address: first.uncorroborated.address }
-        : first.uncorroborated
-    );
+    return settle("uncorroborated", first.uncorroborated);
   } catch {
     return null;
   }

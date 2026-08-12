@@ -3,6 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { Screen, Row, Toggle, blurOnEnter } from "./ui";
 import { useLiveStore, useSettingsStore } from "../store";
 import { navigate } from "../nav";
+import { lastGeocodeDiagnostic } from "../lib/geocode";
 import { isNativeApp, isInstalledApp } from "../lib/native";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
@@ -102,6 +103,18 @@ export default function SettingsView() {
   // reference level the user is exposing the mic to (dB), for Match
   const [calRef, setCalRef] = useState(60);
   const [advOpen, setAdvOpen] = useState(false);
+  // tap the row to re-read; the value changes as the live address resolves
+  const [, setDiagTick] = useState(0);
+  const geoDiag = (): string => {
+    const d = lastGeocodeDiagnostic();
+    if (!d) return "No address looked up yet — tap after the card shows a place.";
+    return [
+      `provider: ${d.provider}${d.corroborated ? " ✓ agrees with our map data" : " ✗ does not"}`,
+      d.localitySuppressed ? "title suppressed — using our own city" : `title: ${d.locality ?? "(none)"}`,
+      `our data says: ${d.truth.join(" · ") || "(nothing resolved)"}`,
+      `address: ${d.address ?? "(none)"}`,
+    ].join("\n");
+  };
   const [plateTest, setPlateTest] = useState<string | null>(null);
   // Rear lenses the app found (empty when the platform exposes only one).
   // Read from the saved profile, not just the live controller: arriving
@@ -550,6 +563,11 @@ export default function SettingsView() {
                 }
               />
             </Row>
+            <Row
+              label="Address diagnostics"
+              hint={geoDiag()}
+              onClick={() => setDiagTick((t) => t + 1)}
+            />
             <Row
               label="Backup & restore"
               hint="Save your settings and tags, or recover photos after a reinstall"
