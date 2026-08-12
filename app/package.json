@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "geodata": "node scripts/build-packs.mjs",
     "icons": "node scripts/make-icons.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "check:packs": "node scripts/check-packs.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

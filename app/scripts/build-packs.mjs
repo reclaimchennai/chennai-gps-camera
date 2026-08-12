@@ -48,14 +48,43 @@ const COORD_DECIMALS = 5;
 const round = (n) => Number(n.toFixed(COORD_DECIMALS));
 const roundCoords = (c) =>
   typeof c[0] === "number" ? [round(c[0]), round(c[1])] : c.map(roundCoords);
+/**
+ * Display text out of government shapefiles carries junk that must never
+ * reach a watermark: underscores standing in for spaces
+ * ("MARAIMALAI_NAGAR"), doubled spaces ("Ashokanagara  PS"), and a stray
+ * space before a period in an initialism ("Thiru .Vi.Ka. Nagar").
+ */
 const clean = (v) => {
   if (v == null) return undefined;
-  const s = String(v).trim();
+  const s = String(v)
+    .replace(/_/g, " ")
+    .replace(/\s+\./g, ".")
+    .replace(/\s+/g, " ")
+    .trim();
   return s === "" ? undefined : s;
 };
+
+/**
+ * A ward id, minus the multipart suffix.
+ *
+ * A ward split across several polygons in the shapefile comes through as
+ * "011", "011_1" — the same ward, drawn twice. Left alone the card prints
+ * "Ward 11 1" for whichever half the photo lands in.
+ */
+const cleanWard = (v) => {
+  const s = clean(v);
+  return s == null ? undefined : s.replace(/\s+\d+$/, "").trim() || s;
+};
+
+/**
+ * ALL-CAPS source names become Title Case. Matching letter runs (not \w)
+ * matters: \w includes the underscore, so "BODI_TALUK" was treated as ONE
+ * word and came out "Bodi_taluk" — which is how the underscores survived
+ * into the packs in the first place.
+ */
 const titleish = (s) =>
   s && s.toUpperCase() === s
-    ? s.replace(/\w\S*/g, (w) => w[0] + w.slice(1).toLowerCase())
+    ? s.replace(/[A-Za-z]+/g, (w) => w[0] + w.slice(1).toLowerCase())
     : s;
 
 function normFeature(f, props) {
@@ -129,7 +158,7 @@ function buildTamilNadu() {
       return normFeature(f, {
         corp,
         city: name,
-        ward: clean(p.ward),
+        ward: cleanWard(p.ward),
         zone: clean(p.zone),
       });
     })
@@ -253,8 +282,8 @@ const CO_ATTRIBUTION =
 /** parse "158: Bhati" → { ward: "158", wardName: "Bhati" } */
 function splitNamecol(namecol) {
   const m = String(namecol ?? "").match(/^\s*([^:]+?)\s*:\s*(.+)$/);
-  if (m) return { ward: m[1].trim(), wardName: m[2].trim() };
-  return { ward: clean(namecol), wardName: undefined };
+  if (m) return { ward: cleanWard(m[1]), wardName: clean(m[2]) };
+  return { ward: cleanWard(namecol), wardName: undefined };
 }
 
 const CITIES = [
@@ -300,7 +329,7 @@ const CITIES = [
     corp: "Kolkata Municipal Corporation",
     lo: "boundaries_police_station",
     wardParse: (p) => ({
-      ward: clean(p.WARD) ?? splitNamecol(p.namecol).ward,
+      ward: cleanWard(p.WARD) ?? splitNamecol(p.namecol).ward,
       wardName: undefined,
       zone: clean(p.borough),
     }),
@@ -313,7 +342,7 @@ const CITIES = [
     wards: "boundaries_bmc_ward",
     corp: "Brihanmumbai Municipal Corporation",
     lo: "boundaries_police_city",
-    wardParse: (p) => ({ ward: clean(p.namecol), wardName: undefined }),
+    wardParse: (p) => ({ ward: cleanWard(p.namecol), wardName: undefined }),
   },
   {
     id: "pune",

@@ -15,7 +15,8 @@ import { useSettingsStore } from "../store";
 import { langOf } from "./watermark/signboard";
 import { langsFor } from "./i18n/languages";
 import { cachedAddress, rememberAddress } from "./geocache";
-import { currentPackId } from "./geo/geodata";
+import { currentPackId, loadGeodataFor } from "./geo/geodata";
+import { lookup } from "./geo/lookup";
 import { nativeReverseGeocode } from "./native";
 
 export interface GeocodeResult {
@@ -217,6 +218,70 @@ function inLanguage(text: string | undefined, lang: string): boolean {
   return !!text && re.test(text);
 }
 
+/**
+ * What our OWN offline data says is true of this point.
+ *
+ * The packs are authoritative for jurisdiction — they are the reason the
+ * app exists — so they are also the yardstick for whether an outside
+ * geocoder's answer is plausible.
+ */
+async function localTruth(lat: number, lng: number): Promise<string[]> {
+  try {
+    const pack = await loadGeodataFor(lat, lng);
+    if (!pack) return [];
+    const j = lookup(pack, lat, lng).jurisdiction;
+    if (!j || j.scope === "out") return [];
+    // loMeta/trafficMeta are "AC · DC · Zone" / "Sub-Division · District"
+    // strings. They matter: a municipality's own ULB feature often has no
+    // district field, and the district is exactly what an outside
+    // geocoder is most likely to name correctly ("… Chengalpattu").
+    const meta = [j.loMeta, j.trafficMeta]
+      .filter((v): v is string => typeof v === "string")
+      .flatMap((v) => v.split("·"));
+    return [
+      j.city,
+      j.district,
+      j.corporation,
+      j.wardName,
+      j.zone,
+      j.block,
+      ...meta,
+    ]
+      .map((v) => (typeof v === "string" ? v.trim() : v))
+      .filter((v): v is string => typeof v === "string" && v.length > 2);
+  } catch {
+    return [];
+  }
+}
+
+/** Spaces and case are not signal: "Maraimalainagar" vs "Maraimalai Nagar". */
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+
+/**
+ * Does this answer name anywhere our own data places this point?
+ *
+ * Android's Geocoder returned "17, Kambar St, Potheri, Kuilkuppam,
+ * Velachery, Chennai, Kattankulathur" for a point our packs put in
+ * Maraimalainagar Municipality, Chengalpattu — Velachery is a Chennai
+ * neighbourhood 25 km away, and the card ended up titled with it. The
+ * same point in the browser (Nominatim) answered "Sattamangalam,
+ * Kattangulathur, Chengalpattu", which names the district we resolved.
+ *
+ * So: an answer that names the resolved city, district, body, ward or
+ * zone is corroborated; one that names none of them is not trusted, and
+ * the next provider gets a turn. Nothing is REJECTED outright — if no
+ * provider corroborates, the first answer is still used, because a
+ * possibly-imprecise address beats no address at all.
+ */
+function corroborated(r: GeocodeResult | null, truth: string[]): boolean {
+  if (!r?.address || truth.length === 0) return true; // nothing to check against
+  const hay = squash(`${r.address} ${r.locality ?? ""}`);
+  return truth.some((t) => {
+    const needle = squash(t);
+    return needle.length > 3 && hay.includes(needle);
+  });
+}
+
 async function remember(
   lat: number,
   lng: number,
@@ -288,6 +353,7 @@ export async function reverseGeocode(
       return first;
     };
 
+    // A pinned provider is a deliberate choice — honour it as asked.
     if (mode === "system")
       return remember(lat, lng, lang, await localised(await trySystem()));
     if (mode === "google")
@@ -301,18 +367,38 @@ export async function reverseGeocode(
     if (mode === "nominatim")
       return remember(lat, lng, lang, await nominatim(lat, lng, lang));
 
-    // auto: system → google (keyed) → mappls (keyed) → nominatim
-    const sys = await trySystem();
+    /**
+     * auto: system → google (keyed) → mappls (keyed) → nominatim.
+     *
+     * Each answer is checked against our own offline jurisdiction before
+     * it is accepted. An uncorroborated answer does not stop the chain —
+     * it is kept as the fallback and the next provider gets a turn — so
+     * this can only ever improve on the old "first non-null wins", never
+     * leave a capture with no address.
+     */
+    const truth = await localTruth(lat, lng);
+    let fallback: GeocodeResult | null = null;
+    const consider = (r: GeocodeResult | null): GeocodeResult | null => {
+      if (!r) return null;
+      if (corroborated(r, truth)) return r;
+      fallback ??= r;
+      return null;
+    };
+
+    const sys = consider(await trySystem());
     if (sys) return remember(lat, lng, lang, await localised(sys));
     if (settings.googleApiKey) {
-      const g = await google(lat, lng, settings.googleApiKey, lang);
+      const g = consider(await google(lat, lng, settings.googleApiKey, lang));
       if (g) return remember(lat, lng, lang, g);
     }
     if (settings.mapplsApiKey) {
-      const m = await mappls(lat, lng, settings.mapplsApiKey);
+      const m = consider(await mappls(lat, lng, settings.mapplsApiKey));
       if (m) return remember(lat, lng, lang, m);
     }
-    return remember(lat, lng, lang, await nominatim(lat, lng, lang));
+    const n = consider(await nominatim(lat, lng, lang));
+    if (n) return remember(lat, lng, lang, n);
+    // nobody agreed with our own data; the first answer still beats none
+    return remember(lat, lng, lang, fallback);
   } catch {
     return null;
   }
