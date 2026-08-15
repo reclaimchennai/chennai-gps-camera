@@ -105,6 +105,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   gridLines: false,
   plateOcr: false,
   captureQuality: "auto",
+  fullSensorStills: false,
   mirrorFrontPhoto: false,
   // Off by default for INSTALLED web apps: saving is a browser download,
   // and Chrome shows a banner for every one — after every photo. In a

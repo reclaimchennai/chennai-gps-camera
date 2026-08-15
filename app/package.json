@@ -12,7 +12,8 @@
     "icons": "node scripts/make-icons.mjs",
     "smoke": "node scripts/smoke.mjs",
     "check:packs": "node scripts/check-packs.mjs",
-    "check:contrast": "node scripts/check-contrast.mjs"
+    "check:contrast": "node scripts/check-contrast.mjs",
+    "check:shutter": "node scripts/check-shutter.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

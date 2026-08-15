@@ -386,6 +386,16 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
 
   const pendingShots = useRef(0);
+  /**
+   * How many taps may stack up behind a grab.
+   *
+   * Not a taste value: every remembered shot becomes a full-resolution
+   * canvas waiting in the background queue, so this is a memory ceiling
+   * wearing a count. Roughly 8 MB a frame at 1080p, ~33 MB at 4K — 24 is
+   * generous for a thumb and survivable on a low-RAM phone because the
+   * queue frees each frame the moment its photo is written.
+   */
+  const MAX_QUEUED_SHOTS = 24;
   const doCaptureRef = useRef<(() => Promise<void>) | null>(null);
   const camStarting = useRef(false);
   const startCamRef = useRef<((m?: Mode) => Promise<void>) | null>(null);
@@ -794,12 +804,23 @@ export default function CameraView({ active }: { active: boolean }) {
   const grabbing = useRef(false);
   const doCapture = useCallback(async () => {
     if (!ready) return;
-    // BURST: a tap landing while the previous capture is still grabbing
-    // used to be thrown away, so hammering the shutter silently lost half
-    // the shots. Remember it instead and fire it the moment the camera is
-    // free. Bounded, so a stuck finger cannot queue a hundred frames.
+    // BURST: a tap landing while the previous capture is still grabbing is
+    // remembered and fired the moment the camera is free, rather than
+    // thrown away.
+    //
+    // The bound used to be 4, which meant bashing the button ten times
+    // saved five photos — one in flight plus four remembered — and said
+    // nothing about the five it dropped. It is now high enough that no
+    // human thumb reaches it, and each held frame is released as soon as
+    // its photo is written. If it is ever hit, that is said out loud:
+    // silently losing a shot someone thought they had taken is the worst
+    // thing this screen can do.
     if (grabbing.current) {
-      if (pendingShots.current < 4) pendingShots.current += 1;
+      if (pendingShots.current < MAX_QUEUED_SHOTS) {
+        pendingShots.current += 1;
+      } else {
+        showToast("Too fast — give it a moment");
+      }
       return;
     }
     grabbing.current = true;

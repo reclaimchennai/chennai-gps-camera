@@ -207,6 +207,16 @@ export interface AppSettings {
   plateOcr: boolean;
   /** capture quality: "auto" adapts to the device tier */
   captureQuality: "auto" | "720p" | "1080p" | "max";
+  /**
+   * Take stills from the sensor rather than from the preview frame.
+   *
+   * Sharper files, at the cost of the shutter: the sensor path runs a
+   * focus and exposure cycle per shot, which on Android is hundreds of
+   * milliseconds with the preview stalled. Off by default — this is a
+   * camera for catching a moment on a street, and a missed frame cannot
+   * be recovered by any amount of resolution.
+   */
+  fullSensorStills: boolean;
   mirrorFrontPhoto: boolean;
   /** Auto-download each captured photo to the device (Downloads folder
    *  on the web build; gallery apps index it). */

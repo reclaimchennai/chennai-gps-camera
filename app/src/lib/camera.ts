@@ -10,6 +10,7 @@
 import { isNativeApp } from "./native";
 import { preferredAudioConstraints } from "./audio/source";
 import { qualityPlan } from "./quality";
+import { useSettingsStore } from "../store";
 import { measureLensFactor, snapFactor } from "./lens-calibrate";
 
 export type FacingMode = "environment" | "user";
@@ -1688,25 +1689,41 @@ export class CameraController {
     const video = this.video;
 
     /**
-     * Prefer the full sensor. Always.
+     * The preview frame, and nothing else, unless asked.
      *
-     * The native app used to shortcut straight to the preview frame at 1×
-     * — "instant, and there is no detail to gain". The second half was
-     * wrong. previewLongEdge is deliberately capped (1920, or 1280 on an
-     * entry phone) so the VIEWFINDER stays smooth, and grabbing the still
-     * from that frame handed the photo the same cap: a 2 MP file whose
-     * watermark text and QR were too coarse to read, while the browser —
-     * which never took the shortcut — wrote a full-sensor file from the
-     * same phone. Nobody would guess that a preview-smoothness dial
-     * silently set their photo resolution, and it took a report about an
-     * unscannable QR to find it.
+     * This call is the ONLY thing standing between a tap and the next tap,
+     * so what it costs is what the shutter costs. `createImageBitmap` on
+     * the video element is a texture copy of the frame already on screen —
+     * a millisecond or two, and it is exactly the frame the user was
+     * looking at when they decided to press.
      *
-     * So the sensor path goes first now, and the preview frame is what it
-     * always should have been: the fallback for when there is no better
-     * source. Where ImageCapture is unavailable the behaviour is exactly
-     * as before.
+     * `ImageCapture.takePhoto()` is not that. It asks the camera for a
+     * fresh still, which on Android means reconfiguring the session and
+     * running an autofocus and exposure convergence first: hundreds of
+     * milliseconds, sometimes seconds, with the preview stalled through
+     * it. v1.45.0 put it first here to lift photo resolution off the
+     * capped preview stream, and it bought sharper files at the cost of
+     * the thing this app is for. Even a synthetic desktop camera measures
+     * 42 ms a frame through it, against 2 ms for the preview.
+     *
+     * So it is opt-in now, under a setting that says what it costs, and
+     * the fast path is the default. Resolution is worth having; it is not
+     * worth missing the shot for.
      */
-    if (window.ImageCapture) {
+    const wantSensor =
+      useSettingsStore.getState().settings.fullSensorStills === true;
+
+    if (!wantSensor && video && video.readyState >= 2) {
+      const bmp = await createImageBitmap(video);
+      lastCaptureInfo = {
+        source: "preview frame",
+        width: bmp.width,
+        height: bmp.height,
+      };
+      return bmp;
+    }
+
+    if (wantSensor && window.ImageCapture) {
       try {
         const ic = new window.ImageCapture(track);
         const blob = await ic.takePhoto();
@@ -1718,7 +1735,7 @@ export class CameraController {
         };
         return bmp;
       } catch {
-        // fall through to the preview frame
+        // fall through — a refused still must not lose the shot
       }
     }
     if (!video || video.readyState < 2) throw new Error("no frame available");

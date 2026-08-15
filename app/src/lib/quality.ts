@@ -121,7 +121,7 @@ export function qualitySummary(): string {
     p.recordLongEdge === 1280 ? "720p" : p.recordLongEdge === 1920 ? "1080p" : "1440p";
   return (
     `Detected ${tierWord} device. Preview ${p.previewLongEdge}p-class, video capped at ${rec}. ` +
-    `Photos come from the full sensor where the device allows it; where it does not, ` +
-    `they fall back to the preview size above — raise this if a photo's watermark looks soft.`
+    `Photos are taken from the preview stream, so this sets their size too — ` +
+    `raise it if a photo's watermark or QR looks soft.`
   );
 }

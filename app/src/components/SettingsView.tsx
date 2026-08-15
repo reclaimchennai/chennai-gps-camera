@@ -261,6 +261,16 @@ export default function SettingsView() {
               </div>
             </div>
 
+            <Row
+              label="Full-sensor photos"
+              hint="Sharper files, slower shutter. The camera runs a focus and exposure cycle for every shot instead of taking the frame already on screen, which on many phones means a noticeable wait and a stalled preview between photos. Leave this off for shooting on the move."
+            >
+              <Toggle
+                on={settings.fullSensorStills}
+                onChange={(v) => setSettings({ fullSensorStills: v })}
+              />
+            </Row>
+
             <div className="row" style={{ display: "block" }}>
               <div className="label">Camera lenses</div>
               <div className="hint" style={{ margin: "2px 0 8px" }}>
