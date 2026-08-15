@@ -14,7 +14,14 @@ import { resetScriptCache } from "./lib/watermark/signboard";
 
 // ---- Live (ephemeral) state ------------------------------------------
 
-export type GpsStatus = "waiting" | "ok" | "denied";
+/**
+ * "approximate" is a fix that arrived but is too coarse to place the
+ * point inside a ward, village or police boundary — typically a
+ * network/cell estimate. It is deliberately distinct from "ok": the
+ * jurisdiction rows on the card are only as right as the fix, so a photo
+ * taken on one must say so.
+ */
+export type GpsStatus = "waiting" | "ok" | "approximate" | "denied";
 
 interface LiveState {
   fix: Fix | null;

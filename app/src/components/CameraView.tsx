@@ -41,6 +41,7 @@ import {
   Camera,
   Lock,
   LockOpen,
+  MapPinOff,
 } from "lucide-react";
 
 type Mode = "photo" | "video";
@@ -254,6 +255,10 @@ export default function CameraView({ active }: { active: boolean }) {
   // physical device rotation → in-place icon/overlay rotation (camera-app
   // style; the layout itself never reflows)
   const uiRot = useLiveStore((s) => s.uiRotation);
+  // subscribed, not read from getState(): this has to re-render the moment
+  // the fix degrades, which is the only warning before the shutter
+  const gpsStatus = useLiveStore((s) => s.gpsStatus);
+  const fixAccuracy = useLiveStore((s) => s.fix?.accuracy);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recChunksRef = useRef<Blob[]>([]);
@@ -1702,6 +1707,21 @@ export default function CameraView({ active }: { active: boolean }) {
         {/* Top-right cluster is exactly [flash][settings]; the grid toggle
             lives in Settings and the Chennai coverage chip is retired
             (pan-India expansion planned). */}
+        {/* Only ever visible when the fix is too coarse to name a ward.
+            NOT a status chip — the top bar is deliberately bare (see the
+            note above) and a permanent GPS readout is exactly the clutter
+            that was removed. This is an exception, and the only chance a
+            user gets to wait two seconds instead of filing a complaint
+            against the wrong police station. */}
+        {gpsStatus === "approximate" && (
+          <div className="gps-coarse" role="status">
+            <MapPinOff size={14} />
+            <span>
+              Approximate location{fixAccuracy ? ` — ±${Math.round(fixAccuracy)} m` : ""}
+              . Ward and station may be wrong.
+            </span>
+          </div>
+        )}
         <div className="cam-top">
           <span />
           <div className="cluster">

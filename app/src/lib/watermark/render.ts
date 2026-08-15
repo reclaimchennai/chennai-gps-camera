@@ -164,6 +164,13 @@ function resolveStyle(
   return options[0];
 }
 
+/**
+ * Beyond this, a fix cannot be trusted to name a ward, and the card says
+ * so. Matches ATTRIBUTABLE_M in location.ts, which is what decides
+ * whether the viewfinder badge goes green.
+ */
+const APPROX_FIX_M = 100;
+
 const FONT_STACK =
   "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
 
@@ -387,6 +394,26 @@ function buildLines(
     } else if (traffic) {
       pushJur(`${t.traffic}: ${traffic}`);
     }
+  }
+
+  /**
+   * Accuracy disclosure — shown whenever the fix is too coarse to place
+   * the point inside a ward, whatever fields are enabled.
+   *
+   * The ward, zone and police rows above are computed from the fix by our
+   * own polygons, so they are only ever as right as it is. A network or
+   * cell-tower fix half a kilometre wide lands in the next ward and names
+   * the next station, and every row still agrees with every other row —
+   * there is nothing in the card itself to give it away. This row is the
+   * only thing that can.
+   */
+  if (data.fix?.accuracy != null && data.fix.accuracy > APPROX_FIX_M) {
+    lines.push({
+      text: `${t.approx} (±${Math.round(data.fix.accuracy)} m)`,
+      font: `600 ${Math.round(bodyPx * 0.92)}px ${stack}`,
+      role: "warn",
+      gapBefore: 0.35,
+    });
   }
 
   // Mock-location disclosure — always shown when detected, regardless of

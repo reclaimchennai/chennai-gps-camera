@@ -53,6 +53,8 @@ const WHITE = "#ffffff";
  *  the plate fully opaque, so no opacity could have rescued it. Delhi's
  *  green plate is the tighter of the two and sets the value. */
 const WARN = "#fff3c4";
+/** Matches APPROX_FIX_M in render.ts and ATTRIBUTABLE_M in location.ts. */
+const APPROX_FIX_M = 100;
 const LATIN =
   "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
 const TAMIL = `'Noto Sans Tamil', 'Latha', 'Tamil Sangam MN', ${LATIN}`;
@@ -550,6 +552,13 @@ export function renderChennaiSign(
   } else if (traffic) {
     rows.push(`${t.traffic}: ${traffic}`);
   }
+  // Same reasoning as the standard card: every row on this plate is
+  // derived from the fix, so a fix too coarse to place the point inside a
+  // ward has to be disclosed or the plate reads as certain when it is not.
+  const acc = data.fix?.accuracy;
+  if (acc != null && acc > APPROX_FIX_M) {
+    rows.push(`${t.approx} (±${Math.round(acc)} m)`);
+  }
   if (data.mockLocation) rows.push(t.mock);
   if (f.customLabel && config.customLabelText.trim()) {
     rows.push(config.customLabelText.trim());
@@ -1009,7 +1018,7 @@ export function renderChennaiSign(
       // this size a regular stroke is mostly anti-aliased edge, so it
       // renders a good margin below the contrast it was designed for.
       // Weight buys back the glyph core.
-      const mock = r === t.mock;
+      const mock = r === t.mock || r.startsWith(t.approx);
       const weight = mock ? "700" : "400";
       // a clubbed police row is the longest line on the plate; shrink it
       // to fit instead of letting fillText squash it out of shape

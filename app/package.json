@@ -13,7 +13,8 @@
     "smoke": "node scripts/smoke.mjs",
     "check:packs": "node scripts/check-packs.mjs",
     "check:contrast": "node scripts/check-contrast.mjs",
-    "check:shutter": "node scripts/check-shutter.mjs"
+    "check:shutter": "node scripts/check-shutter.mjs",
+    "check:location": "node scripts/check-location.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

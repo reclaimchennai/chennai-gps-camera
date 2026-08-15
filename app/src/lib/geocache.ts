@@ -27,15 +27,26 @@ interface Entry {
  * entry outlived the fix by up to its TTL. A new key retires them all.
  */
 const KEY = "geocache-v2";
-/** ~110 m at 3 decimal places — about a city block, which is the scale an
- *  address is accurate to anyway. Finer would cache one entry per step. */
-const PRECISION = 3;
+/**
+ * ~11 m at 4 decimal places.
+ *
+ * It was 3, about 110 m, on the reasoning that an address is only
+ * accurate to a block anyway. That is true of the address and false of
+ * the cell: the FIRST point to land in a cell answers for the whole of
+ * it, for a month, so a lookup made outside a station could be served to
+ * someone standing on a different road — the two are the same cell. In a
+ * city, ward and police boundaries turn over in as little as 50 m
+ * (scripts/check-location.mjs measures it), so a block is not a rounding
+ * error here, it is the whole distance that matters.
+ */
+const PRECISION = 4;
 /** Addresses change when a road is renamed, which is rare; a month keeps
  *  the cache useful without pinning a stale name forever. */
 const TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Bounded so a long drive cannot grow this without limit. Least
- *  recently written is dropped first. */
-const MAX_ENTRIES = 600;
+ *  recently written is dropped first. Raised with the precision above:
+ *  finer cells mean more of them for the same ground covered. */
+const MAX_ENTRIES = 4000;
 
 let mem: Record<string, Entry> | null = null;
 let writeTimer: number | null = null;
