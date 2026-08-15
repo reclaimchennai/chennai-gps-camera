@@ -401,8 +401,8 @@ export default function WatermarkEditorView() {
       <div className="card">
         <div className="card-title">Style</div>
         <Row label="Theme">
-          <div className="seg" style={{ width: 220 }}>
-            {(["dark", "light", "brand"] as const).map((t) => (
+          <div className="seg" style={{ width: 260 }}>
+            {(["auto", "dark", "light", "brand"] as const).map((t) => (
               <button
                 key={t}
                 data-active={config.theme === t}
@@ -425,13 +425,16 @@ export default function WatermarkEditorView() {
             onChange={(e) => set({ fontScale: Number(e.target.value) })}
           />
         </Row>
-        <Row label="Panel opacity">
+        <Row
+          label="Panel opacity"
+          hint="A floor, not a setting: the card is raised above this whenever the photo behind it would make the text hard to read."
+        >
           <input
             type="range"
             aria-label="Panel opacity"
             style={{ width: 150 }}
             min={0.15}
-            max={0.9}
+            max={1}
             step={0.05}
             value={config.opacity}
             onChange={(e) => set({ opacity: Number(e.target.value) })}

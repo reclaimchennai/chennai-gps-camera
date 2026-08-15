@@ -11,7 +11,8 @@
     "geodata": "node scripts/build-packs.mjs",
     "icons": "node scripts/make-icons.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "check:packs": "node scripts/check-packs.mjs"
+    "check:packs": "node scripts/check-packs.mjs",
+    "check:contrast": "node scripts/check-contrast.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

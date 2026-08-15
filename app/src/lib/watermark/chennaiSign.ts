@@ -36,10 +36,23 @@ import {
   stringsFor,
   fontFor,
 } from "./signboard";
+import {
+  ANY_BACKDROP,
+  composite,
+  minPanelAlpha,
+  parseColor,
+  type Backdrop,
+} from "./contrast";
 
 const BLUE = "#0056b3";
 const DELHI_GREEN = "#146b4a";
 const WHITE = "#ffffff";
+/** Mock-location gold. Paler than the amber the standard card uses,
+ *  because this one has to carry on a mid-blue or mid-green plate rather
+ *  than on near-black: #ffd54a tops out at 4.98:1 on GCC blue even with
+ *  the plate fully opaque, so no opacity could have rescued it. Delhi's
+ *  green plate is the tighter of the two and sets the value. */
+const WARN = "#fff3c4";
 const LATIN =
   "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
 const TAMIL = `'Noto Sans Tamil', 'Latha', 'Tamil Sangam MN', ${LATIN}`;
@@ -442,7 +455,13 @@ export function renderChennaiSign(
   singara: CanvasImageSource | null,
   corp: CanvasImageSource | null,
   preview = false,
-  measureOnly = false
+  measureOnly = false,
+  /** The photo the plate is about to cover, when it can be read. The
+   *  plate honours the card's opacity, which means the ink is really
+   *  being read against a blend of plate and street — so the opacity is
+   *  raised until it clears 4.5:1 over THIS scene. Null (a viewfinder
+   *  overlay, a moving video) solves for the worst case instead. */
+  backdrop: Backdrop | null = null
 ): SignMetrics {
   const lang = langOf(config.language);
   const t = stringsFor(ctx, lang);
@@ -800,10 +819,41 @@ export function renderChennaiSign(
   // photo was taken to show. Only the BACKGROUND fades: the keyline, the
   // text, the emblems and the QR stay fully opaque, because a translucent
   // QR does not scan and a translucent address is not evidence.
+  // The board is two panels with opposite inks — white text on the
+  // coloured plate, plate-coloured text on the white strips — so each one
+  // is solved separately. Fixed floors of 0.35/0.5 used to stand in for
+  // this, and at those values white-on-translucent-blue over a bright
+  // street fell under 2:1.
+  const plateColor = style?.plate ?? BLUE;
+  const plateRgb = parseColor(plateColor).rgb;
+  const bd = backdrop ?? ANY_BACKDROP;
+  const plateAlpha = minPanelAlpha(
+    plateRgb,
+    [WHITE, WARN],
+    bd,
+    undefined,
+    config.opacity
+  );
+  // The strips are painted ON the plate, so the plate is what they have to
+  // cover — not the photo. Solving them against the photo made the header
+  // a pale blue wash carrying darker blue text at 4.18:1, because the blue
+  // bleeding up through the white was never counted.
+  const stripBackdrop = {
+    darkest: composite(plateRgb, plateAlpha, bd.darkest),
+    brightest: composite(plateRgb, plateAlpha, bd.brightest),
+  };
+  const stripAlpha = minPanelAlpha(
+    parseColor(WHITE).rgb,
+    [plateColor],
+    stripBackdrop,
+    undefined,
+    config.opacity
+  );
+
   plate(0);
   ctx.save();
-  ctx.globalAlpha = Math.min(1, Math.max(0.35, config.opacity));
-  ctx.fillStyle = style?.plate ?? BLUE;
+  ctx.globalAlpha = plateAlpha;
+  ctx.fillStyle = plateColor;
   ctx.fill();
   ctx.restore();
   ctx.lineJoin = "round";
@@ -820,10 +870,8 @@ export function renderChennaiSign(
   // Bengaluru's boards have no white bars, so the strip is skipped and
   // the names are drawn white on blue instead.
   if (withStrip) {
-    // slightly more opaque than the plate: blue-on-translucent-white is
-    // the first thing to become unreadable as opacity drops
     ctx.save();
-    ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
+    ctx.globalAlpha = stripAlpha;
     ctx.fillStyle = WHITE;
     ctx.fillRect(x + insetL, cy, contentW, bandH);
     ctx.restore();
@@ -957,11 +1005,17 @@ export function renderChennaiSign(
   if (rows.length) {
     cy += gapS;
     for (const r of rows) {
+      // The spoof disclosure is set bold, and not only for emphasis: at
+      // this size a regular stroke is mostly anti-aliased edge, so it
+      // renders a good margin below the contrast it was designed for.
+      // Weight buys back the glyph core.
+      const mock = r === t.mock;
+      const weight = mock ? "700" : "400";
       // a clubbed police row is the longest line on the plate; shrink it
       // to fit instead of letting fillText squash it out of shape
-      const px = fitText(ctx, r, rowPx, fontFor(lang), contentW, "400");
-      ctx.font = `${px}px ${fontFor(lang)}`;
-      ctx.fillStyle = r === t.mock ? "#ffd54a" : "rgba(255,255,255,0.95)";
+      const px = fitText(ctx, r, rowPx, fontFor(lang), contentW, weight);
+      ctx.font = `${weight === "400" ? "" : `${weight} `}${px}px ${fontFor(lang)}`;
+      ctx.fillStyle = mock ? WARN : WHITE;
       ctx.fillText(r, x + insetL + contentW / 2, cy + (rowPx - px) / 2);
       cy += rowPx + rowGap;
     }
@@ -971,7 +1025,7 @@ export function renderChennaiSign(
   if (footH) {
     cy += gapS;
     ctx.save();
-    ctx.globalAlpha = Math.min(1, Math.max(0.5, config.opacity + 0.2));
+    ctx.globalAlpha = stripAlpha;
     ctx.fillStyle = WHITE;
     ctx.fillRect(x + insetL, cy, contentW, footH);
     ctx.restore();

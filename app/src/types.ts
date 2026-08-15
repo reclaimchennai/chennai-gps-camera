@@ -46,7 +46,9 @@ export type LayoutPreset = "detailed" | "compact" | "minimal" | "chennai";
 
 /** Watermark text language. English is the default everywhere. */
 export type WatermarkLang = "en" | "ta" | "hi" | "kn" | "te" | "mr" | "bn";
-export type WatermarkTheme = "dark" | "light" | "brand";
+/** "auto" picks dark or light per photo, from the pixels the card covers —
+ *  see lib/watermark/contrast.ts. The rest are fixed palettes. */
+export type WatermarkTheme = "auto" | "dark" | "light" | "brand";
 
 export interface WatermarkFields {
   brand: boolean;

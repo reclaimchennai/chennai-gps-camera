@@ -26,6 +26,14 @@ import { latLngToDigipin } from "../geo/digipin";
 import { localStation } from "../geo/local-names";
 import { stringsFor, fontFor, type CardStrings } from "./signboard";
 import { renderChennaiSign, signAuthority } from "./chennaiSign";
+import {
+  ANY_BACKDROP,
+  minPanelAlpha,
+  relativeLuminance,
+  sampleBackdrop,
+  type Backdrop,
+  type Rgb,
+} from "./contrast";
 
 export interface WatermarkAssets {
   miniMap?: CanvasImageSource | null;
@@ -52,40 +60,109 @@ export interface WatermarkRect {
   height: number;
 }
 
+/** What a row is FOR, not what colour it is. The palette is chosen after
+ *  the card has been measured and the photo beneath it read, so rows
+ *  cannot carry a colour with them. */
+type Role = "text" | "dim" | "accent" | "warn";
+
 interface Line {
   text: string;
   font: string;
-  color: string;
+  role: Role;
   gapBefore?: number;
 }
 
 interface Theme {
-  panel: (opacity: number) => string;
+  /** panel base, opaque — the alpha is solved for, not chosen */
+  panelRgb: Rgb;
   text: string;
   dim: string;
   accent: string;
+  /** mock-location disclosure; amber reads on a dark panel and vanishes
+   *  on a light one, so it is per-theme like everything else */
+  warn: string;
+  /** hairline edge, so a card tuned to blend into its photo still reads
+   *  as a card rather than a smudge */
+  edge: string;
 }
 
-const THEMES: Record<WatermarkConfig["theme"], Theme> = {
+/**
+ * Palettes picked by contrast arithmetic, not by eye (see contrast.ts).
+ *
+ * Every ink here clears 4.5:1 against its own panel over ANY photo once
+ * the panel reaches the opacity `minPanelAlpha` works out — roughly 0.70
+ * worst-case, far less when the photo underneath is actually measured.
+ *
+ * The previous palette did not: light/accent — the ward, zone and police
+ * rows, the most load-bearing text on a civic complaint — sat at 1.77:1
+ * over a dark scene, which is why they photographed as faint blue ghosts.
+ */
+const THEMES: Record<Exclude<WatermarkConfig["theme"], "auto">, Theme> = {
   dark: {
-    panel: (o) => `rgba(10, 14, 20, ${o})`,
+    panelRgb: { r: 10, g: 14, b: 20 },
     text: "#ffffff",
-    dim: "rgba(255,255,255,0.82)",
-    accent: "#7dd3fc",
+    dim: "#e8eef6",
+    accent: "#8fd7ff",
+    warn: "#ffd54a",
+    edge: "rgba(255,255,255,0.28)",
   },
   light: {
-    panel: (o) => `rgba(255, 255, 255, ${o})`,
-    text: "#101418",
-    dim: "rgba(16,20,24,0.8)",
-    accent: "#0369a1",
+    panelRgb: { r: 255, g: 255, b: 255 },
+    text: "#0b0f14",
+    dim: "#2b333c",
+    accent: "#0a4a70",
+    warn: "#8a5200",
+    edge: "rgba(11,15,20,0.22)",
   },
   brand: {
-    panel: (o) => `rgba(30, 27, 75, ${o})`,
+    panelRgb: { r: 30, g: 27, b: 75 },
     text: "#ffffff",
-    dim: "rgba(224,231,255,0.85)",
-    accent: "#a5b4fc",
+    dim: "#e5eaff",
+    accent: "#b9c6ff",
+    warn: "#ffd54a",
+    edge: "rgba(229,234,255,0.30)",
   },
 };
+
+const inksOf = (t: Theme): string[] => [t.text, t.dim, t.accent, t.warn];
+
+const rgbaOf = (c: Rgb, a: number): string =>
+  `rgba(${Math.round(c.r)}, ${Math.round(c.g)}, ${Math.round(c.b)}, ${a})`;
+
+/**
+ * Resolve the palette and the panel opacity together.
+ *
+ * "auto" picks whichever palette needs the LEAST opacity to stay legible
+ * over this particular photo — a light card on a bright street, a dark one
+ * at night — so the card covers as little of the evidence as it can while
+ * still being readable. With no backdrop to read (the live viewfinder, a
+ * video whose scene moves) it solves for the worst case instead, which is
+ * the only honest answer when the photo is unknown.
+ */
+function resolveStyle(
+  config: WatermarkConfig,
+  bd: Backdrop | null
+): { theme: Theme; alpha: number } {
+  const backdrop = bd ?? ANY_BACKDROP;
+  const solve = (t: Theme) => ({
+    theme: t,
+    alpha: minPanelAlpha(t.panelRgb, inksOf(t), backdrop, undefined, config.opacity),
+  });
+  if (config.theme !== "auto") return solve(THEMES[config.theme]);
+  if (!bd) return solve(THEMES.dark);
+  const options = [THEMES.dark, THEMES.light].map(solve);
+  // ties go to whichever palette sits further from the scene's own
+  // brightness, so the card does not melt into it
+  const mid =
+    (relativeLuminance(bd.darkest) + relativeLuminance(bd.brightest)) / 2;
+  options.sort(
+    (a, b) =>
+      a.alpha - b.alpha ||
+      Math.abs(relativeLuminance(b.theme.panelRgb) - mid) -
+        Math.abs(relativeLuminance(a.theme.panelRgb) - mid)
+  );
+  return options[0];
+}
 
 const FONT_STACK =
   "system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif";
@@ -147,7 +224,6 @@ function buildLines(
   ctx: CanvasRenderingContext2D,
   data: WatermarkData,
   config: WatermarkConfig,
-  theme: Theme,
   bodyPx: number,
   maxWidth: number,
   _detailed: boolean,
@@ -177,7 +253,7 @@ function buildLines(
             ? "Avadi"
             : undefined;
     const title = data.locality ?? j?.city ?? legacyCity;
-    if (title) lines.push({ text: title, font: bold, color: theme.text });
+    if (title) lines.push({ text: title, font: bold, role: "text" });
   }
 
   if (f.address && data.address) {
@@ -197,7 +273,7 @@ function buildLines(
     // up to 2 lines at the capped width, then ellipsize (wrapText trims
     // the last line with "…" when it still overflows)
     for (const seg of wrapText(ctx, data.address, body, addrCap, 2)) {
-      lines.push({ text: seg, font: body, color: theme.dim });
+      lines.push({ text: seg, font: body, role: "dim" });
     }
   }
 
@@ -207,7 +283,7 @@ function buildLines(
         ? fmtCoordsLine(data.fix.lat, data.fix.lng, config.language)
         : t.acquiring,
       font: body,
-      color: theme.dim,
+      role: "dim",
     });
   }
 
@@ -215,20 +291,20 @@ function buildLines(
     const code =
       data.digipin ?? latLngToDigipin(data.fix.lat, data.fix.lng);
     if (code) {
-      lines.push({ text: `${t.digipin}: ${code}`, font: body, color: theme.dim });
+      lines.push({ text: `${t.digipin}: ${code}`, font: body, role: "dim" });
     }
   }
 
   if (f.altitudeAccuracy && data.fix) {
     const t = fmtAltAccuracy(data.fix.altitude, data.fix.accuracy, config.language);
-    if (t) lines.push({ text: t, font: small, color: theme.dim });
+    if (t) lines.push({ text: t, font: small, role: "dim" });
   }
 
   if (f.datetime) {
     lines.push({
       text: fmtDateLine(data.timestamp, data.tzOffsetMinutes, config.language),
       font: body,
-      color: theme.dim,
+      role: "dim",
     });
   }
 
@@ -236,7 +312,7 @@ function buildLines(
     lines.push({
       text: `${t.facing} ${fmtBearing(data.bearing)}`,
       font: small,
-      color: theme.dim,
+      role: "dim",
     });
   }
 
@@ -248,7 +324,7 @@ function buildLines(
         ? `${t.noise}: ${t.avg} ${s.avg} dB · ${t.min} ${s.min} dB · ${t.max} ${s.max} dB`
         : `${t.noise}: ${Math.round(data.db!)} dB`,
       font: small,
-      color: theme.dim,
+      role: "dim",
     });
   }
 
@@ -267,7 +343,7 @@ function buildLines(
         lines.push({
           text: seg,
           font: body,
-          color: theme.accent,
+          role: "accent",
           gapBefore: firstJurLine ? 0.35 : undefined,
         });
         firstJurLine = false;
@@ -320,7 +396,7 @@ function buildLines(
     lines.push({
       text: t.mock,
       font: `600 ${Math.round(bodyPx * 0.92)}px ${FONT_STACK}`,
-      color: "#fbbf24",
+      role: "warn",
       gapBefore: 0.35,
     });
   }
@@ -329,7 +405,7 @@ function buildLines(
     lines.push({
       text: config.customLabelText.trim(),
       font: `italic ${body}`,
-      color: theme.text,
+      role: "text",
       gapBefore: 0.35,
     });
   }
@@ -379,7 +455,6 @@ export function renderWatermark(
    *  1080 px wide, the same order as a small capture. */
   opts: { preview?: boolean } = {}
 ): WatermarkRect | null {
-  const theme = THEMES[config.theme];
   // scale from the SHORT side so a landscape shot gets the same absolute
   // card size as a portrait one (a width-based scale ballooned the card
   // across landscape photos and buried the subject)
@@ -407,7 +482,7 @@ export function renderWatermark(
   };
 
   if (preset === "minimal") {
-    return finish(renderMinimal(ctx, width, height, data, config, theme, s));
+    return finish(renderMinimal(ctx, width, height, data, config, s));
   }
 
   // The Chennai template IS the detailed card, wearing a street-sign tab.
@@ -448,6 +523,11 @@ export function renderWatermark(
     const sy = positionIsTop(config.position)
       ? margin
       : height - margin - m.height;
+    // now that the plate's rect is known, read the photo it will cover so
+    // the sign can be exactly as opaque as this scene demands
+    const signBackdrop = sampleBackdrop(ctx, {
+      x: sx, y: sy, width: signW, height: m.height,
+    });
     // pass the same AVAILABLE width both times — handing the draw pass
     // the shrunken width would make it re-shrink against a smaller budget
     // and lay out differently from what was measured
@@ -456,7 +536,9 @@ export function renderWatermark(
       assets.gccEmblem ?? null,
       assets.singaraLogo ?? null,
       assets.corpLogo ?? null,
-      !!opts.preview
+      !!opts.preview,
+      false,
+      signBackdrop
     );
     return finish({ x: sx, y: sy, width: signW, height: m.height });
   }
@@ -483,7 +565,7 @@ export function renderWatermark(
   const textW = panelW - pad * 2 - colW - mapGap;
 
   const lines = buildLines(
-    ctx, data, config, theme, bodyPx, textW, detailed, t, false
+    ctx, data, config, bodyPx, textW, detailed, t, false
   );
   if (!lines.length && !mapSize) return finish(null);
 
@@ -519,11 +601,27 @@ export function renderWatermark(
     ? margin
     : height - margin - panelH;
 
+  // ---- palette + opacity ---------------------------------------------
+  // Only now is the card's rect known, so only now can the photo beneath
+  // it be read. The chosen opacity is the LEAST that keeps every ink at
+  // 4.5:1 over this scene, never below what the user asked for.
+  const { theme, alpha } = resolveStyle(
+    config,
+    sampleBackdrop(ctx, { x: panelX, y: panelY, width: fitW, height: panelH })
+  );
+  const colorFor = (role: Role): string => theme[role];
+
   // ---- panel ---------------------------------------------------------
   ctx.save();
-  roundRect(ctx, panelX, panelY, fitW, panelH, Math.round(16 * s));
-  ctx.fillStyle = theme.panel(config.opacity);
+  const radius = Math.round(16 * s);
+  roundRect(ctx, panelX, panelY, fitW, panelH, radius);
+  ctx.fillStyle = rgbaOf(theme.panelRgb, alpha);
   ctx.fill();
+  // a hairline so the card still reads as a card when its palette is
+  // close to the scene behind it
+  ctx.strokeStyle = theme.edge;
+  ctx.lineWidth = Math.max(1, Math.round(1.5 * s));
+  ctx.stroke();
 
   // ---- right column: mini-map and/or QR ---------------------------------
   const contentY = panelY + pad;
@@ -563,9 +661,14 @@ export function renderWatermark(
     // Attribution only for genuine Google imagery (§5.4)
     if (assets.miniMapIsGoogle) {
       ctx.font = `600 ${Math.round(bodyPx * 0.55)}px ${FONT_STACK}`;
-      ctx.fillStyle = "rgba(255,255,255,0.9)";
+      // sits on map imagery, not on the panel, so it carries its own
+      // shadow rather than relying on the card's contrast guarantee
+      ctx.shadowColor = "rgba(0,0,0,0.85)";
+      ctx.shadowBlur = Math.max(1, Math.round(2 * s));
+      ctx.fillStyle = "#ffffff";
       ctx.textBaseline = "bottom";
       ctx.fillText("Google", mx + 6 * s, my + mapH - 4 * s);
+      ctx.shadowBlur = 0;
     }
     ctx.restore();
   }
@@ -603,7 +706,7 @@ export function renderWatermark(
     ctx.font = ln.font;
     const m = ctx.measureText("Mg");
     const asc = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || bodyPx;
-    ctx.fillStyle = ln.color;
+    ctx.fillStyle = colorFor(ln.role);
     ctx.fillText(ln.text, tx, ty);
     ty += asc + lineGap;
   }
@@ -617,7 +720,6 @@ function renderMinimal(
   height: number,
   data: WatermarkData,
   config: WatermarkConfig,
-  theme: Theme,
   s: number
 ): WatermarkRect | null {
   const bodyPx = Math.max(9, Math.round(22 * s));
@@ -660,10 +762,20 @@ function renderMinimal(
     ? margin
     : height - margin - panelH;
 
+  // the badge is small and sits over unknown photo, so it gets the same
+  // measured treatment as the full card
+  const { theme, alpha } = resolveStyle(
+    config,
+    sampleBackdrop(ctx, { x, y, width: panelW, height: panelH })
+  );
+
   ctx.save();
   roundRect(ctx, x, y, panelW, panelH, Math.round(10 * s));
-  ctx.fillStyle = theme.panel(config.opacity);
+  ctx.fillStyle = rgbaOf(theme.panelRgb, alpha);
   ctx.fill();
+  ctx.strokeStyle = theme.edge;
+  ctx.lineWidth = Math.max(1, Math.round(1.5 * s));
+  ctx.stroke();
   ctx.textBaseline = "top";
   ctx.fillStyle = theme.text;
   rows.forEach((r, i) => {
