@@ -8,13 +8,15 @@ import {
   Layers,
   Map as MapIcon,
   LayoutGrid,
-  Trash2,
-  Tag as TagIcon,
   Check,
-  Share2,
-  FolderPlus,
   Folder,
 } from "lucide-react";
+import {
+  ShareOutIcon,
+  AlbumAddIcon,
+  TagFileIcon,
+  BinLiftIcon,
+} from "./icons/ActionIcons";
 import { Screen, blurOnEnter } from "./ui";
 import { listMedia, getBlob, deleteMedia, putMedia } from "../lib/db";
 import {
@@ -165,6 +167,25 @@ export default function GalleryView() {
   const selecting = sel !== null;
   const [tagDraft, setTagDraft] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /**
+   * Where focus goes when the confirmation opens.
+   *
+   * Cancel, not the destructive button. A keyboard or switch user
+   * arriving on an alert dialog is one stray Enter from confirming, and
+   * the whole reason this dialog exists is that the action cannot be
+   * undone. The safe option takes focus; the destructive one is a
+   * deliberate move away from it.
+   */
+  const deleteConfirmRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!confirmDelete) return;
+    // after paint, or the node is not there to focus yet
+    deleteConfirmRef.current?.focus();
+    // ...and again next frame: the pointer event that opened the dialog
+    // can otherwise take focus back to the button behind it
+    const id = window.requestAnimationFrame(() => deleteConfirmRef.current?.focus());
+    return () => window.cancelAnimationFrame(id);
+  }, [confirmDelete]);
   /** album sheet: null = closed, else the name being typed */
   const [albumDraft, setAlbumDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -402,6 +423,20 @@ export default function GalleryView() {
   /** The selected records themselves, in the grid's own order. */
   const selectedRecs = (): MediaRecord[] =>
     (cells ?? []).filter((c) => sel?.has(c.rec.id)).map((c) => c.rec);
+
+  /**
+   * Thumbnails for the confirmation, first few only.
+   *
+   * Read from the cache the grid already filled — no decoding work, and
+   * nothing to load, so the dialog cannot appear before the pictures it
+   * is asking about.
+   */
+  const deleteThumbs = !confirmDelete
+    ? []
+    : selectedRecs()
+        .slice(0, 6)
+        .map((r) => ({ id: r.id, url: getThumbUrl(r.id) }))
+        .filter((t): t is { id: string; url: string } => !!t.url);
 
   const shareSelection = async () => {
     if (!sel?.size || busy) return;
@@ -641,7 +676,7 @@ export default function GalleryView() {
               disabled={busy}
               onClick={() => void shareSelection()}
             >
-              <Share2 size={20} />
+              <ShareOutIcon />
               <span>Share</span>
             </button>
             <button
@@ -649,7 +684,7 @@ export default function GalleryView() {
               disabled={busy}
               onClick={() => setAlbumDraft("")}
             >
-              <FolderPlus size={20} />
+              <AlbumAddIcon />
               <span>Add to album</span>
             </button>
             <button
@@ -657,15 +692,19 @@ export default function GalleryView() {
               disabled={busy}
               onClick={() => setTagDraft("")}
             >
-              <TagIcon size={20} />
+              <TagFileIcon />
               <span>Tag</span>
             </button>
+            {/* Set apart by a rule as well as by colour: the one
+                irreversible action on the bar should not sit flush against
+                "Tag" where a thumb aiming for one can catch the other, and
+                colour alone is not a signal every user receives. */}
             <button
               className="pill-action danger"
               disabled={busy}
               onClick={() => setConfirmDelete(true)}
             >
-              <Trash2 size={20} />
+              <BinLiftIcon />
               <span>Delete</span>
             </button>
           </div>
@@ -764,24 +803,68 @@ export default function GalleryView() {
 
       {confirmDelete && (
         <div className="modal-scrim" onClick={() => setConfirmDelete(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Delete {sel?.size} item{sel?.size === 1 ? "" : "s"}?</h2>
-            <p>They will be removed permanently from this device.</p>
-            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <div
+            className="modal modal-destructive"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="del-title"
+            aria-describedby="del-body"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="destructive-head">
+              <span className="destructive-mark" aria-hidden="true">
+                <BinLiftIcon size={22} />
+              </span>
+              <h2 id="del-title">
+                Remove {sel?.size} item{sel?.size === 1 ? "" : "s"} from GPS Cam?
+              </h2>
+            </div>
+            {/* What is actually going: a count is easy to misread when the
+                selection scrolled off screen, and this is the last chance
+                to notice the wrong photo is in it. */}
+            {deleteThumbs.length > 0 && (
+              <div className="destructive-strip" aria-hidden="true">
+                {deleteThumbs.map((t) => (
+                  <img key={t.id} src={t.url} alt="" loading="lazy" />
+                ))}
+                {(sel?.size ?? 0) > deleteThumbs.length && (
+                  <span className="destructive-more">
+                    +{(sel?.size ?? 0) - deleteThumbs.length}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* The old wording — "removed permanently from this device" —
+                was not true. deleteMedia() drops this app's record and its
+                blobs; the JPEG the app saved into the phone's gallery is
+                untouched, and db.ts even keeps a tombstone so the folder
+                scan will not pull it back. Saying "permanently" invited
+                people to delete evidence believing the copy was gone, or
+                to keep it believing they had to. */}
+            <p id="del-body">
+              Their location cards, tags and albums are deleted here and
+              cannot be recovered.
+              <br />
+              <strong>Photos saved to your phone's gallery are kept.</strong>{" "}
+              Delete those in your gallery app if you want them gone.
+            </p>
+            <div className="modal-actions">
               <button
+                ref={deleteConfirmRef}
                 className="ghost-btn"
-                style={{ flex: 1 }}
                 onClick={() => setConfirmDelete(false)}
               >
                 Cancel
               </button>
               <button
-                className="primary-btn"
-                style={{ flex: 1, background: "var(--danger)", color: "#fff" }}
+                className="destructive-btn"
                 disabled={busy}
                 onClick={() => void deleteSelected()}
               >
-                Delete
+                <BinLiftIcon size={18} />
+                <span>
+                  Remove {sel?.size} item{sel?.size === 1 ? "" : "s"}
+                </span>
               </button>
             </div>
           </div>

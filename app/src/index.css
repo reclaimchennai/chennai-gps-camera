@@ -71,6 +71,15 @@
   --accent: #38bdf8;
   --accent-strong: #0369a1;
   --danger: #f43f5e;
+  /* Ink and well are separate from --danger because --danger is a fill
+     (buttons, bars) while these are TEXT on a dark surface, where the
+     same hue has to be lighter to clear 4.5:1. Verified by
+     scripts/check-a11y.mjs against the real rendered pixels. */
+  --danger-ink: #ff8a9b;
+  --danger-well: rgba(244, 63, 94, 0.14);
+  --danger-edge: rgba(255, 138, 155, 0.5);
+  --danger-fill: #c2213c;
+  --sel-keyline: rgba(255, 255, 255, 0.09);
   --ok: #34d399;
   --radius: 14px;
   --safe-top: env(safe-area-inset-top, 0px);
@@ -85,6 +94,13 @@
   --text: #101828;
   --dim: #5b6572;
   --accent: #0284c7;
+  /* Light theme flips the requirement: the ink must be DARKER than
+     --danger to hold 4.5:1 on white. */
+  --danger-ink: #b4142f;
+  --danger-well: rgba(180, 20, 47, 0.09);
+  --danger-edge: rgba(180, 20, 47, 0.45);
+  --danger-fill: #b4142f;
+  --sel-keyline: rgba(16, 24, 40, 0.08);
   /* White text on the accent measured 4.09:1 — under WCAG AA's 4.5:1 for
      normal text, on every active chip and segmented control in the app.
      #0369a1 takes it to 5.93:1 and is close enough to be unnoticeable
@@ -1532,6 +1548,12 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
 
 /* sticky rather than fixed: it takes real space at the end of the grid,
    so the last row can never hide underneath it */
+/* ---------- selection band ----------
+   Styled as a BOARD, not a toolbar: an inset hairline inside the outer
+   edge, which is the doubled rule the street-sign watermark draws and the
+   one piece of visual language that is this app's own. Costs nothing, and
+   makes a bar that would otherwise be indistinguishable from every other
+   Material action bar read as part of the same object as the card. */
 .sel-bar {
   position: sticky;
   bottom: 8px;
@@ -1543,6 +1565,14 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
   overflow: hidden;
 }
+.sel-bar::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 14px;
+  border: 1px solid var(--sel-keyline);
+  pointer-events: none;
+}
 
 /* the actions scroll sideways rather than compressing their labels, so a
    fifth action can be added without redesigning the band */
@@ -1551,7 +1581,7 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
   gap: 2px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 4px;
+  padding: 8px;
 }
 .sel-actions::-webkit-scrollbar {
   display: none;
@@ -1559,6 +1589,10 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
 .sel-actions .pill-action {
   flex: 1 0 auto;
   min-width: 76px;
+  /* WCAG 2.2 target size: 44px is the floor for a control someone taps
+     while walking, and these sit at the bottom edge where thumbs are
+     least precise. */
+  min-height: 48px;
 }
 
 .sel-note {
@@ -1573,9 +1607,29 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
 .sel-bar .pill-action svg {
   color: var(--text);
 }
+
+/* Delete is separated three ways — a rule beside it, a tinted well, and
+   its colour — because any one of them alone fails somebody. Colour is
+   invisible to a red-green colourblind user; the well survives forced
+   colours; the rule survives both. */
+.sel-actions .pill-action.danger {
+  margin-left: 10px;
+  position: relative;
+  background: var(--danger-well);
+  border: 1px solid var(--danger-edge);
+}
+.sel-actions .pill-action.danger::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--border);
+}
 .sel-bar .pill-action.danger,
 .sel-bar .pill-action.danger svg {
-  color: var(--danger);
+  color: var(--danger-ink);
 }
 .sel-bar .pill-action:disabled {
   opacity: 0.45;
@@ -2954,4 +3008,126 @@ a {
   color: var(--accent-strong);
   text-decoration: underline;
   font: inherit;
+}
+
+
+/* ---------- destructive confirmation ----------
+   Deliberately not the app's normal modal with a red button dropped in.
+   An irreversible action gets its own shape: a marked head, the actual
+   pictures being removed, and a button that names the act rather than
+   saying "Delete" next to a title that also says "Delete". */
+.modal-destructive {
+  border: 1px solid var(--danger-edge);
+}
+.destructive-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 10px;
+}
+.destructive-head h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.3;
+}
+.destructive-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--danger-well);
+  border: 1px solid var(--danger-edge);
+  color: var(--danger-ink);
+}
+
+/* What is going. Squares, so a landscape and a portrait shot read as the
+   same object at this size. */
+.destructive-strip {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 2px 0 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.destructive-strip::-webkit-scrollbar {
+  display: none;
+}
+.destructive-strip img {
+  flex: none;
+  width: 46px;
+  height: 46px;
+  object-fit: cover;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+}
+.destructive-more {
+  flex: none;
+  min-width: 38px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  padding: 0 8px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+.modal-actions > * {
+  min-height: 48px;
+}
+/* Cancel stays narrow; the confirming button gets the room, because it
+   carries the count and wrapping "Remove 3 items" onto two lines is how a
+   button stops looking like one thing to press. */
+.modal-actions .ghost-btn {
+  flex: 0 1 auto;
+  padding-inline: 20px;
+}
+.modal-actions .destructive-btn {
+  flex: 1 1 auto;
+}
+.destructive-btn span {
+  white-space: nowrap;
+}
+.destructive-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-weight: 700;
+  font-size: 14px;
+  /* Solid fill, white text: at 5.6:1 this clears AA, where the token used
+     for destructive TEXT would not survive being used as a fill. */
+  background: var(--danger-fill);
+  color: #fff;
+  border: 1px solid transparent;
+}
+.destructive-btn:disabled {
+  opacity: 0.55;
+}
+.destructive-btn:active {
+  filter: brightness(0.92);
+}
+
+/* Forced-colours (Windows/Android high contrast): our fills are dropped
+   by the OS, so the only thing left to carry "this one is destructive" is
+   a border. Give it one that the OS will keep. */
+@media (forced-colors: active) {
+  .destructive-btn,
+  .destructive-mark,
+  .sel-actions .pill-action.danger {
+    border: 2px solid currentColor;
+  }
 }

@@ -18,6 +18,7 @@ import {
   Copy,
   Check,
 } from "lucide-react";
+import { BinLiftIcon } from "./icons/ActionIcons";
 import {
   getMedia,
   getBlob,
@@ -55,6 +56,16 @@ export default function MediaDetailView({ id }: { id: string }) {
   const [url, setUrl] = useState<string | null>(null);
   const [poster, setPoster] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Focus lands on Cancel — see GalleryView for why the safe option. */
+  const deleteConfirmRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!confirmDelete) return;
+    deleteConfirmRef.current?.focus();
+    // ...and again next frame: the pointer event that opened the dialog
+    // can otherwise take focus back to the button behind it
+    const id = window.requestAnimationFrame(() => deleteConfirmRef.current?.focus());
+    return () => window.cancelAnimationFrame(id);
+  }, [confirmDelete]);
   const [info, setInfo] = useState(false);
   const [tagDraft, setTagDraft] = useState<string | null>(null);
   // gallery order for swipe navigation
@@ -1000,19 +1011,42 @@ export default function MediaDetailView({ id }: { id: string }) {
 
       {confirmDelete && (
         <div className="modal-scrim" onClick={() => setConfirmDelete(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Delete this {rec.kind}?</h2>
-            <p>It will be removed permanently from this device.</p>
-            <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-              <button className="ghost-btn" style={{ flex: 1 }} onClick={() => setConfirmDelete(false)}>
+          <div
+            className="modal modal-destructive"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="del1-title"
+            aria-describedby="del1-body"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="destructive-head">
+              <span className="destructive-mark" aria-hidden="true">
+                <BinLiftIcon size={22} />
+              </span>
+              <h2 id="del1-title">Remove this {rec.kind} from GPS Cam?</h2>
+            </div>
+            {/* Same correction as the bulk dialog: deleting here drops the
+                app's record, not the file the app wrote to the gallery. */}
+            <p id="del1-body">
+              Its location card, tags and albums are deleted here and cannot
+              be recovered.
+              <br />
+              <strong>The copy in your phone's gallery is kept.</strong>
+            </p>
+            <div className="modal-actions">
+              <button
+                ref={deleteConfirmRef}
+                className="ghost-btn"
+                onClick={() => setConfirmDelete(false)}
+              >
                 Cancel
               </button>
               <button
-                className="primary-btn"
-                style={{ flex: 1, background: "var(--danger)", color: "#fff" }}
+                className="destructive-btn"
                 onClick={() => void onDelete()}
               >
-                Delete
+                <BinLiftIcon size={18} />
+                <span>Remove {rec.kind}</span>
               </button>
             </div>
           </div>
