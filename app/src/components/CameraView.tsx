@@ -18,6 +18,7 @@ import { nativeAudioFocus } from "../lib/native";
 import { signStyle } from "../lib/watermark/chennaiSign";
 import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
+import { readLight } from "../lib/lightmeter";
 import {
   isNativeApp,
   checkNativePermissions,
@@ -35,6 +36,7 @@ import { downloadBlob, suggestedName } from "../lib/share";
 import type { VideoRecord } from "../types";
 import {
   Zap,
+  ZapOff,
   SwitchCamera,
   Settings,
   Images,
@@ -119,7 +121,10 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
   const [ready, setReady] = useState(false);
   const [camError, setCamError] = useState<string | null>(null);
+  /** Whether the lamp is actually burning — derived, not the setting. */
   const [torch, setTorch] = useState(false);
+  const flashMode = useSettingsStore((st) => st.settings.flashMode);
+  const setSettings = useSettingsStore((st) => st.setSettings);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
   // Lens stops (.6 / 1 / 3 …) shown ONLY while zooming, then faded out —
   // a permanent chip row would sit on top of the social-handle watermark.
@@ -1548,11 +1553,79 @@ export default function CameraView({ active }: { active: boolean }) {
     [afLocked, showFocusUi]
   );
 
-  const toggleTorch = useCallback(async () => {
-    const ok = await camera.setTorch(!torch);
-    if (ok) setTorch(!torch);
-    else showToast("Flash not available on this camera");
-  }, [torch, showToast]);
+  /**
+   * Cycle off -> auto -> on.
+   *
+   * The mode is the setting; whether the LED is actually burning is
+   * decided by the effect below. Tapping "auto" in daylight therefore
+   * does nothing visible, which is correct and is why the button labels
+   * the MODE rather than the lamp.
+   */
+  const cycleFlash = useCallback(() => {
+    if (!camera.capabilities().torch) {
+      showToast("This camera has no flash");
+      return;
+    }
+    const next =
+      flashMode === "off" ? "auto" : flashMode === "auto" ? "on" : "off";
+    setSettings({ flashMode: next });
+    hapticTap();
+  }, [flashMode, showToast]);
+
+  /**
+   * Keep the lamp in step with the mode.
+   *
+   * "on" holds it lit; "off" holds it dark; "auto" polls the light meter
+   * and holds it lit while the scene is too dark to shoot without it.
+   *
+   * Deliberately NOT per-shot. The platform gives us `torch`, a steady
+   * lamp, not a shutter-synchronised flash — so a per-shot flash would
+   * mean switching the LED on, waiting for exposure to settle, capturing,
+   * and switching it off, which is several hundred milliseconds between
+   * every tap. That is the exact cost that was just taken out of the
+   * shutter, and it would come back worst at night, when bursts matter
+   * most. A steady lamp also means the viewfinder shows the lit scene, so
+   * what you frame is what you get.
+   */
+  useEffect(() => {
+    if (!active || !ready) return;
+    let cancelled = false;
+    let timer = 0;
+
+    const apply = async (want: boolean) => {
+      if (cancelled || want === camera.torch) return;
+      const ok = await camera.setTorch(want);
+      if (!cancelled && ok) setTorch(want);
+    };
+
+    if (flashMode === "on") {
+      void apply(true);
+      return () => {
+        cancelled = true;
+        void camera.setTorch(false);
+      };
+    }
+    if (flashMode === "off") {
+      void apply(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // auto: sample on a slow tick. Fast enough to catch walking indoors,
+    // slow enough that it costs nothing and cannot strobe.
+    const tick = () => {
+      if (cancelled) return;
+      void apply(readLight(camera.track, videoRef.current, camera.torch).dark);
+      timer = window.setTimeout(tick, 900);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      void camera.setTorch(false);
+    };
+  }, [active, ready, flashMode]);
 
   const flipCamera = useCallback(async () => {
     camera.facing = camera.facing === "environment" ? "user" : "environment";
@@ -1725,13 +1798,35 @@ export default function CameraView({ active }: { active: boolean }) {
         <div className="cam-top">
           <span />
           <div className="cluster">
+            {/* Three states on one button, so it must say which it is in
+                by more than a highlight: the icon changes shape (struck
+                through / A / filled), a letter rides beside it in auto,
+                and the accessible name spells the mode out and what
+                comes next. `data-lit` is the LAMP, which in auto is not
+                the same thing as the MODE. */}
             <button
-              className="cam-round"
-              data-active={torch}
-              onClick={() => void toggleTorch()}
-              aria-label="Flash"
+              className="cam-round flash-btn"
+              data-active={flashMode !== "off"}
+              data-lit={torch}
+              onClick={cycleFlash}
+              aria-label={
+                flashMode === "off"
+                  ? "Flash off. Tap for automatic"
+                  : flashMode === "auto"
+                    ? `Flash automatic${torch ? ", currently lit" : ", not needed"}. Tap to keep it on`
+                    : "Flash on. Tap to turn off"
+              }
             >
-              <Zap size={19} fill={torch ? "currentColor" : "none"} />
+              {flashMode === "off" ? (
+                <ZapOff size={19} />
+              ) : (
+                <Zap size={19} fill={flashMode === "on" ? "currentColor" : "none"} />
+              )}
+              {flashMode === "auto" && (
+                <span className="flash-auto" aria-hidden="true">
+                  A
+                </span>
+              )}
             </button>
             <button
               className="cam-round"

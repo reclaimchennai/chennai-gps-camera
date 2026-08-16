@@ -3131,3 +3131,37 @@ a {
     border: 2px solid currentColor;
   }
 }
+
+
+/* ---------- flash mode ----------
+   Three states on one round button. The ring shows the MODE is engaged;
+   the warm tint shows the LAMP is actually burning, which in automatic is
+   a different thing and the only way to tell whether the meter decided
+   you needed it. */
+.flash-btn {
+  position: relative;
+}
+.flash-btn[data-lit="true"] {
+  color: #ffd27a;
+  border-color: rgba(255, 210, 122, 0.6);
+}
+.flash-auto {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  /* a plate behind it, so the letter stays readable over a bright sky
+     just as the watermark card has to */
+  padding: 1px 2px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}
+@media (forced-colors: active) {
+  .flash-btn[data-lit="true"] {
+    border: 2px solid currentColor;
+  }
+}

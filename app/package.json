@@ -15,7 +15,8 @@
     "check:contrast": "node scripts/check-contrast.mjs",
     "check:shutter": "node scripts/check-shutter.mjs",
     "check:location": "node scripts/check-location.mjs",
-    "check:a11y": "node scripts/check-a11y.mjs"
+    "check:a11y": "node scripts/check-a11y.mjs",
+    "check:flash": "node scripts/check-flash.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

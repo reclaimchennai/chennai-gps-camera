@@ -205,6 +205,16 @@ export interface AppSettings {
   gridLines: boolean;
   /** EXPERIMENTAL: on-device licence-plate OCR on captured photos */
   plateOcr: boolean;
+  /**
+   * Flash: off, automatic, or always on.
+   *
+   * The web platform offers `torch` — a steady LED — and not a
+   * shutter-synchronised flash, so all three modes are really about when
+   * that light is lit. "auto" keeps it lit while the scene is measurably
+   * too dark (see lib/lightmeter.ts) rather than pulsing it per shot,
+   * which would put a focus-and-exposure wait back between every tap.
+   */
+  flashMode: "off" | "auto" | "on";
   /** capture quality: "auto" adapts to the device tier */
   captureQuality: "auto" | "720p" | "1080p" | "max";
   /**

@@ -10,6 +10,7 @@ import { startMeter, stopMeter } from "../lib/audio/meter";
 import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 import { qualitySummary } from "../lib/quality";
 import { camera, loadLensProfile, type Lens } from "../lib/camera";
+import { lastLight } from "../lib/lightmeter";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -111,7 +112,14 @@ export default function SettingsView() {
     const cap = c
       ? `last photo: ${c.width}×${c.height} from the ${c.source}`
       : "last photo: none yet this session";
-    return `${cap}\n${geoDiag()}`;
+    const l = lastLight();
+    // Which SIGNAL the meter had matters as much as its verdict: a phone
+    // reporting no exposure data can never fire the automatic flash, and
+    // that reads exactly like a broken feature unless it is stated.
+    const light = l
+      ? `light meter: ${l.dark ? "dark" : "enough light"} — ${l.detail}, from ${l.source}`
+      : "light meter: idle (flash is not on Automatic)";
+    return `${cap}\n${light}\n${geoDiag()}`;
   };
   const geoDiag = (): string => {
     const d = lastGeocodeDiagnostic();
