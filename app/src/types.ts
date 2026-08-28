@@ -104,6 +104,14 @@ export interface WatermarkData {
   jurisdiction: Jurisdiction | null;
   address?: string; // reverse-geocoded, may arrive later
   locality?: string; // for the bold title line
+  /**
+   * The railway station this photo was taken at, when it was taken at
+   * one. Titles the card in place of the locality, because at a station
+   * the station IS the address a complaint is about; the street line
+   * below is unchanged. Resolved from our own bundled platform
+   * envelopes, so it is as offline and as checkable as the ward.
+   */
+  station?: string;
   bearing?: number; // compass, degrees
   digipin?: string; // India Post DIGIPIN, computed offline when enabled
   /** Ambient sound level at capture, approximate dB (uncalibrated mic). */

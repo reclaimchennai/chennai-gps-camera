@@ -328,6 +328,11 @@ function pincodeOf(data: WatermarkData): string | null {
 
 /** Place name for the big line — first segment, no ", Chennai" tail. */
 function placeName(data: WatermarkData, lang: string): string {
+  // A station name is already in the card's language where OSM had one,
+  // and must not be split at a comma or run through the place
+  // dictionary — "Chennai Egmore" is the name of the station, not a
+  // locality followed by a qualifier.
+  if (data.station) return data.station;
   const raw = data.locality ?? data.jurisdiction?.city ?? "Chennai";
   const head = raw.split(",")[0].trim() || "Chennai";
   // the geocoder usually answers in the local language already; this

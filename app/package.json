@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "geodata": "node scripts/build-packs.mjs",
+    "rail": "node scripts/build-rail.mjs",
     "icons": "node scripts/make-icons.mjs",
     "smoke": "node scripts/smoke.mjs",
     "check:packs": "node scripts/check-packs.mjs",
@@ -16,7 +17,8 @@
     "check:shutter": "node scripts/check-shutter.mjs",
     "check:location": "node scripts/check-location.mjs",
     "check:a11y": "node scripts/check-a11y.mjs",
-    "check:flash": "node scripts/check-flash.mjs"
+    "check:flash": "node scripts/check-flash.mjs",
+    "check:rail": "node scripts/check-rail.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

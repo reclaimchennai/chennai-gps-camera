@@ -47,6 +47,7 @@ import { newId, putBlob, putMedia, getBlob } from "./db";
 import { useLiveStore, useSettingsStore } from "../store";
 import { loadedPackFor } from "./geo/geodata";
 import { lookup } from "./geo/lookup";
+import { stationAt, stationTitle } from "./geo/rail";
 import { isNativeApp } from "./native";
 import type { PhotoRecord, WatermarkData } from "../types";
 import { scheduleBackfill } from "./backfill";
@@ -68,6 +69,9 @@ const ADDRESS_REUSE_METERS = 150;
  * capture recomputes the answer for its own coordinate (see below).
  */
 const JURISDICTION_REUSE_METERS = 20;
+/** A platform envelope is tens of metres wide; a fix looser than this
+ *  cannot honestly place someone on one. */
+const STATION_ACCURACY_M = 60;
 
 function metersApart(
   a: { lat: number; lng: number },
@@ -125,6 +129,31 @@ function jurisdictionFor(live: ReturnType<typeof useLiveStore.getState>) {
   return null;
 }
 
+/**
+ * The station this capture is at, if any.
+ *
+ * Same reasoning as jurisdictionFor: resolved here, for this photo's own
+ * coordinate, from the pack already in memory — never inherited from a
+ * fix the user has already walked away from.
+ *
+ * Gated on accuracy. A station's platform envelope is tens of metres
+ * across, so a fix that cannot place you inside a ward certainly cannot
+ * place you on a platform, and naming the wrong station is exactly the
+ * kind of confident error this app has been fixing.
+ */
+function stationFor(
+  live: ReturnType<typeof useLiveStore.getState>,
+  lang: string
+): string | undefined {
+  const fix = live.fix;
+  if (!fix) return undefined;
+  if (fix.accuracy != null && fix.accuracy > STATION_ACCURACY_M) return undefined;
+  const pack = loadedPackFor(fix.lat, fix.lng);
+  if (!pack) return undefined;
+  const st = stationAt(pack, fix.lat, fix.lng);
+  return st ? stationTitle(st, lang) : undefined;
+}
+
 export function collectWatermarkData(): WatermarkData {
   const live = useLiveStore.getState();
   const { watermark } = useSettingsStore.getState();
@@ -137,6 +166,7 @@ export function collectWatermarkData(): WatermarkData {
   return {
     fix: live.fix,
     jurisdiction: jurisdictionFor(live),
+    station: stationFor(live, watermark.language),
     address: addressUsable ? live.address : undefined,
     locality: addressUsable ? live.locality : undefined,
     bearing: live.bearing,

@@ -259,7 +259,11 @@ function buildLines(
           : j?.scope === "avadi"
             ? "Avadi"
             : undefined;
-    const title = data.locality ?? j?.city ?? legacyCity;
+    // The station outranks the locality: at a station that is the place
+    // the complaint is about, and "Sattamangalam" tells the reader far
+    // less than "Potheri Railway Station". The street line below is
+    // untouched, so nothing is lost by it.
+    const title = data.station ?? data.locality ?? j?.city ?? legacyCity;
     if (title) lines.push({ text: title, font: bold, role: "text" });
   }
 

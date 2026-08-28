@@ -21,6 +21,8 @@ export interface PackLayers {
   stations: FeatureCollection;
   /** village panchayats — statewide packs only (TN as of now) */
   villages?: FeatureCollection;
+  /** railway stations with their platform envelopes (scripts/build-rail.mjs) */
+  rail?: FeatureCollection;
 }
 
 /** Fixed-cell spatial index built at pack-build time (gazetteer-style):
