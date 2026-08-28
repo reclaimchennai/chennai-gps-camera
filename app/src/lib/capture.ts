@@ -45,6 +45,8 @@ import { writeExif } from "./exif";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";
 import { newId, putBlob, putMedia, getBlob } from "./db";
 import { useLiveStore, useSettingsStore } from "../store";
+import { loadedPackFor } from "./geo/geodata";
+import { lookup } from "./geo/lookup";
 import { isNativeApp } from "./native";
 import type { PhotoRecord, WatermarkData } from "../types";
 import { scheduleBackfill } from "./backfill";
@@ -55,14 +57,72 @@ import { makeMosaic, blocksFor } from "./editor/shapes";
 
 /** Live address is only baked in if it was resolved near the capture point. */
 const ADDRESS_REUSE_METERS = 150;
+/**
+ * How far a cached JURISDICTION may have been computed from.
+ *
+ * Far tighter than the address, because it is a different kind of claim.
+ * An address 150 m away is imprecise; a ward 150 m away is simply a
+ * different ward — scripts/check-location.mjs measures boundaries turning
+ * over in as little as 50 m — and it names a police station a complaint
+ * gets sent to. This only ever applies as a fallback: normally the
+ * capture recomputes the answer for its own coordinate (see below).
+ */
+const JURISDICTION_REUSE_METERS = 20;
+
+function metersApart(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const dLat = (a.lat - b.lat) * 111_320;
+  const dLng = (a.lng - b.lng) * 111_320 * Math.cos((a.lat * Math.PI) / 180);
+  return Math.hypot(dLat, dLng);
+}
 
 function nearEnough(
   a: { lat: number; lng: number },
   b: { lat: number; lng: number }
 ): boolean {
-  const dLat = (a.lat - b.lat) * 111_320;
-  const dLng = (a.lng - b.lng) * 111_320 * Math.cos((a.lat * Math.PI) / 180);
-  return Math.hypot(dLat, dLng) <= ADDRESS_REUSE_METERS;
+  return metersApart(a, b) <= ADDRESS_REUSE_METERS;
+}
+
+/**
+ * The jurisdiction for THIS capture's coordinate.
+ *
+ * The live tracker's answer is a convenience, not a source of truth: it
+ * is computed asynchronously, only when the user has moved 8 m, and it
+ * used to be handed to a capture with no record of where it came from. A
+ * photo could therefore print its own coordinates beside a ward and a
+ * police station resolved somewhere else entirely — and every row agreed
+ * with every other row, so nothing on the card revealed it. That is how a
+ * shot on Paper Mills Road came out stamped Ward 69 when the coordinate
+ * printed underneath it is squarely in Ward 70.
+ *
+ * So resolve it here, for the exact point being photographed. The pack is
+ * already in memory and the lookup is a grid-indexed point-in-polygon, so
+ * this costs microseconds and keeps the shutter untouched. The cached
+ * answer is used only when the pack is not loaded, and only if it was
+ * computed close enough to still be the same ward.
+ */
+function jurisdictionFor(live: ReturnType<typeof useLiveStore.getState>) {
+  const fix = live.fix;
+  if (!fix) return null;
+  const pack = loadedPackFor(fix.lat, fix.lng);
+  if (pack) {
+    try {
+      return lookup(pack, fix.lat, fix.lng).jurisdiction;
+    } catch {
+      // fall through to the cached answer
+    }
+  }
+  if (
+    live.lookupFor &&
+    metersApart(live.lookupFor, fix) <= JURISDICTION_REUSE_METERS
+  ) {
+    return live.lookupResult?.jurisdiction ?? null;
+  }
+  // Nothing we can stand behind. The card omits the rows rather than
+  // printing a station that may be the wrong one.
+  return null;
 }
 
 export function collectWatermarkData(): WatermarkData {
@@ -76,7 +136,7 @@ export function collectWatermarkData(): WatermarkData {
     nearEnough(live.addressFor, live.fix);
   return {
     fix: live.fix,
-    jurisdiction: live.lookupResult?.jurisdiction ?? null,
+    jurisdiction: jurisdictionFor(live),
     address: addressUsable ? live.address : undefined,
     locality: addressUsable ? live.locality : undefined,
     bearing: live.bearing,

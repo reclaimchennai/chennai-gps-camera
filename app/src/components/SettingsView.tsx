@@ -270,6 +270,16 @@ export default function SettingsView() {
             </div>
 
             <Row
+              label="Prefer civic body names"
+              hint="Off: the card shows the place name the geocoder gives — usually the street or neighbourhood you would recognise. On: where our own boundary data disagrees with the geocoder, the card is titled with the local body that actually governs the spot, which is the one a complaint goes to. Ward, zone and police station come from our own maps either way."
+            >
+              <Toggle
+                on={settings.civicBodyNames}
+                onChange={(v) => setSettings({ civicBodyNames: v })}
+              />
+            </Row>
+
+            <Row
               label="Full-sensor photos"
               hint="Sharper files, slower shutter. The camera runs a focus and exposure cycle for every shot instead of taking the frame already on screen, which on many phones means a noticeable wait and a stalled preview between photos. Leave this off for shooting on the move."
             >

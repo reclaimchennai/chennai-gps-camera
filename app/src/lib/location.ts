@@ -49,6 +49,8 @@ let lastFineAt = 0;
  *  against it rather than simply replacing it on age. */
 let lastFineFix: { accuracy?: number; t: number } | null = null;
 let lastLookupAt: { lat: number; lng: number } | null = null;
+/** Guards against two in-flight lookups finishing out of order. */
+let lookupSeq = 0;
 let retryTimer = 0;
 let retries = 0;
 const MAX_RETRIES = 20;
@@ -87,8 +89,14 @@ async function onFix(pos: GeolocationPosition): Promise<void> {
     !store.lookupResult
   ) {
     lastLookupAt = { lat: fix.lat, lng: fix.lng };
+    const seq = ++lookupSeq;
     try {
       const pack = await loadGeodataFor(fix.lat, fix.lng);
+      // Two fixes a few metres apart can both start a lookup, and the
+      // pack fetch means they can finish in either order. Without this,
+      // the older answer could land last and sit in the store as the
+      // current one.
+      if (seq !== lookupSeq) return;
       const result: LookupResult = pack
         ? lookup(pack, fix.lat, fix.lng)
         : {
@@ -97,9 +105,13 @@ async function onFix(pos: GeolocationPosition): Promise<void> {
             loFeature: null,
             nearestStation: null,
           };
-      useLiveStore.getState().setLookupResult(result);
+      useLiveStore.getState().setLookupResult(result, { lat: fix.lat, lng: fix.lng });
     } catch {
-      // geodata unavailable — GPS-only mode; retried on next fix
+      // Geodata unavailable. Retry on the next fix — but do NOT leave the
+      // previous answer standing, because the fix has already moved on
+      // and the pair would be a ward from one place printed under the
+      // coordinates of another. Better to show nothing than the wrong
+      // station.
       lastLookupAt = null;
     }
   }
@@ -151,8 +163,11 @@ async function assessMock(pos: GeolocationPosition): Promise<void> {
   if (mock || isNativeApp()) useLiveStore.getState().setMockLocation(mock);
 }
 
+let startedAt = 0;
+
 export function startLocation(): void {
   if (watchId != null || !("geolocation" in navigator)) return;
+  startedAt = Date.now();
   useLiveStore.getState().setGpsStatus("waiting");
   watchId = navigator.geolocation.watchPosition(
     (pos) => {
@@ -219,9 +234,55 @@ export function startLocation(): void {
     },
     { enableHighAccuracy: false, maximumAge: 30_000, timeout: 15_000 }
   );
+
+  window.clearInterval(watchdog);
+  watchdog = window.setInterval(reviveIfStalled, 10_000);
+  document.addEventListener("visibilitychange", onVisible);
+}
+
+/** Coming back to the app is the moment a stalled watch is most likely,
+ *  and the moment the user is about to shoot. Check immediately rather
+ *  than waiting up to the next interval. */
+function onVisible(): void {
+  if (!document.hidden) reviveIfStalled();
+}
+
+/**
+ * Revive a watch that has stopped delivering.
+ *
+ * `watchPosition` is not reliable across a background/resume on Android
+ * WebView: the callback simply stops firing and never resumes, and
+ * `startLocation()` is idempotent, so nothing could bring it back. The
+ * app kept whatever fix it last held — which is worse than holding none,
+ * because ward, zone and police station are all derived from it, so the
+ * card stayed confidently precise about a place the user had left. The
+ * only cure users found was to force-close and reopen the app, which is
+ * exactly the report.
+ *
+ * So: while the screen is visible, if no fix has arrived for a while,
+ * tear the watches down and start them again.
+ */
+const STALE_FIX_MS = 25_000;
+let watchdog = 0;
+
+function fixIsStale(): boolean {
+  const at = useLiveStore.getState().fix?.timestamp ?? 0;
+  return Date.now() - Math.max(at, startedAt) > STALE_FIX_MS;
+}
+
+function reviveIfStalled(): void {
+  if (document.hidden || watchId == null) return;
+  if (!fixIsStale()) return;
+  // Deliberately not just re-arming: a dead watch id still needs
+  // clearing, or the OS keeps a registration we can never hear from.
+  stopLocation();
+  startLocation();
 }
 
 export function stopLocation(): void {
+  window.clearInterval(watchdog);
+  watchdog = 0;
+  document.removeEventListener("visibilitychange", onVisible);
   window.clearTimeout(retryTimer);
   if (watchId != null) {
     navigator.geolocation.clearWatch(watchId);

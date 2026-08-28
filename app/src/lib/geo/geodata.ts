@@ -149,3 +149,22 @@ export async function loadGeodataFor(
 export function warmGeodata(): void {
   void loadIndex();
 }
+
+/**
+ * The pack already in memory, if it covers this point — no await.
+ *
+ * A capture must resolve the jurisdiction for ITS OWN coordinate, at the
+ * moment the shutter fires, and it cannot wait on a promise to do it: the
+ * shutter path is ~6 ms end to end and nothing may be added to it. The
+ * lookup itself is pure local compute against a grid index, so the only
+ * asynchronous part is having the pack, and by capture time it has
+ * essentially always been loaded by the live tracker.
+ *
+ * Returns null when the loaded pack does not cover the point (the user
+ * has crossed into another pack's area since it loaded), which the caller
+ * treats as "cannot attribute this from here" rather than guessing.
+ */
+export function loadedPackFor(lat: number, lng: number): GeoPack | null {
+  if (!current) return null;
+  return containsPoint(current.bbox, lng, lat) ? current : null;
+}

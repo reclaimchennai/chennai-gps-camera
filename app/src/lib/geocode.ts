@@ -324,6 +324,7 @@ export async function reverseGeocode(
   const { settings, watermark } = useSettingsStore.getState();
   const mode = settings.geocoder;
   if (mode === "off") return null;
+  const civicNames = settings.civicBodyNames === true;
   // Ask for the address in the card's language ONLY where that language
   // is actually local. A Tamil card in Bengaluru was getting a Tamil
   // TRANSLITERATION of a Kannada address — "Inner Circle Municipal Park"
@@ -338,7 +339,12 @@ export async function reverseGeocode(
   // A place we have already asked about answers instantly and costs the
   // provider nothing. Same cell, same language, within a month.
   const truth = await localTruth(lat, lng);
-  const remembered = await cachedAddress(lat, lng, lang);
+  // The setting changes what is STORED (a suppressed entry has no
+  // locality at all), so entries must not cross between the two modes —
+  // toggling it would otherwise keep serving the other mode's answers
+  // until the month-long TTL expired.
+  const cacheLang = civicNames ? `${lang}+civic` : lang;
+  const remembered = await cachedAddress(lat, lng, cacheLang);
   // `address` is required on a result; a cache entry holding only a
   // locality is not a usable answer, so fall through and ask properly.
   // A hit is also re-checked: the cache is consulted BEFORE any provider,
@@ -346,7 +352,7 @@ export async function reverseGeocode(
   // every fix for the length of its TTL.
   if (remembered?.address) {
     const hit = { address: remembered.address, locality: remembered.locality };
-    if (corroborated(hit, truth)) {
+    if (!civicNames || corroborated(hit, truth)) {
       lastDiag = {
         at: Date.now(), lat, lng, truth, provider: "cache",
         corroborated: true, address: hit.address, locality: hit.locality,
@@ -368,7 +374,11 @@ export async function reverseGeocode(
     r: GeocodeResult | null
   ): Promise<GeocodeResult | null> => {
     const ok = corroborated(r, truth);
-    const suppress = !!(r && !ok && truth.length > 0);
+    // With civic-body names off, the geocoder's answer stands as given —
+    // corroboration is still MEASURED, so Diagnostics can still show
+    // whether our own data agreed, but it no longer overrides the title.
+    const suppress =
+      civicNames && !!(r && !ok && truth.length > 0);
     lastDiag = {
       at: Date.now(),
       lat,
@@ -380,7 +390,7 @@ export async function reverseGeocode(
       locality: r?.locality,
       localitySuppressed: suppress,
     };
-    return remember(lat, lng, lang, suppress ? { address: r!.address } : r);
+    return remember(lat, lng, cacheLang, suppress ? { address: r!.address } : r);
   };
 
   try {
@@ -459,7 +469,8 @@ export async function reverseGeocode(
      * is worse than the imprecise one we already had in hand.
      */
     const consider = async (
-      ask: () => Promise<GeocodeResult | null>
+      ask: () => Promise<GeocodeResult | null>,
+      acceptAnything = false
     ): Promise<GeocodeResult | null> => {
       let r: GeocodeResult | null = null;
       try {
@@ -468,10 +479,35 @@ export async function reverseGeocode(
         return null; // unreachable provider — try the next rung
       }
       if (!r) return null;
-      if (corroborated(r, truth)) return r;
+      if (acceptAnything || corroborated(r, truth)) return r;
       first.uncorroborated ??= r;
       return null;
     };
+
+    // Civic-body names off: the first provider with an answer wins, which
+    // is what "whatever the geocoder gives us" means. The corroboration
+    // chain exists to prefer an answer our own data agrees with, and that
+    // preference is exactly what this setting turns off.
+    if (!civicNames) {
+      const sys0 = await consider(trySystem, true);
+      if (sys0) return settle("system", await localised(sys0));
+      if (settings.googleApiKey) {
+        const g0 = await consider(
+          () => google(lat, lng, settings.googleApiKey, lang),
+          true
+        );
+        if (g0) return settle("google", g0);
+      }
+      if (settings.mapplsApiKey) {
+        const m0 = await consider(
+          () => mappls(lat, lng, settings.mapplsApiKey),
+          true
+        );
+        if (m0) return settle("mappls", m0);
+      }
+      const n0 = await consider(() => nominatim(lat, lng, lang), true);
+      return settle("nominatim", n0);
+    }
 
     const sys = await consider(trySystem);
     if (sys) return settle("system", await localised(sys));

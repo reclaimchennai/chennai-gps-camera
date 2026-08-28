@@ -26,6 +26,15 @@ export type GpsStatus = "waiting" | "ok" | "approximate" | "denied";
 interface LiveState {
   fix: Fix | null;
   lookupResult: LookupResult | null;
+  /**
+   * The coordinate `lookupResult` was computed FOR.
+   *
+   * Without it the store held a jurisdiction with no idea where it came
+   * from, and a capture paired the newest fix with whatever ward happened
+   * to be sitting there — coordinates from one place, ward and police
+   * station from another, with nothing on the card to show it.
+   */
+  lookupFor: { lat: number; lng: number } | null;
   bearing: number | undefined;
   gpsStatus: GpsStatus;
   address: string | undefined; // live-preview reverse geocode (best effort)
@@ -40,7 +49,7 @@ interface LiveState {
   /** true when the current fix is a mock/spoofed location (disclosed, not blocked) */
   mockLocation: boolean;
   setFix(fix: Fix): void;
-  setLookupResult(r: LookupResult): void;
+  setLookupResult(r: LookupResult, at: { lat: number; lng: number }): void;
   setBearing(b: number): void;
   setGpsStatus(s: GpsStatus): void;
   setAddress(
@@ -82,6 +91,7 @@ function adoptStreetSign(): void {
 export const useLiveStore = create<LiveState>((set) => ({
   fix: null,
   lookupResult: null,
+  lookupFor: null,
   bearing: undefined,
   gpsStatus: "waiting",
   address: undefined,
@@ -92,8 +102,8 @@ export const useLiveStore = create<LiveState>((set) => ({
   uiRotation: 0,
   mockLocation: false,
   setFix: (fix) => set({ fix }),
-  setLookupResult: (lookupResult) => {
-    set({ lookupResult });
+  setLookupResult: (lookupResult, lookupFor) => {
+    set({ lookupResult, lookupFor });
     adoptStreetSign();
   },
   setBearing: (bearing) => set({ bearing }),
@@ -111,6 +121,7 @@ export const useLiveStore = create<LiveState>((set) => ({
 export const DEFAULT_SETTINGS: AppSettings = {
   gridLines: false,
   plateOcr: false,
+  civicBodyNames: false,
   flashMode: "off",
   captureQuality: "auto",
   fullSensorStills: false,

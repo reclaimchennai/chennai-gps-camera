@@ -111,6 +111,66 @@ try {
     );
   }
 
+  // ---- 1b. the ward on a photo belongs to the photo's own coordinate --
+  // A user reported a card reading Ward 69 whose printed coordinates are
+  // squarely inside Ward 70. Nothing about the geocoder could cause that:
+  // wards come from our own polygons. It happened because the live
+  // tracker's jurisdiction was handed to the capture with no record of
+  // WHICH fix produced it, so a photo could pair its own coordinates with
+  // a ward resolved somewhere the user had already left.
+  const pairing = await page.evaluate(async () => {
+    const { useLiveStore } = await import("/src/store.ts");
+    const { collectWatermarkData } = await import("/src/lib/capture.ts");
+    const { loadGeodataFor } = await import("/src/lib/geo/geodata.ts");
+    const { lookup } = await import("/src/lib/geo/lookup.ts");
+
+    // Paper Mills Road, Perambur — the reported coordinate.
+    const here = { lat: 13.107929, lng: 80.237139 };
+    // ~1.9 km south, a different ward and a different station.
+    const away = { lat: 13.09, lng: 80.2295 };
+
+    const truth = async (p) => {
+      const pack = await loadGeodataFor(p.lat, p.lng);
+      return lookup(pack, p.lat, p.lng).jurisdiction;
+    };
+    const hereTruth = await truth(here);
+    const awayTruth = await truth(away);
+    await loadGeodataFor(here.lat, here.lng); // pack in memory, as in the app
+
+    // Stale pairing, exactly as it used to be: a jurisdiction resolved at
+    // `away`, then a fix that has moved to `here`.
+    const st = useLiveStore.getState();
+    st.setLookupResult(
+      { jurisdiction: awayTruth, wardFeature: null, loFeature: null, nearestStation: null },
+      away
+    );
+    st.setFix({ lat: here.lat, lng: here.lng, accuracy: 8, timestamp: Date.now() });
+
+    const stamped = collectWatermarkData();
+    return {
+      hereWard: hereTruth?.ward,
+      hereLo: hereTruth?.loStation,
+      awayWard: awayTruth?.ward,
+      awayLo: awayTruth?.loStation,
+      stampedWard: stamped.jurisdiction?.ward,
+      stampedLo: stamped.jurisdiction?.loStation,
+    };
+  });
+
+  check(
+    "a photo is stamped with the ward its own coordinates fall in",
+    pairing.stampedWard === pairing.hereWard &&
+      pairing.stampedLo === pairing.hereLo,
+    `coordinate is ward ${pairing.hereWard}/${pairing.hereLo}; ` +
+      `stale store held ${pairing.awayWard}/${pairing.awayLo}; ` +
+      `card printed ${pairing.stampedWard}/${pairing.stampedLo}`
+  );
+  check(
+    "the two places really are different (the test can fail)",
+    pairing.hereWard !== pairing.awayWard || pairing.hereLo !== pairing.awayLo,
+    `${pairing.hereWard}/${pairing.hereLo} vs ${pairing.awayWard}/${pairing.awayLo}`
+  );
+
   // ---- 2. the card discloses a fix it cannot stand behind -------------
   const disclosure = await page.evaluate(async () => {
     const { renderWatermark } = await import("/src/lib/watermark/render.ts");

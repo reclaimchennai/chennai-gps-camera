@@ -206,6 +206,23 @@ export interface AppSettings {
   /** EXPERIMENTAL: on-device licence-plate OCR on captured photos */
   plateOcr: boolean;
   /**
+   * Prefer civic-body names over the geocoder's own.
+   *
+   * ON: an address our bundled boundary data cannot corroborate still
+   * supplies the street line, but never titles the card — the title falls
+   * back to the local body we resolved ourselves. Right for filing, since
+   * the body named is the one that owns the problem.
+   *
+   * OFF (default): whatever the geocoder answers is used as-is. Some
+   * users would rather see the street or neighbourhood they recognise
+   * than the municipality that governs it.
+   *
+   * Either way this only decides the ADDRESS and the title. Ward, zone
+   * and police station always come from our own polygons — they are the
+   * point of the app and they are not a geocoder's to guess at.
+   */
+  civicBodyNames: boolean;
+  /**
    * Flash: off, automatic, or always on.
    *
    * The web platform offers `torch` — a steady LED — and not a
