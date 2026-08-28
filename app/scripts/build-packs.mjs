@@ -71,6 +71,22 @@ const clean = (v) => {
  * "011", "011_1" — the same ward, drawn twice. Left alone the card prints
  * "Ward 11 1" for whichever half the photo lands in.
  */
+/**
+ * Beat codes, one house style.
+ *
+ * The L&O and traffic datasets disagree: 384 stations are "S10" and 6 are
+ * "S 10". A card comparing the two by string then reports one police
+ * station as two — "Police (L&O) - S10 Pallikaranai · Traffic - S 10
+ * Pallikaranai" — telling a reader to contact two places that are one.
+ * The app also compares them structurally now (geo/station-id.ts), which
+ * is what protects packs already installed on phones, but the data has no
+ * business carrying two spellings of the same code.
+ */
+const cleanBeatCode = (v) =>
+  typeof v === "string"
+    ? v.replace(/^([A-Za-z]{1,3})\s+(\d{1,3})\b/, (_, a, n) => `${a}${n}`)
+    : v;
+
 const cleanWard = (v) => {
   const s = clean(v);
   return s == null ? undefined : s.replace(/\s+\d+$/, "").trim() || s;
@@ -168,7 +184,7 @@ function buildTamilNadu() {
     rawLo.features.map((f) => {
       const p = f.properties;
       return normFeature(f, {
-        station: titleish(clean(p.station)),
+        station: cleanBeatCode(titleish(clean(p.station))),
         locality: clean(p.district), // source `district` is a locality name
         district: clean(p.districtName),
         ac: clean(p.ac),
@@ -190,7 +206,7 @@ function buildTamilNadu() {
         ? raw.replace(/[-\s]*\btiw\b[-\s]*/gi, " ").replace(/\s{2,}/g, " ").trim()
         : undefined;
       return normFeature(f, {
-        station: titleish(station),
+        station: cleanBeatCode(titleish(station)),
         subDivision: titleish(
           clean(p["Sub-Division"]) ?? clean(p.taluk) ?? clean(p.taluk_name)
         ),
@@ -404,7 +420,7 @@ function buildCity(cfg) {
           fetchTopo(cfg.src, layer)
             .features.filter((f) => f.geometry)
             .map((f) =>
-              normFeature(f, { station: clean(f.properties.namecol) })
+              normFeature(f, { station: cleanBeatCode(clean(f.properties.namecol)) })
             )
         )
       : fc([]);

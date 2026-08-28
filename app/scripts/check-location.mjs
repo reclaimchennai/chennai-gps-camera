@@ -283,6 +283,38 @@ try {
     suffixLeft.length === 0,
     stations.map(([a, b]) => `${a} → ${b}`).join("; ")
   );
+  // ---- 4. one station, not two ---------------------------------------
+  // Reported from a photo: "Police (L&O) - S10 Pallikaranai · Traffic -
+  // S 10 Pallikaranai". One space between two government datasets, and a
+  // reader is told to contact two police stations that are one.
+  const ident = await page.evaluate(async () => {
+    const { sameStation } = await import("/src/lib/geo/station-id.ts");
+    return {
+      spaced: sameStation("S10 Pallikaranai PS", "S 10 Pallikaranai"),
+      spelling: sameStation("S13 Chrompet PS", "S 13 Chromepet"),
+      caseOnly: sameStation("MICO Layout Bangalore PS", "Mico layout Bangalore PS"),
+      joined: sameStation("Annanagar", "Anna Nagar"),
+      dots: sameStation("S.P.Pattinam", "S.p.pattinam"),
+      // must NOT merge: a shared beat code between genuinely different
+      // stations would silently send a complaint to the wrong desk
+      differentPlace: sameStation("S13 Chrompet", "S13 Velachery"),
+      differentCode: sameStation("S10 Pallikaranai", "S12 Pallikaranai"),
+      unrelated: sameStation("K1 Sembium", "G3 Kilpauk"),
+    };
+  });
+  check(
+    "one station spelled two ways is recognised as one",
+    ident.spaced && ident.spelling && ident.caseOnly && ident.joined && ident.dots,
+    `spaced ${ident.spaced}, spelling ${ident.spelling}, case ${ident.caseOnly}, ` +
+      `joined ${ident.joined}, dots ${ident.dots}`
+  );
+  check(
+    "two different stations are never merged",
+    !ident.differentPlace && !ident.differentCode && !ident.unrelated,
+    `same code different place ${ident.differentPlace}, ` +
+      `different code ${ident.differentCode}, unrelated ${ident.unrelated}`
+  );
+
   check(
     "a name without a suffix is left alone",
     stations.find(([a]) => a === "S 13 Chrompet")?.[1] === "S 13 Chrompet"

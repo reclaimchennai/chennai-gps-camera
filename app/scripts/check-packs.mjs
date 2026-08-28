@@ -56,6 +56,14 @@ function walk(node, parentKey, pack) {
           if (/_\d+$/.test(v)) {
             report(`${pack}.${k}`, v, "multipart ward id");
           }
+        } else if (k === "station" && /^[A-Za-z]{1,3}\s+\d{1,3}\b/.test(v)) {
+          // "S 10 Pallikaranai" against "S10 Pallikaranai": one space, and
+          // the card reports one police station as two, telling a reader
+          // to contact two places that are one. Scoped to `station` on
+          // purpose — village names legitimately begin "No 3 …", and a
+          // rule that cannot tell those apart would train people to
+          // ignore it.
+          report(`${pack}.${k}`, v, "spaced beat code");
         } else if (NAME_FIELDS.has(k)) {
           for (const [rx, why] of RULES) {
             if (rx.test(v)) { report(`${pack}.${k}`, v, why); break; }
@@ -92,6 +100,49 @@ for (const entry of index.packs) {
     console.log(
       `  byte count wrong: ${entry.id} index=${entry.bytes} actual=${raw.length}`
     );
+  }
+}
+
+/**
+ * The same station, spelled two ways.
+ *
+ * Law & Order and Traffic come from separate government datasets, and
+ * where they name the same station differently the card cannot tell they
+ * are one place. The app compares them structurally now
+ * (src/lib/geo/station-id.ts) so installed packs are safe, but data
+ * carrying two spellings of one station is still a defect and this is
+ * where it gets found.
+ */
+const squash = (v) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+const beat = (v) => {
+  const m = /^([A-Za-z]{1,3})\s*(\d{1,3})\b/.exec(v.trim());
+  return m ? `${m[1].toUpperCase()}${m[2]}` : null;
+};
+for (const entry of index.packs) {
+  const pack = JSON.parse(readFileSync(join(PACKS, entry.file), "utf8"));
+  const byCode = new Map();
+  const seen = new Map();
+  for (const layer of ["lo", "traffic"]) {
+    for (const f of pack.layers?.[layer]?.features ?? []) {
+      const n = f.properties?.station;
+      if (typeof n !== "string" || !n.trim()) continue;
+      const k = squash(n);
+      if (!seen.has(k)) seen.set(k, new Set());
+      seen.get(k).add(n);
+      const c = beat(n);
+      if (c) {
+        if (!byCode.has(c)) byCode.set(c, new Set());
+        byCode.get(c).add(n);
+      }
+    }
+  }
+  for (const [, forms] of seen) {
+    if (forms.size > 1) {
+      problems++;
+      console.log(
+        `  same station, two spellings: ${entry.id} ${[...forms].map((f) => JSON.stringify(f)).join(" vs ")}`
+      );
+    }
   }
 }
 

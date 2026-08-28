@@ -24,6 +24,7 @@ import {
 import { renderSocialStrip } from "./socialStrip";
 import { latLngToDigipin } from "../geo/digipin";
 import { localStation } from "../geo/local-names";
+import { sameStation, preferredStationName } from "../geo/station-id";
 import { stringsFor, fontFor, type CardStrings } from "./signboard";
 import { renderChennaiSign, signAuthority } from "./chennaiSign";
 import {
@@ -391,7 +392,10 @@ function buildLines(
     const lo = tr(f.loStation ? j.loStation : undefined);
     const traffic = tr(f.trafficStation ? j.trafficStation : undefined);
     if (lo && traffic) {
-      if (lo === traffic) pushJur(`${t.policeBoth}: ${lo}`);
+      // Not string equality: the two layers come from datasets that spell
+      // the same station differently (see geo/station-id.ts).
+      if (sameStation(lo, traffic))
+        pushJur(`${t.policeBoth}: ${preferredStationName(lo, traffic)}`);
       else pushJur(`${t.policeLo} – ${lo} · ${t.traffic} – ${traffic}`, 3);
     } else if (lo) {
       pushJur(`${t.policeLo}: ${lo}`);

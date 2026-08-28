@@ -37,9 +37,10 @@ const OVERPASS = "https://overpass-api.de/api/interpreter";
 /** Platforms further than this from a station point belong to another
  *  station; beyond it we are measuring the next stop down the line. */
 const PLATFORM_SEARCH_M = 700;
-/** Concourse, entrances and forecourt: how far outside the platforms
- *  still counts as being at the station. */
-const BUFFER_M = 60;
+/* The concourse buffer lives in src/lib/geo/rail.ts, not here: it is a
+   judgement about what counts as "at the station", and keeping it in the
+   app means it can be tuned without refetching and reshipping every
+   pack. This file's job is measurement. */
 /** Bounds for the fallback circle used where no platform is mapped. */
 const MIN_RADIUS_M = 80;
 const MAX_RADIUS_M = 250;

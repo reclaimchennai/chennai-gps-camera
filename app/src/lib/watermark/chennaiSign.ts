@@ -28,6 +28,7 @@ import {
 } from "../geo/format";
 import { latLngToDigipin } from "../geo/digipin";
 import { localStation, localPlace } from "../geo/local-names";
+import { sameStation, preferredStationName } from "../geo/station-id";
 import { tamilBodyName } from "../geo/tn-body-names";
 import {
   isChennaiJurisdiction,
@@ -548,8 +549,8 @@ export function renderChennaiSign(
   const traffic = loc(lang, f.trafficStation ? j?.trafficStation : undefined);
   if (lo && traffic) {
     rows.push(
-      lo === traffic
-        ? `${t.policeBoth}: ${lo}`
+      sameStation(lo, traffic)
+        ? `${t.policeBoth}: ${preferredStationName(lo, traffic)}`
         : `${t.policeLo} - ${lo}  ·  ${t.traffic} - ${traffic}`
     );
   } else if (lo) {
