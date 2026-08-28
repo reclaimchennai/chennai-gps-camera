@@ -446,6 +446,7 @@ textarea {
   transition: none; /* appear instantly, leave gently */
 }
 
+.cam-blur,
 .cam-overlay,
 .cam-grid {
   position: absolute;
@@ -457,6 +458,11 @@ textarea {
 .cam-overlay {
   /* the live card must stay visible above the freeze cover (z-index 4) */
   z-index: 5;
+}
+/* Under the card, over the picture: a face crossing behind the watermark
+   must still be covered, and the card must still be readable over it. */
+.cam-blur {
+  z-index: 4;
 }
 
 /* Coarse-fix warning. Sits under the top bar rather than in it, so the

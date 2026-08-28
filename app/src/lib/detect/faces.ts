@@ -171,6 +171,21 @@ export interface DetectOptions {
    *  short-range model misses. Costs ~5 detector runs — used for capture
    *  and editor auto-blur; the live viewfinder uses a single pass. */
   thorough?: boolean;
+  /**
+   * Run the pose-based head fallback.
+   *
+   * Defaults to on, because for a still or an export the extra recall on
+   * side-profile faces is worth the time. It is NOT free: PoseLandmarker
+   * is full-body landmark estimation and by far the heaviest thing here,
+   * and it used to run on every live viewfinder tick — which is what made
+   * the blur boxes trail behind a moving face and made recording drop
+   * frames, since inference and the 30 fps compositor share one thread.
+   *
+   * The live path now runs it occasionally rather than never: BlazeFace
+   * every tick to follow movement, pose every few ticks so someone in
+   * profile is still found.
+   */
+  pose?: boolean;
 }
 
 /**
@@ -182,6 +197,7 @@ export async function detectFaces(
   opts: DetectOptions = {}
 ): Promise<DetectedBox[] | null> {
   const thorough = opts.thorough ?? true;
+  const wantPose = opts.pose ?? true;
   const { w, h } = sourceSize(source);
   const boxes: DetectedBox[] = [];
   let anyDetectorRan = false;
@@ -234,7 +250,7 @@ export async function detectFaces(
     }
   }
 
-  const pose = await getPoseLandmarker();
+  const pose = wantPose ? await getPoseLandmarker() : null;
   if (pose) {
     anyDetectorRan = true;
     try {

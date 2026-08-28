@@ -31,6 +31,7 @@ import { hapticTap, hapticDouble } from "../lib/haptics";
 import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
 import { makeThumbnail } from "../lib/img";
 import { detectFaces, type DetectedBox } from "../lib/detect/faces";
+import { BoxTracker } from "../lib/detect/tracker";
 import { pickRecordingMime, finalizeVideoBlob } from "../lib/video/postprocess";
 import { downloadBlob, suggestedName } from "../lib/share";
 import type { VideoRecord } from "../types";
@@ -62,6 +63,9 @@ function fmtZoom(z: number): string {
 export default function CameraView({ active }: { active: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
+  /** Blur only. Separate from the card so it can follow a face at frame
+   *  rate without paying to re-render the watermark sixty times a second. */
+  const blurRef = useRef<HTMLCanvasElement>(null);
   const freezeRef = useRef<HTMLCanvasElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -123,6 +127,7 @@ export default function CameraView({ active }: { active: boolean }) {
   const [camError, setCamError] = useState<string | null>(null);
   /** Whether the lamp is actually burning — derived, not the setting. */
   const [torch, setTorch] = useState(false);
+  const liveBlur = useSettingsStore((st) => st.settings.liveFaceBlur);
   const flashMode = useSettingsStore((st) => st.settings.flashMode);
   const setSettings = useSettingsStore((st) => st.setSettings);
   const [zoomLabel, setZoomLabel] = useState<string | null>(null);
@@ -574,9 +579,12 @@ export default function CameraView({ active }: { active: boolean }) {
   // EXPERIMENTAL live face blur: latest detection results in video-natural
   // pixels (padded); detection runs throttled and never blocks drawing
   const liveBoxesRef = useRef<DetectedBox[]>([]);
+  /** Carries the boxes forward between detections — see detect/tracker.ts. */
+  const trackerRef = useRef(new BoxTracker());
+  /** Ticks since the pose fallback last ran. */
+  const poseTickRef = useRef(0);
   const detectBusyRef = useRef(false);
   const detectCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pixelTinyRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     if (!active) return;
@@ -611,6 +619,13 @@ export default function CameraView({ active }: { active: boolean }) {
       // watermark render several times a second is what WebViews choke
       // on. Live blur patches sample the moving video, so they always
       // repaint.
+      // Projected to NOW, not to the last detection: see detect/tracker.ts
+      if (s.liveFaceBlur) {
+        liveBoxesRef.current = trackerRef.current.at(performance.now());
+      } else if (liveBoxesRef.current.length) {
+        liveBoxesRef.current = [];
+        trackerRef.current.clear();
+      }
       const blurLive = s.liveFaceBlur && liveBoxesRef.current.length > 0;
       const sig: unknown[] = [
         w, h, Math.floor(Date.now() / 1000), live.db, live.fix,
@@ -636,28 +651,6 @@ export default function CameraView({ active }: { active: boolean }) {
       if (!ctx) return;
       const data = collectWatermarkData();
       ctx.clearRect(0, 0, w, h);
-
-      // live face blur preview: pixelate the latest detected head boxes
-      if (s.liveFaceBlur && liveBoxesRef.current.length && video.videoWidth) {
-        const kx = w / video.videoWidth;
-        const ky = h / video.videoHeight;
-        const tiny = (pixelTinyRef.current ??= document.createElement("canvas"));
-        const tctx = tiny.getContext("2d");
-        if (tctx) {
-          for (const b of liveBoxesRef.current) {
-            const cells = 9;
-            tiny.width = cells;
-            tiny.height = cells;
-            tctx.drawImage(video, b.x, b.y, b.width, b.height, 0, 0, cells, cells);
-            ctx.imageSmoothingEnabled = false;
-            ctx.drawImage(
-              tiny, 0, 0, cells, cells,
-              b.x * kx, b.y * ky, b.width * kx, b.height * ky
-            );
-            ctx.imageSmoothingEnabled = true;
-          }
-        }
-      }
 
       // Held landscape: rotate the drawing space the same way the icons
       // rotate (CSS --ui-rot), so the card previews upright and in its
@@ -694,10 +687,20 @@ export default function CameraView({ active }: { active: boolean }) {
       const video = videoRef.current;
       if (!useSettingsStore.getState().settings.liveFaceBlur) {
         liveBoxesRef.current = [];
+        trackerRef.current.clear();
         return;
       }
       if (detectBusyRef.current || !video || video.videoWidth === 0) return;
       detectBusyRef.current = true;
+      // Stamp the frame, not the result: inference takes tens of
+      // milliseconds and charging that to the velocity would make every
+      // face look slower than it is.
+      const grabbedAt = performance.now();
+      // BlazeFace every tick to follow movement; the pose fallback — which
+      // is full-body landmark estimation and the expensive one — every
+      // fourth, so a face in profile is still found without paying for it
+      // sixty times a minute.
+      const withPose = poseTickRef.current++ % 4 === 0;
       // 512 (was 384): distant faces need more pixels to register in the
       // live preview too; still cheap enough for the 300 ms cadence
       const scale = 512 / Math.max(video.videoWidth, video.videoHeight);
@@ -705,10 +708,10 @@ export default function CameraView({ active }: { active: boolean }) {
       dc.width = Math.max(1, Math.round(video.videoWidth * scale));
       dc.height = Math.max(1, Math.round(video.videoHeight * scale));
       dc.getContext("2d")?.drawImage(video, 0, 0, dc.width, dc.height);
-      void detectFaces(dc, { thorough: false })
+      void detectFaces(dc, { thorough: false, pose: withPose })
         .then((boxes) => {
           const inv = 1 / scale;
-          liveBoxesRef.current = (boxes ?? []).map((b) => {
+          const scaled = (boxes ?? []).map((b) => {
             const padX = b.width * 0.15;
             const padY = b.height * 0.2;
             return {
@@ -719,6 +722,14 @@ export default function CameraView({ active }: { active: boolean }) {
               score: b.score,
             };
           });
+          // A pose-less tick finding nothing is not evidence that a face
+          // in profile has gone — BlazeFace could not see it in the first
+          // place. Let the track age out instead of dropping it, or the
+          // blur would flicker off three ticks in four.
+          if (scaled.length === 0 && !withPose && liveBoxesRef.current.length) {
+            return;
+          }
+          trackerRef.current.update(scaled, grabbedAt);
         })
         .finally(() => {
           detectBusyRef.current = false;
@@ -785,9 +796,22 @@ export default function CameraView({ active }: { active: boolean }) {
       // races) restarts itself — no tap on the overlay button needed
       const v = videoRef.current;
       if (v && v.srcObject && v.paused) void v.play().catch(() => {});
-      detectTick();
       draw();
     }, 300);
+
+    /**
+     * Detection runs on its OWN clock, faster than the card's.
+     *
+     * It used to share the 300 ms card tick, which set how far a face
+     * could travel unseen — and the first sighting of a face is the worst
+     * case, because there is no velocity yet to project from and nothing
+     * but a margin covering it.
+     *
+     * Halving that window costs nothing overall: the pose fallback, the
+     * expensive model, now runs every fourth detection instead of every
+     * one. Twice the update rate for slightly less work than before.
+     */
+    const detectEvery = window.setInterval(detectTick, 150);
     const unsubLive = useLiveStore.subscribe(draw);
     const onRedraw = () => draw();
     window.addEventListener("gpscam:redraw-overlay", onRedraw);
@@ -800,6 +824,7 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => {
       stop = true;
       window.clearInterval(interval);
+      window.clearInterval(detectEvery);
       window.removeEventListener("gpscam:redraw-overlay", onRedraw);
       unsubLive();
       unsubSettings();
@@ -1004,7 +1029,10 @@ export default function CameraView({ active }: { active: boolean }) {
           }
           lastGoodFrame = true;
           if (liveBlurOn) {
-            for (const b of liveBoxesRef.current) {
+            // Per frame, projected — a recording composited at 30 fps from
+            // boxes refreshed a few times a second is where the trailing
+            // blur showed up worst, because every frame of it is kept.
+            for (const b of trackerRef.current.at(performance.now())) {
               const cells = 9;
               tiny.width = cells;
               tiny.height = cells;
@@ -1627,6 +1655,62 @@ export default function CameraView({ active }: { active: boolean }) {
     };
   }, [active, ready, flashMode]);
 
+  /**
+   * Paint the blur, at frame rate.
+   *
+   * Its own loop and its own canvas. The card is redrawn a few times a
+   * second because a full watermark render is the thing WebViews choke
+   * on, and that cadence used to set the blur's cadence too — so the blur
+   * moved in 300 ms steps while the face moved continuously. Splitting
+   * them lets the blur follow at sixty frames a second and costs nothing
+   * extra, because a handful of 9x9 mosaics is trivial work next to
+   * rendering the card.
+   */
+  useEffect(() => {
+    if (!active || !liveBlur) return;
+    let raf = 0;
+    const tiny = document.createElement("canvas");
+    const tctx = tiny.getContext("2d");
+    tiny.width = 9;
+    tiny.height = 9;
+
+    const paint = () => {
+      raf = requestAnimationFrame(paint);
+      const canvas = blurRef.current;
+      const video = videoRef.current;
+      if (!canvas || !video || !tctx || !video.videoWidth) return;
+      const rect = (boxRef.current ?? video).getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.round(rect.width * dpr);
+      const h = Math.round(rect.height * dpr);
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, w, h);
+      const boxes = trackerRef.current.at(performance.now());
+      liveBoxesRef.current = boxes;
+      if (!boxes.length) return;
+      const kx = w / video.videoWidth;
+      const ky = h / video.videoHeight;
+      for (const b of boxes) {
+        tctx.drawImage(video, b.x, b.y, b.width, b.height, 0, 0, 9, 9);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(tiny, 0, 0, 9, 9, b.x * kx, b.y * ky, b.width * kx, b.height * ky);
+        ctx.imageSmoothingEnabled = true;
+      }
+    };
+    raf = requestAnimationFrame(paint);
+    return () => {
+      cancelAnimationFrame(raf);
+      const canvas = blurRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    };
+  }, [active, liveBlur]);
+
   const flipCamera = useCallback(async () => {
     camera.facing = camera.facing === "environment" ? "user" : "environment";
     await startCam(modeRef.current);
@@ -1710,6 +1794,11 @@ export default function CameraView({ active }: { active: boolean }) {
           {/* the card is drawn, so its content is invisible to a screen
               reader — describe what it carries rather than leaving a bare
               canvas that reads as nothing at all */}
+          <canvas
+            ref={blurRef}
+            className="cam-blur"
+            aria-hidden="true"
+          />
           <canvas
             ref={overlayRef}
             className="cam-overlay"
