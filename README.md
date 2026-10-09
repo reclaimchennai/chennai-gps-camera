@@ -163,9 +163,10 @@ app/                      the PWA (React + TypeScript + Vite + Capacitor)
 Dockerfile                self-hosting image (build → static serve)
 compose.selfhost.yml      one-command self-host
 Caddyfile.selfhost        the container's internal web server config
-deploy.sh, Caddyfile.inner, docker-compose.yml
+deploy.sh, docker-compose.yml
                           production wiring for cam.reclaimchennai.city —
-                          specific to that server, safe to ignore
+                          builds this image and runs it behind the
+                          server's edge Caddy; safe to ignore
 ```
 
 ## Data sources & licences

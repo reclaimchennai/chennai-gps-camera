@@ -1,44 +1,83 @@
 #!/usr/bin/env bash
-# Build the PWA and activate it as a new release.
+# Build the site image and put it live as cam-app.
 #
-# Mirrors the police-locator release pattern: each build lands in
-# deploy/releases/<timestamp>/ and deploy/current (a RELATIVE symlink,
-# so it resolves inside the cam-app container mount) is swapped
-# atomically. Rollback = repoint the symlink at the previous release.
+# cam.reclaimchennai.city is served by the cam-app container running the
+# published image, with the built app baked in (see Dockerfile); the edge
+# Caddy proxies cam.reclaimchennai.city -> cam-app:8080 on the `web`
+# network. This script used to build into deploy/releases and swap a
+# symlink that only a bind-mount setup ever read. cam-app has no mounts,
+# so it reported success and changed nothing the site served.
+#
+#   ./deploy.sh                    build vX (the Android versionName) and go live
+#   ./deploy.sh --push             ...and push vX and latest to Docker Hub
+#   ./deploy.sh --rollback v1.46.0 put an earlier image back live
+#
+# Going live recreates only cam-app: the site is down for about a second,
+# and nothing else on the server is touched.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP="$ROOT/app"
-DEPLOY="$ROOT/deploy"
-TS="$(date +%Y%m%d-%H%M%S)"
-RELEASE="$DEPLOY/releases/$TS"
+IMAGE="reclaimchennai/chennai-gps-camera"
+NAME="cam-app"
+NET="web"
+SITE="https://cam.reclaimchennai.city/"
 
-echo "==> Building (geodata filter + icons run only if inputs exist)"
-cd "$APP"
-if [[ -d "$HOME/projects/police/police-locator-20260525-1033/public/data" ]]; then
-  node scripts/build-packs.mjs
+version() {
+  sed -n 's/.*versionName "\(.*\)".*/v\1/p' "$ROOT/app/android/app/build.gradle" | head -1
+}
+
+# The main bundle an index.html loads — what proves which build is live.
+bundle() {
+  grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | head -1
+}
+
+go_live() {
+  local tag="$1"
+  docker image inspect "$IMAGE:$tag" >/dev/null 2>&1 || docker pull "$IMAGE:$tag"
+  local want
+  want="$(docker run --rm --entrypoint cat "$IMAGE:$tag" /srv/app/index.html | bundle)"
+  echo "==> Recreating $NAME on $IMAGE:$tag ($want)"
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker run -d --name "$NAME" --network "$NET" --restart unless-stopped "$IMAGE:$tag" >/dev/null
+  # by content, through the edge: the bundle the site serves must be the
+  # one in the image
+  local got=""
+  for _ in $(seq 1 30); do
+    got="$(curl -fsS "$SITE" 2>/dev/null | bundle || true)"
+    if [[ "$got" == "$want" ]]; then
+      echo "==> Live: $SITE serves $got"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "!! $SITE serves ${got:-nothing}, expected $want" >&2
+  return 1
+}
+
+case "${1:-}" in
+  --rollback)
+    [[ -n "${2:-}" ]] || { echo "usage: $0 --rollback vX.Y.Z" >&2; exit 2; }
+    go_live "$2"
+    exit 0
+    ;;
+  ""|--push) ;;
+  *) echo "usage: $0 [--push | --rollback vX.Y.Z]" >&2; exit 2 ;;
+esac
+
+TAG="$(version)"
+[[ -n "$TAG" ]] || { echo "no versionName in app/android/app/build.gradle" >&2; exit 1; }
+PREVIOUS="$(docker inspect "$NAME" --format '{{.Config.Image}}' 2>/dev/null || true)"
+
+echo "==> Building $IMAGE:$TAG"
+docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$ROOT"
+
+if [[ "${1:-}" == "--push" ]]; then
+  echo "==> Pushing $TAG and latest"
+  docker push "$IMAGE:$TAG"
+  docker push "$IMAGE:latest"
 fi
-npm run build
 
-echo "==> Staging release $TS"
-mkdir -p "$RELEASE"
-cp -r "$APP/dist/." "$RELEASE/"
-
-echo "==> Activating"
-mkdir -p "$DEPLOY"
-TMP_LINK="$DEPLOY/.current.new.$$"
-ln -s "releases/$TS" "$TMP_LINK"
-if [[ -L "$DEPLOY/current" ]]; then
-  readlink "$DEPLOY/current" > "$DEPLOY/.current.previous"
+go_live "$TAG"
+if [[ -n "$PREVIOUS" && "$PREVIOUS" != "$IMAGE:$TAG" ]]; then
+  echo "Rollback:  $0 --rollback ${PREVIOUS##*:}"
 fi
-mv -Tf "$TMP_LINK" "$DEPLOY/current"
-
-echo "==> Pruning old releases (keeping 5)"
-ls -1dt "$DEPLOY/releases"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
-
-echo
-echo "Activated: deploy/current -> releases/$TS"
-if [[ -f "$DEPLOY/.current.previous" ]]; then
-  echo "Rollback:  ln -sfn \"\$(cat $DEPLOY/.current.previous)\" $DEPLOY/current"
-fi
-echo "Served by the cam-app container (docker compose up -d to start it)."
