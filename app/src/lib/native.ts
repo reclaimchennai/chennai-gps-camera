@@ -20,6 +20,9 @@ interface NativeBridgePlugin {
     subLocality?: string;
     locality?: string;
     adminArea?: string;
+    subAdminArea?: string;
+    /** every other sub-locality Android offered, nearest result first */
+    altSubLocalities?: string[];
   }>;
   saveToGalleryBegin(opts: {
     filename: string;
@@ -269,6 +272,9 @@ export interface NativeAddress {
   subLocality?: string;
   locality?: string;
   adminArea?: string;
+  /** the taluk on Indian addresses — what printed "Sholinganallur" */
+  subAdminArea?: string;
+  altSubLocalities?: string[];
 }
 
 /** OS reverse geocode (English). Null in the browser or on failure. */
@@ -304,6 +310,8 @@ export async function nativeReverseGeocode(
       subLocality: r.subLocality,
       locality: r.locality,
       adminArea: r.adminArea,
+      subAdminArea: r.subAdminArea,
+      altSubLocalities: r.altSubLocalities,
     };
   } catch {
     return null;

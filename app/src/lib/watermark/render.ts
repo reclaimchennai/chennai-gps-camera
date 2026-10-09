@@ -264,7 +264,13 @@ function buildLines(
     // the complaint is about, and "Sattamangalam" tells the reader far
     // less than "Potheri Railway Station". The street line below is
     // untouched, so nothing is lost by it.
-    const title = data.station ?? data.locality ?? j?.city ?? legacyCity;
+    // Offline, or before the geocoder answers, the area comes from our own
+    // place layer — so the card names the neighbourhood even with no
+    // network at all, instead of falling straight back to the city.
+    const ourArea = j?.area
+      ? `${j.areaLocal?.[config.language] ?? j.area}${j.city ? `, ${j.city}` : ""}`
+      : undefined;
+    const title = data.station ?? data.locality ?? ourArea ?? j?.city ?? legacyCity;
     if (title) lines.push({ text: title, font: bold, role: "text" });
   }
 

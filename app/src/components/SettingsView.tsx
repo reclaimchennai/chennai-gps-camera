@@ -129,6 +129,14 @@ export default function SettingsView() {
       d.localitySuppressed ? "title suppressed — using our own city" : `title: ${d.locality ?? "(none)"}`,
       `our data says: ${d.truth.join(" · ") || "(nothing resolved)"}`,
       `address: ${d.address ?? "(none)"}`,
+      // what the provider actually said, and what we changed — so a name
+      // that looks wrong can be traced to its source
+      ...(d.refinements?.length
+        ? [
+            `geocoder said: ${d.geocoderSaid?.locality ?? "(no area)"} / ${d.geocoderSaid?.address ?? ""}`,
+            ...d.refinements.map((n) => `• ${n}`),
+          ]
+        : []),
     ].join("\n");
   };
   const [plateTest, setPlateTest] = useState<string | null>(null);
@@ -271,7 +279,7 @@ export default function SettingsView() {
 
             <Row
               label="Prefer civic body names"
-              hint="Off: the card shows the place name the geocoder gives — usually the street or neighbourhood you would recognise. On: where our own boundary data disagrees with the geocoder, the card is titled with the local body that actually governs the spot, which is the one a complaint goes to. Ward, zone and police station come from our own maps either way."
+              hint="Off: the card names the street and neighbourhood — the geocoder's answer, with any zone or taluk it printed as a place swapped for the neighbourhood you are actually in. On: where our own boundary data disagrees with the geocoder, the title names the local body that governs the spot, which is the one a complaint goes to. Ward, zone and police station come from our own maps either way."
             >
               <Toggle
                 on={settings.civicBodyNames}

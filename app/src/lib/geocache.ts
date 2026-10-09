@@ -26,7 +26,13 @@ interface Entry {
  * and a cache hit returns before any provider is consulted — so a bad
  * entry outlived the fix by up to its TTL. A new key retires them all.
  */
-const KEY = "geocache-v2";
+/**
+ * v3: answers are now refined against our own place and zone data before
+ * they are stored (lib/geo/refine.ts). A v2 entry is an UNREFINED answer
+ * — "Perungudi" for a point in Pallikaranai — and a cache hit returns
+ * before refinement ever sees it, so they are all retired.
+ */
+const KEY = "geocache-v3";
 /**
  * ~11 m at 4 decimal places.
  *

@@ -146,6 +146,42 @@ for (const entry of index.packs) {
   }
 }
 
+/**
+ * The place table is columnar (scripts/build-places.mjs): names, a type
+ * string and interleaved coordinates, matched by index. A hand edit that
+ * shifts one array against the others does not fail loudly — it quietly
+ * attaches every name after the edit to its neighbour's position, and the
+ * card names the wrong neighbourhood with full confidence.
+ */
+for (const entry of index.packs) {
+  const pack = JSON.parse(readFileSync(join(PACKS, entry.file), "utf8"));
+  const t = pack.layers?.places;
+  if (!t) continue;
+  const n = t.names?.length ?? 0;
+  const bad = [];
+  if (t.type !== "PlaceTable") bad.push(`type ${t.type}`);
+  if (typeof t.types !== "string" || t.types.length !== n) bad.push(`types ${t.types?.length} vs ${n} names`);
+  if (!Array.isArray(t.coords) || t.coords.length !== n * 2) bad.push(`coords ${t.coords?.length} vs ${n * 2}`);
+  if (typeof t.types === "string" && /[^ctsqnlvh]/.test(t.types)) bad.push("unknown type code");
+  for (const [lang, m] of Object.entries(t.local ?? {})) {
+    if (Object.keys(m).some((k) => +k >= n)) bad.push(`local.${lang} indexes past the table`);
+  }
+  const [w, s0, e, nn] = pack.bbox;
+  const pad = 0.05 * t.scale;
+  for (let i = 0; i < n; i++) {
+    const x = t.coords[i * 2];
+    const y = t.coords[i * 2 + 1];
+    if (x < w * t.scale - pad || x > e * t.scale + pad || y < s0 * t.scale - pad || y > nn * t.scale + pad) {
+      bad.push(`place ${i} "${t.names[i]}" lies outside the pack`);
+      break;
+    }
+  }
+  for (const b of bad) {
+    problems++;
+    console.log(`  places: ${entry.id} ${b}`);
+  }
+}
+
 // the statewide pack's grid index is what keeps a 12,525-polygon lookup
 // off a full scan; losing it is invisible except as slowness
 const tn = JSON.parse(readFileSync(join(PACKS, "tamilnadu.json"), "utf8"));

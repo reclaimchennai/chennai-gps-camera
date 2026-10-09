@@ -400,13 +400,22 @@ public class NativeBridgePlugin extends Plugin {
                     call.resolve(out);
                     return;
                 }
-                Locale locale;
-                if ("ta".equals(lang)) locale = new Locale("ta", "IN");
-                else if ("hi".equals(lang)) locale = new Locale("hi", "IN");
-                else locale = Locale.ENGLISH;
+                // Every card language, not just Tamil and Hindi: a Kannada or
+                // Telugu card asked in English and then fell through to a
+                // web provider to get its own script.
+                Locale locale = "en".equals(lang) || lang == null || lang.isEmpty()
+                    ? Locale.ENGLISH
+                    : new Locale(lang, "IN");
                 Geocoder geocoder = new Geocoder(ctx, locale);
+                // Several results, not one. Android returns the same point at
+                // several granularities — street, area, locality — and the
+                // area a person would name is often only in the second or
+                // third: the first can climb straight from the road to the
+                // municipal zone ("…Salai, Perungudi, Chennai") without ever
+                // naming the neighbourhood. The JS side judges every name
+                // against our own boundary and place data (lib/geo/refine.ts).
                 @SuppressWarnings("deprecation")
-                List<Address> results = geocoder.getFromLocation(lat, lng, 1);
+                List<Address> results = geocoder.getFromLocation(lat, lng, 5);
                 if (results == null || results.isEmpty()) {
                     out.put("ok", false);
                     call.resolve(out);
@@ -423,6 +432,15 @@ public class NativeBridgePlugin extends Plugin {
                 if (a.getSubLocality() != null) out.put("subLocality", a.getSubLocality());
                 if (a.getLocality() != null) out.put("locality", a.getLocality());
                 if (a.getAdminArea() != null) out.put("adminArea", a.getAdminArea());
+                if (a.getSubAdminArea() != null) out.put("subAdminArea", a.getSubAdminArea());
+                com.getcapacitor.JSArray alts = new com.getcapacitor.JSArray();
+                java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+                if (a.getSubLocality() != null) seen.add(a.getSubLocality());
+                for (int i = 1; i < results.size(); i++) {
+                    String sl = results.get(i).getSubLocality();
+                    if (sl != null && seen.add(sl)) alts.put(sl);
+                }
+                if (alts.length() > 0) out.put("altSubLocalities", alts);
                 call.resolve(out);
             } catch (Exception e) {
                 out.put("ok", false);

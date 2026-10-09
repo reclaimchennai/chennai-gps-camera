@@ -335,7 +335,11 @@ function placeName(data: WatermarkData, lang: string): string {
   // dictionary — "Chennai Egmore" is the name of the station, not a
   // locality followed by a qualifier.
   if (data.station) return data.station;
-  const raw = data.locality ?? data.jurisdiction?.city ?? "Chennai";
+  const j = data.jurisdiction;
+  // our own place layer before the city: offline the board still names
+  // the neighbourhood (see lib/geo/places.ts)
+  const ourArea = j?.area ? (j.areaLocal?.[lang] ?? j.area) : undefined;
+  const raw = data.locality ?? ourArea ?? j?.city ?? "Chennai";
   const head = raw.split(",")[0].trim() || "Chennai";
   // the geocoder usually answers in the local language already; this
   // covers the offline path, where the locality comes from the English pack

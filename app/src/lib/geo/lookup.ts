@@ -17,6 +17,7 @@ import type { Feature } from "geojson";
 import type { FeatureCollection } from "geojson";
 import type { Jurisdiction } from "../../types";
 import type { GeoPack, GridIndex } from "./geodata";
+import { areaAt } from "./places";
 
 type Pt = ReturnType<typeof turfPoint>;
 
@@ -216,6 +217,14 @@ export function lookup(
       }
     }
     if (bestName) nearest = { name: bestName, km: bestKm };
+  }
+
+  // The settlement, by name. Independent of every polygon above: a point
+  // outside all of our bodies still has a neighbourhood.
+  const area = areaAt(pack, lat, lng);
+  if (area) {
+    jurisdiction.area = area.name;
+    if (area.local) jurisdiction.areaLocal = area.local;
   }
 
   return {

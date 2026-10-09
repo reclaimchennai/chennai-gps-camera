@@ -15,14 +15,22 @@ import { useSettingsStore } from "../store";
 import { langOf } from "./watermark/signboard";
 import { langsFor } from "./i18n/languages";
 import { cachedAddress, rememberAddress } from "./geocache";
-import { currentPackId, loadGeodataFor } from "./geo/geodata";
+import { currentPackId, loadGeodataFor, type GeoPack } from "./geo/geodata";
 import { lookup } from "./geo/lookup";
+import { refineGeocode } from "./geo/refine";
+import type { Jurisdiction } from "../types";
 import { nativeReverseGeocode } from "./native";
 
 export interface GeocodeResult {
   address: string;
   /** Display-ready city-level line, e.g. "Kodambakkam, Chennai". */
   locality?: string;
+  /** Structured hints for lib/geo/refine.ts, where a provider has them:
+   *  the area it thinks this is, and the taluk it climbed through. */
+  subLocality?: string;
+  subAdminArea?: string;
+  /** other areas the provider offered for the same point (Android) */
+  altSubLocalities?: string[];
 }
 
 /** "Zone 5 Royapuram" → "Royapuram" (OSM suburbs carry the zone prefix). */
@@ -114,6 +122,9 @@ async function nominatim(
       a.suburb ?? a.neighbourhood ?? a.quarter ?? a.city_district,
       a.city ?? a.town ?? a.village ?? a.municipality
     ),
+    subLocality: cleanArea(a.suburb ?? a.neighbourhood ?? a.quarter ?? a.city_district),
+    // OSM files the revenue taluk under county
+    subAdminArea: a.county,
   };
 }
 
@@ -181,6 +192,8 @@ async function google(
       comp("sublocality_level_1") ?? comp("sublocality"),
       comp("locality")
     ),
+    subLocality: comp("sublocality_level_1") ?? comp("sublocality"),
+    subAdminArea: comp("administrative_area_level_3"),
   };
 }
 
@@ -225,6 +238,21 @@ function inLanguage(text: string | undefined, lang: string): boolean {
  * app exists — so they are also the yardstick for whether an outside
  * geocoder's answer is plausible.
  */
+/** Our own pack and jurisdiction for this point — what refinement checks
+ *  a geocoder's place names against. */
+async function localContext(
+  lat: number,
+  lng: number
+): Promise<{ pack: GeoPack | null; j: Jurisdiction | null }> {
+  try {
+    const pack = await loadGeodataFor(lat, lng);
+    if (!pack) return { pack: null, j: null };
+    return { pack, j: lookup(pack, lat, lng).jurisdiction };
+  } catch {
+    return { pack: null, j: null };
+  }
+}
+
 async function localTruth(lat: number, lng: number): Promise<string[]> {
   try {
     const pack = await loadGeodataFor(lat, lng);
@@ -300,6 +328,10 @@ export interface GeocodeDiagnostic {
   address?: string;
   locality?: string;
   localitySuppressed: boolean;
+  /** the provider's answer before refinement, for comparison */
+  geocoderSaid?: { address?: string; locality?: string };
+  /** what refinement changed and why — empty when nothing needed it */
+  refinements?: string[];
 }
 
 let lastDiag: GeocodeDiagnostic | null = null;
@@ -339,6 +371,7 @@ export async function reverseGeocode(
   // A place we have already asked about answers instantly and costs the
   // provider nothing. Same cell, same language, within a month.
   const truth = await localTruth(lat, lng);
+  const here = await localContext(lat, lng);
   // The setting changes what is STORED (a suppressed entry has no
   // locality at all), so entries must not cross between the two modes —
   // toggling it would otherwise keep serving the other mode's answers
@@ -371,8 +404,22 @@ export async function reverseGeocode(
    */
   const settle = async (
     provider: string,
-    r: GeocodeResult | null
+    raw: GeocodeResult | null
   ): Promise<GeocodeResult | null> => {
+    // Check the answer's PLACE names against our own data before anything
+    // else sees it: a geocoder climbs an administrative ladder and prints
+    // zones and taluks as if they were neighbourhoods (lib/geo/refine.ts).
+    // The street it gave is kept exactly; only the places are judged.
+    let refinements: string[] = [];
+    let r = raw;
+    if (raw) {
+      const refined = refineGeocode(raw, here.j, here.pack, lat, lng, lang);
+      refinements = refined.notes;
+      r = {
+        address: refined.address ?? raw.address,
+        locality: refined.locality,
+      };
+    }
     const ok = corroborated(r, truth);
     // With civic-body names off, the geocoder's answer stands as given —
     // corroboration is still MEASURED, so Diagnostics can still show
@@ -389,6 +436,8 @@ export async function reverseGeocode(
       address: r?.address,
       locality: r?.locality,
       localitySuppressed: suppress,
+      geocoderSaid: raw ? { address: raw.address, locality: raw.locality } : undefined,
+      refinements,
     };
     return remember(lat, lng, cacheLang, suppress ? { address: r!.address } : r);
   };
@@ -402,6 +451,9 @@ export async function reverseGeocode(
         ? {
             address: cleanAddress(n.addressLine, n.adminArea ?? stateFallback),
             locality: joinLocality(n.subLocality, n.locality),
+            subLocality: n.subLocality,
+            subAdminArea: n.subAdminArea,
+            altSubLocalities: n.altSubLocalities,
           }
         : null;
     };

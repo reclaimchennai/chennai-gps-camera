@@ -38,6 +38,15 @@ export interface Jurisdiction {
   loPhone?: string;
   trafficStation?: string;
   trafficMeta?: string; // "Sub-Division · District"
+  /**
+   * The named settlement this point is in — suburb, village or town — from
+   * the OSM place layer (lib/geo/places.ts). Not a jurisdiction claim: it
+   * is the name a neighbour would use, and it is what corrects a
+   * geocoder that answers with a zone or a taluk.
+   */
+  area?: string;
+  /** `area` in the card's languages, where OSM has it */
+  areaLocal?: Record<string, string>;
 }
 
 // ---- Watermark -----------------------------------------------------

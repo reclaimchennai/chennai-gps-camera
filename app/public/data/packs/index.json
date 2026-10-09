@@ -1,5 +1,5 @@
 {
- "version": "f9af6572b427",
+ "version": "21cc1f4f7727",
  "packs": [
   {
    "id": "chennai",
@@ -11,9 +11,9 @@
     80.34882,
     13.39692
    ],
-   "version": "b189cf233276",
-   "bytes": 539238,
-   "attribution": "Boundary data from public Tamil Nadu government datasets, processed by the Reclaim Chennai project; cantonments and railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "7bb73611aa67",
+   "bytes": 608823,
+   "attribution": "Boundary data from public Tamil Nadu government datasets, processed by the Reclaim Chennai project; cantonments and railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "bengaluru",
@@ -25,9 +25,9 @@
     77.97287,
     13.495
    ],
-   "version": "8bb24a2bf4e1",
-   "bytes": 1445263,
-   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "12f3a6d33a06",
+   "bytes": 1755603,
+   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "hyderabad",
@@ -39,9 +39,9 @@
     78.76219,
     17.70855
    ],
-   "version": "7be97b573f3b",
-   "bytes": 1290783,
-   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "98f0970c69c7",
+   "bytes": 1410529,
+   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "delhi",
@@ -53,9 +53,9 @@
     77.34747,
     28.8835
    ],
-   "version": "26270e1213bb",
-   "bytes": 483095,
-   "attribution": "Ward boundaries from DataMeet Municipal_Spatial_Data (open government data); railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "05b881bde241",
+   "bytes": 534427,
+   "attribution": "Ward boundaries from DataMeet Municipal_Spatial_Data (open government data); railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "kolkata",
@@ -67,9 +67,9 @@
     88.54038,
     22.6329
    ],
-   "version": "1903ed5ee064",
-   "bytes": 253262,
-   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "681cb76f9421",
+   "bytes": 276783,
+   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "mumbai",
@@ -81,9 +81,9 @@
     72.98064,
     19.27018
    ],
-   "version": "5b7135b324ec",
-   "bytes": 203035,
-   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "d47991cd9108",
+   "bytes": 241930,
+   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "pune",
@@ -95,9 +95,9 @@
     73.96296,
     18.62162
    ],
-   "version": "0bea59055098",
-   "bytes": 122242,
-   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "1c3b8203af67",
+   "bytes": 137308,
+   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "visakhapatnam",
@@ -109,9 +109,9 @@
     83.4637,
     17.94044
    ],
-   "version": "11fede3a3c78",
-   "bytes": 135216,
-   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "af5d8dae73a0",
+   "bytes": 185040,
+   "attribution": "Boundary and local-language name data from Vonter/city-officials (CC BY 4.0), built on data.opencity.in and government sources; railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "tamilnadu",
@@ -123,9 +123,9 @@
     80.34882,
     13.56284
    ],
-   "version": "e90b2548e8be",
-   "bytes": 17336265,
-   "attribution": "TNGIS / Tamil Nadu Government (local bodies, village panchayats); cantonments and railway stations © OpenStreetMap contributors (ODbL); police boundaries: Reclaim Chennai"
+   "version": "1e9db1a55845",
+   "bytes": 19690295,
+   "attribution": "TNGIS / Tamil Nadu Government (local bodies, village panchayats); cantonments and railway stations © OpenStreetMap contributors (ODbL); police boundaries: Reclaim Chennai; place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "chandigarh",
@@ -137,9 +137,9 @@
     76.84903,
     30.79495
    ],
-   "version": "7022023162a8",
-   "bytes": 27688,
-   "attribution": "Ward boundaries from DataMeet Municipal_Spatial_Data (CC-BY / open government data); railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "97b7fdadb615",
+   "bytes": 34558,
+   "attribution": "Ward boundaries from DataMeet Municipal_Spatial_Data (CC-BY / open government data); railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {
    "id": "gurugram",
@@ -151,9 +151,9 @@
     77.16579,
     28.53176
    ],
-   "version": "c6ad0715383c",
-   "bytes": 130963,
-   "attribution": "Ward boundaries from data.opencity.in (Municipal Corporation of Gurugram); railway stations © OpenStreetMap contributors (ODbL)"
+   "version": "3fc5182dc8c0",
+   "bytes": 143363,
+   "attribution": "Ward boundaries from data.opencity.in (Municipal Corporation of Gurugram); railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   }
  ]
 }

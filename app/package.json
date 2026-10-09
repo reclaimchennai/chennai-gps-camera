@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "geodata": "node scripts/build-packs.mjs",
     "rail": "node scripts/build-rail.mjs",
+    "places": "node scripts/build-places.mjs",
     "icons": "node scripts/make-icons.mjs",
     "smoke": "node scripts/smoke.mjs",
     "check:packs": "node scripts/check-packs.mjs",
@@ -20,7 +21,8 @@
     "check:flash": "node scripts/check-flash.mjs",
     "check:rail": "node scripts/check-rail.mjs",
     "check:blur": "node scripts/check-blur.mjs",
-    "check:defaults": "node scripts/check-defaults.mjs"
+    "check:defaults": "node scripts/check-defaults.mjs",
+    "check:address": "node scripts/check-address.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
