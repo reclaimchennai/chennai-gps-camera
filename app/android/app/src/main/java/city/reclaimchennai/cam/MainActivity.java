@@ -106,6 +106,7 @@ public class MainActivity extends BridgeActivity {
         // absence as "no registrations".
         wipeRestoredServiceWorkers();
         registerPlugin(NativeBridgePlugin.class);
+        registerPlugin(NativeCameraPlugin.class);
         super.onCreate(savedInstanceState);
         setupBackNavigation();
         setupDeterministicPermissionGrants();

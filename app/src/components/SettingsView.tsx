@@ -11,6 +11,7 @@ import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 import { qualitySummary } from "../lib/quality";
 import { camera, loadLensProfile, type Lens } from "../lib/camera";
 import { lastLight } from "../lib/lightmeter";
+import { nativeCameraAvailable } from "../lib/nativeCamera";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -102,6 +103,8 @@ export default function SettingsView() {
   const liveDb = useLiveStore((s) => s.db);
   const native = isNativeApp();
   const installed = isInstalledApp();
+  // this APK ships the CameraX camera
+  const phoneCam = nativeCameraAvailable();
   // reference level the user is exposing the mic to (dB), for Match
   const [calRef, setCalRef] = useState(60);
   const [advOpen, setAdvOpen] = useState(false);
@@ -109,9 +112,12 @@ export default function SettingsView() {
   const [, setDiagTick] = useState(0);
   const diagText = (): string => {
     const c = lastCapture();
-    const cap = c
-      ? `last photo: ${c.width}×${c.height} from the ${c.source}`
-      : "last photo: none yet this session";
+    const cap = !c
+      ? "last photo: none yet this session"
+      : c.engine === "native"
+        ? `last photo: ${c.width}×${c.height} from the phone camera` +
+          `${c.zsl ? ", zero shutter lag" : ""}${c.ms != null ? `, ${c.ms} ms to the file` : ""}`
+        : `last photo: ${c.width}×${c.height} from the ${c.source}`;
     const l = lastLight();
     // Which SIGNAL the meter had matters as much as its verdict: a phone
     // reporting no exposure data can never fire the automatic flash, and
@@ -247,6 +253,32 @@ export default function SettingsView() {
         </button>
         <div className="adv-body" data-open={advOpen}>
           <div>
+            {phoneCam && (
+              <div className="row" style={{ display: "block" }}>
+                <div className="label">Camera for photos</div>
+                <div className="hint" style={{ margin: "2px 0 8px" }}>
+                  {settings.cameraEngine === "phone"
+                    ? "The phone's own camera: its real lenses as you zoom, tap-to-focus that sets focus and brightness where you tap, and full-resolution photos with no shutter delay. Video always uses the app camera."
+                    : "The app camera every earlier version used. Choose it only if photos misbehave on this phone with the phone camera."}
+                </div>
+                <div className="seg" style={{ width: "100%" }}>
+                  {(
+                    [
+                      ["phone", "Phone camera"],
+                      ["browser", "App camera"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      data-active={settings.cameraEngine === key}
+                      onClick={() => setSettings({ cameraEngine: key })}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="row" style={{ display: "block" }}>
               <div className="label">Capture quality</div>
               <div className="hint" style={{ margin: "2px 0 8px" }}>
@@ -287,20 +319,26 @@ export default function SettingsView() {
               />
             </Row>
 
-            <Row
-              label="Full-sensor photos"
-              hint="Sharper files, slower shutter. The camera runs a focus and exposure cycle for every shot instead of taking the frame already on screen, which on many phones means a noticeable wait and a stalled preview between photos. Leave this off for shooting on the move."
-            >
-              <Toggle
-                on={settings.fullSensorStills}
-                onChange={(v) => setSettings({ fullSensorStills: v })}
-              />
-            </Row>
+            {/* the phone camera always takes full-sensor stills, with no
+                wait — the trade this toggle offers is the app camera's */}
+            {!(phoneCam && settings.cameraEngine === "phone") && (
+              <Row
+                label="Full-sensor photos"
+                hint="Sharper files, slower shutter. The camera runs a focus and exposure cycle for every shot instead of taking the frame already on screen, which on many phones means a noticeable wait and a stalled preview between photos. Leave this off for shooting on the move."
+              >
+                <Toggle
+                  on={settings.fullSensorStills}
+                  onChange={(v) => setSettings({ fullSensorStills: v })}
+                />
+              </Row>
+            )}
 
             <div className="row" style={{ display: "block" }}>
               <div className="label">Camera lenses</div>
               <div className="hint" style={{ margin: "2px 0 8px" }}>
-                {lenses.length > 1
+                {camera.engine === "native"
+                  ? "Photos use the phone's own camera, which changes lens by itself as you zoom, the way its camera app does. The settings below apply to video."
+                  : lenses.length > 1
                   ? "Pinch past 1x to switch lenses. Whichever lens is set to 1x is the one the viewfinder opens on, so if the wide and normal views are the wrong way round, swap their settings here."
                   : camera.seamlessZoom
                     ? "This phone lets the camera itself zoom across its lenses, so wide and telephoto are handled for you and switch without any interruption. Nothing to configure."

@@ -14,6 +14,7 @@
  * Advanced when they know their phone can take more.
  */
 import { useSettingsStore } from "../store";
+import { nativeCameraAvailable } from "./nativeCamera";
 
 export type QualityPref = "auto" | "720p" | "1080p" | "max";
 
@@ -24,6 +25,12 @@ export interface QualityPlan {
   recordLongEdge: number;
   /** video bitrate for the composited recording */
   videoBitsPerSecond: number;
+  /**
+   * Long edge of a phone-camera (CameraX) still. About 12 MP, what the
+   * stock camera saves by default; 8 MP on entry phones, where every photo
+   * is decoded into WebView memory to be watermarked.
+   */
+  stillLongEdge: number;
   tier: "low" | "mid" | "high";
 }
 
@@ -40,6 +47,10 @@ function detectTier(): "low" | "mid" | "high" {
 
 let cachedTier: "low" | "mid" | "high" | null = null;
 
+/** 4096x3072 takes in the common 4080x3072 binned sensors; 3264x2448 is 8 MP. */
+const STILL_FULL = 4096;
+const STILL_ENTRY = 3264;
+
 export function qualityPlan(): QualityPlan {
   cachedTier ??= detectTier();
   const pref: QualityPref =
@@ -51,6 +62,7 @@ export function qualityPlan(): QualityPlan {
       previewLongEdge: 1280,
       recordLongEdge: 1280,
       videoBitsPerSecond: 4_000_000,
+      stillLongEdge: STILL_FULL,
       tier: cachedTier,
     };
   }
@@ -59,6 +71,7 @@ export function qualityPlan(): QualityPlan {
       previewLongEdge: 1920,
       recordLongEdge: 1920,
       videoBitsPerSecond: 8_000_000,
+      stillLongEdge: STILL_FULL,
       tier: cachedTier,
     };
   }
@@ -67,6 +80,7 @@ export function qualityPlan(): QualityPlan {
       previewLongEdge: 3840,
       recordLongEdge: 2560,
       videoBitsPerSecond: 14_000_000,
+      stillLongEdge: STILL_FULL,
       tier: cachedTier,
     };
   }
@@ -85,6 +99,7 @@ export function qualityPlan(): QualityPlan {
         previewLongEdge: 1920,
         recordLongEdge: 1920,
         videoBitsPerSecond: 10_000_000,
+        stillLongEdge: STILL_FULL,
         tier: cachedTier,
       };
     case "mid":
@@ -92,6 +107,7 @@ export function qualityPlan(): QualityPlan {
         previewLongEdge: 1920,
         recordLongEdge: 1920,
         videoBitsPerSecond: 8_000_000,
+        stillLongEdge: STILL_FULL,
         tier: cachedTier,
       };
     default:
@@ -99,6 +115,7 @@ export function qualityPlan(): QualityPlan {
         previewLongEdge: 1280,
         recordLongEdge: 1280,
         videoBitsPerSecond: 4_000_000,
+        stillLongEdge: STILL_ENTRY,
         tier: cachedTier,
       };
   }
@@ -119,9 +136,13 @@ export function qualitySummary(): string {
     p.tier === "high" ? "high-end" : p.tier === "mid" ? "mid-range" : "entry";
   const rec =
     p.recordLongEdge === 1280 ? "720p" : p.recordLongEdge === 1920 ? "1080p" : "1440p";
-  return (
-    `Detected ${tierWord} device. Preview ${p.previewLongEdge}p-class, video capped at ${rec}. ` +
-    `Photos are taken from the preview stream, so this sets their size too — ` +
-    `raise it if a photo's watermark or QR looks soft.`
-  );
+  const phoneCamera =
+    nativeCameraAvailable() &&
+    useSettingsStore.getState().settings.cameraEngine === "phone";
+  return phoneCamera
+    ? `Detected ${tierWord} device. Preview ${p.previewLongEdge}p-class, video capped at ${rec}. ` +
+        `Photos come from the phone camera at full resolution whatever this is set to.`
+    : `Detected ${tierWord} device. Preview ${p.previewLongEdge}p-class, video capped at ${rec}. ` +
+        `Photos are taken from the preview stream, so this sets their size too — ` +
+        `raise it if a photo's watermark or QR looks soft.`;
 }

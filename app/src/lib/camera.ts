@@ -12,8 +12,22 @@ import { preferredAudioConstraints } from "./audio/source";
 import { qualityPlan } from "./quality";
 import { useSettingsStore } from "../store";
 import { measureLensFactor, snapFactor } from "./lens-calibrate";
+import { NativeEngine, NATIVE_ZOOM_CAP } from "./camera-native";
+import { nativeCameraAvailable } from "./nativeCamera";
+import { judgeLight, readLight, type LightReading } from "./lightmeter";
 
 export type FacingMode = "environment" | "user";
+
+/**
+ * Which camera is running.
+ *
+ * "web" is the WebView's getUserMedia stream: it is what video recording
+ * composites from, and what the browser build always uses. "native" is
+ * CameraX (camera-native.ts), the phone's own camera stack, used for
+ * photos in the Android app: real lens switching, tap-to-focus that
+ * works, smooth zoom and zero-shutter-lag stills.
+ */
+export type CameraEngine = "web" | "native";
 
 export interface CameraCapabilitiesLite {
   zoom?: { min: number; max: number; step: number };
@@ -220,6 +234,29 @@ export class CameraController {
 
   stream: MediaStream | null = null;
   facing: FacingMode = "environment";
+  engine: CameraEngine = "web";
+  readonly native = new NativeEngine();
+  /**
+   * Whether the next start() should use the native camera: set by the
+   * camera screen from the mode (photos only — recordings composite from
+   * the web stream) and live face blur (which samples the web stream).
+   */
+  nativeWanted = false;
+  /**
+   * CameraX starts that failed in a row, per camera. After two, stay on
+   * the web camera for the session rather than paying a failed native
+   * start on every resume; one slow start is not reason enough. The
+   * second try waits for a natural restart a minute on (back from the
+   * gallery, a mode switch), so a phone where it never works does not sit
+   * through two timeouts back to back. Per camera, because a front camera
+   * that will not open natively says nothing about the rear one.
+   */
+  private nativeFailures: Record<FacingMode, number> = { environment: 0, user: 0 };
+  private lastNativeFailure: Record<FacingMode, number> = { environment: 0, user: 0 };
+  /** the stop of the native camera still in flight, if any */
+  private nativeStopping: Promise<void> | null = null;
+  /** the viewfinder box the native preview is laid under */
+  private viewport: HTMLElement | null = null;
   private video: HTMLVideoElement | null = null;
   private zoomValue = 1;
   private digitalZoom = 1; // used when the track has no native zoom
@@ -260,9 +297,95 @@ export class CameraController {
     }
   }
 
-  async start(facing: FacingMode = this.facing): Promise<MediaStream> {
+  /** The viewfinder box — where the native preview is laid. */
+  setViewport(el: HTMLElement | null): void {
+    this.viewport = el;
+    if (el && this.engine === "native") this.native.syncRect(el);
+  }
+
+  /** Re-lay the native preview under the viewfinder after any layout
+   *  change. Cheap to call often. */
+  syncViewport(): void {
+    if (this.engine === "native" && this.viewport) this.native.syncRect(this.viewport);
+  }
+
+  /** Show or hide the native preview with the camera screen. */
+  setPreviewVisible(visible: boolean): void {
+    if (this.engine === "native") this.native.setVisible(visible);
+  }
+
+  /** The engine start() would choose right now. */
+  engineFor(nativeWanted: boolean): CameraEngine {
+    return nativeWanted &&
+      this.nativeFailures[this.facing] < 2 &&
+      Date.now() - this.lastNativeFailure[this.facing] > 60_000 &&
+      this.viewport != null &&
+      nativeCameraAvailable() &&
+      useSettingsStore.getState().settings.cameraEngine !== "browser"
+      ? "native"
+      : "web";
+  }
+
+  /** Is a camera open and (about to be) delivering frames? */
+  get running(): boolean {
+    if (this.engine === "native") return this.native.info != null;
+    const t = this.track;
+    return !!t && t.readyState === "live";
+  }
+
+  /** Is the picture actually on screen yet? */
+  previewLive(video: HTMLVideoElement | null): boolean {
+    if (this.engine === "native") return this.native.streaming;
+    const track = (video?.srcObject as MediaStream | null)?.getVideoTracks?.()[0];
+    // a REAL preview: transient junk streams report a 2 px frame with an
+    // already-ended track, and counting that as live is what left the tiny
+    // speck uncovered at boot
+    return (
+      !!video &&
+      video.videoWidth >= 32 &&
+      !video.paused &&
+      !!track &&
+      track.readyState === "live"
+    );
+  }
+
+  async start(facing: FacingMode = this.facing): Promise<MediaStream | null> {
+    const hadWeb = this.stream != null;
     this.stop();
     this.facing = facing;
+    // one camera at a time: CameraX must have let go before the WebView
+    // asks for it, and the reverse
+    if (this.nativeStopping) await this.nativeStopping;
+    this.engine = "web";
+    if (this.engineFor(this.nativeWanted) === "native" && this.viewport) {
+      if (hadWeb) await CameraController.settle(RELEASE_MS);
+      const plan = qualityPlan();
+      const ok = await this.native.start(this.viewport, facing, plan.stillLongEdge);
+      if (ok) {
+        this.nativeFailures[facing] = 0;
+        this.engine = "native";
+        // the web stream is gone; don't leave its last frame on the element
+        if (this.video) {
+          this.video.srcObject = null;
+          this.video.style.transform = "";
+        }
+        this.torchOn = false;
+        const wanted = this.desiredZoom;
+        this.zoomValue = this.native.zoom;
+        if (Math.abs(wanted - this.zoomValue) > 0.01) {
+          const got = await this.setZoom(wanted);
+          this.desiredZoom = wanted;
+          window.dispatchEvent(
+            new CustomEvent("gpscam:zoom-changed", { detail: { zoom: got } })
+          );
+        }
+        return null;
+      }
+      // Not this phone, or not today: the web camera still works, and a
+      // failed native start must never cost the user the viewfinder.
+      this.nativeFailures[facing]++;
+      this.lastNativeFailure[facing] = Date.now();
+    }
     const baseAudio: MediaTrackConstraints = {
       echoCancellation: false,
       noiseSuppression: false,
@@ -429,6 +552,13 @@ export class CameraController {
       for (const t of this.stream.getTracks()) t.stop();
       this.stream = null;
     }
+    if (this.engine === "native") {
+      const done = this.native.stop().finally(() => {
+        if (this.nativeStopping === done) this.nativeStopping = null;
+      });
+      this.nativeStopping = done;
+      this.engine = "web";
+    }
   }
 
   get track(): MediaStreamTrack | null {
@@ -436,6 +566,13 @@ export class CameraController {
   }
 
   capabilities(): CameraCapabilitiesLite {
+    if (this.engine === "native") {
+      return {
+        zoom: { min: this.native.zoomMin, max: this.native.zoomMax, step: 0.01 },
+        torch: this.native.info?.hasFlash === true,
+        focus: true,
+      };
+    }
     const caps = (this.track?.getCapabilities?.() ?? {}) as Record<
       string,
       unknown
@@ -466,6 +603,9 @@ export class CameraController {
    *  When a separate ultra-wide LENS exists, the range extends below 1×
    *  (pinching out past 1× switches to that camera). */
   zoomInfo(): ZoomInfo {
+    if (this.engine === "native") {
+      return { min: this.native.zoomMin, max: this.native.zoomMax, hardware: true };
+    }
     const hw = this.capabilities().zoom;
     // SEAMLESS: a zoom range reaching below 1× means this track is the
     // phone's LOGICAL rear camera, which switches physical sensors inside
@@ -494,6 +634,10 @@ export class CameraController {
 
   /** True when the live track can zoom across lenses by itself. */
   get seamlessZoom(): boolean {
+    // a wide lens reached by switching cameras is not seamless
+    if (this.engine === "native") {
+      return this.native.zoomMin < 0.95 && !this.native.info?.lensSwitch;
+    }
     const hw = this.capabilities().zoom;
     return !!hw && hw.min < 0.95;
   }
@@ -772,10 +916,35 @@ export class CameraController {
   zoomStops(): number[] {
     const info = this.zoomInfo();
     const stops = new Set<number>();
+    if (this.engine === "native") {
+      // The phone's own lenses, as its camera describes them; the web lens
+      // profile is a different camera's guesswork. The wide end is the
+      // lens's REAL value (0.61, labelled ".6×"): snapped to 0.6 it fell
+      // below the camera's minimum and the range check threw the chip
+      // away — no wide chip at all on exactly the phones that have one.
+      const lo = info.min;
+      const hi = Math.min(info.max, NATIVE_ZOOM_CAP);
+      const add = (z: number) => {
+        if (z < lo - 1e-6 || z > hi + 1e-6) return;
+        // one chip per lens: values within 5% of each other are one lens
+        for (const s of stops) if (Math.abs(s - z) / z < 0.05) return;
+        stops.add(z);
+      };
+      if (lo < 0.95) add(Math.round(lo * 100) / 100);
+      for (const f of this.native.info?.lenses ?? []) {
+        if (f > 0.3) add(f < 1 ? Math.max(lo, Math.round(f * 100) / 100) : snapFactor(f));
+      }
+      add(1);
+      add(2);
+      // no telephoto described: 3x is still a useful step on most phones
+      if (![...stops].some((z) => z > 2.4)) add(3);
+      return [...stops].sort((a, b) => a - b);
+    }
     // seamless track: there are no separate lenses to enumerate, so offer
     // the wide end the hardware actually reports, named the way this phone
     // would name it (.5× or .6×), plus the usual steps
-    if (this.seamlessZoom) stops.add(snapFactor(info.min));
+    // (its real value, not a snapped one below the minimum — see above)
+    if (this.seamlessZoom) stops.add(Math.round(info.min * 100) / 100);
     for (const l of this.lenses) stops.add(l.factor);
     // standard steps so there is always something to tap, even on phones
     // that expose a single camera
@@ -1063,10 +1232,19 @@ export class CameraController {
     return l?.factor ?? 1;
   }
 
-  async setZoom(value: number): Promise<number> {
+  /**
+   * `glide`: animate there (a tapped chip) rather than jump (a pinch,
+   * which is already continuous). The native camera only.
+   */
+  async setZoom(value: number, glide = false): Promise<number> {
     const info = this.zoomInfo();
     const clamped = Math.min(info.max, Math.max(info.min, value));
     this.desiredZoom = clamped;
+
+    if (this.engine === "native") {
+      this.zoomValue = this.native.setZoom(clamped, glide);
+      return this.zoomValue;
+    }
 
     // SEAMLESS first. When the track's own zoom range spans the lenses, the
     // camera stack does the handover internally: no stop, no reopen, no gap
@@ -1157,6 +1335,7 @@ export class CameraController {
 
   /** Scale factor to crop by when capturing/recording (1 = no crop). */
   get captureZoom(): number {
+    if (this.engine === "native") return 1;
     return this.zoomInfo().hardware ? 1 : this.digitalZoom;
   }
 
@@ -1176,6 +1355,11 @@ export class CameraController {
   }
 
   async setTorch(on: boolean): Promise<boolean> {
+    if (this.engine === "native") {
+      const ok = await this.native.setTorch(on);
+      if (ok) this.torchOn = on;
+      return ok;
+    }
     if (!this.track || !this.capabilities().torch) return false;
     try {
       await this.track.applyConstraints({
@@ -1204,6 +1388,17 @@ export class CameraController {
    * pipelines that accept less.
    */
   async focusAt(point?: { x: number; y: number }): Promise<boolean> {
+    if (this.engine === "native") {
+      // a fresh tap replaces any lock, exactly as on the web path
+      this.focusHeld = false;
+      const r = await this.native.focus(point, false);
+      this.aimSupported = r !== "failed";
+      this.aimMethod =
+        r === "failed"
+          ? "phone camera refused the focus point"
+          : `phone camera metering point (${r === "focused" ? "focus confirmed" : "no focus lock reported"})`;
+      return r !== "failed";
+    }
     const track = this.track;
     if (!track) return false;
     // a fresh tap always wins over a sweep still in progress
@@ -1511,6 +1706,7 @@ export class CameraController {
   }
 
   private controlReportCore(): Record<string, string> {
+    if (this.engine === "native") return this.nativeReport();
     const caps = (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
     const set = (this.track?.getSettings?.() ?? {}) as Record<string, unknown>;
     const range = (v: unknown) => {
@@ -1555,6 +1751,7 @@ export class CameraController {
   /** Exposure-compensation range/value, when the camera exposes it
    *  (most Android Chromium camera pipelines do). null = hide the slider. */
   exposureInfo(): { min: number; max: number; step: number; value: number } | null {
+    if (this.engine === "native") return this.native.exposureInfo();
     const caps = (this.track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
     const ec = caps.exposureCompensation as
       | { min: number; max: number; step: number }
@@ -1574,6 +1771,7 @@ export class CameraController {
 
   /** Samsung-style brightness slider under the focus ring. */
   async setExposure(value: number): Promise<boolean> {
+    if (this.engine === "native") return this.native.setExposure(value);
     if (!this.track) return false;
     try {
       await this.track.applyConstraints({
@@ -1605,6 +1803,12 @@ export class CameraController {
    * or a silently-resolved applyConstraints.
    */
   async lockFocus(): Promise<boolean> {
+    if (this.engine === "native") {
+      // AE/AF lock where the user last aimed, held until unlocked
+      const ok = (await this.native.focus(undefined, true)) !== "failed";
+      if (ok) this.focusHeld = true;
+      return ok;
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
       // a tap landing mid-switch finds a track that is still settling
       if (this.lensSwapping) {
@@ -1657,6 +1861,10 @@ export class CameraController {
   /** Back to continuous autofocus (unlock). */
   async unlockFocus(): Promise<void> {
     this.focusHeld = false;
+    if (this.engine === "native") {
+      await this.native.cancelFocus();
+      return;
+    }
     if (!this.track) return;
     try {
       await this.track.applyConstraints({
@@ -1675,12 +1883,84 @@ export class CameraController {
    */
   /** Is the live preview taller than it is wide? */
   previewIsPortrait(): boolean {
+    // CameraX lays its preview out for the (portrait-locked) screen
+    if (this.engine === "native") return true;
     const v = this.video;
     if (v && v.videoWidth && v.videoHeight) return v.videoHeight > v.videoWidth;
     const s = (this.track?.getSettings?.() ?? {}) as Record<string, unknown>;
     const w = typeof s.width === "number" ? s.width : 0;
     const h = typeof s.height === "number" ? s.height : 0;
     return h > w;
+  }
+
+  /**
+   * A native still for how the phone is held (orientation.ts rotation),
+   * as the path of the JPEG the camera wrote. The photo queue reads it.
+   */
+  async captureNative(rotation: number): Promise<string> {
+    const path = await this.native.capture(rotation);
+    const i = this.native.info;
+    // stillW x stillH is the sensor's landscape frame; a portrait grip
+    // stands it upright
+    const upright = rotation !== 90 && rotation !== -90;
+    lastCaptureInfo = {
+      source: "sensor",
+      width: (upright ? i?.stillH : i?.stillW) ?? 0,
+      height: (upright ? i?.stillW : i?.stillH) ?? 0,
+      engine: "native",
+      ms: this.native.lastCaptureMs ?? undefined,
+      zsl: i?.zsl,
+    };
+    return path;
+  }
+
+  /**
+   * Is it dark enough for the lamp? The native camera reports ISO and
+   * shutter time with every frame; the web stream has to be asked.
+   */
+  async lightReading(video: HTMLVideoElement | null): Promise<LightReading> {
+    if (this.engine === "native") {
+      const l = await this.native.light();
+      return judgeLight(
+        l.iso ?? null,
+        typeof l.exposureNs === "number" ? l.exposureNs / 1e9 : null,
+        null,
+        this.torchOn
+      );
+    }
+    return readLight(this.track, video, this.torchOn);
+  }
+
+  private nativeReport(): Record<string, string> {
+    const i = this.native.info;
+    const lenses = i?.lenses?.length
+      ? i.lenses.map((f) => `${snapFactor(f)}x`).join(", ")
+      : "not described by this phone";
+    return {
+      Engine: "phone camera (CameraX)",
+      Camera: i?.facing === "user" ? "front" : "rear",
+      Zoom: i ? `${i.zoomMin.toFixed(2)} – ${i.zoomMax.toFixed(1)}` : "?",
+      Lenses: lenses,
+      "Wide lens": i?.lensSwitch
+        ? "separate camera — switched to below 1x"
+        : this.native.zoomMin < 0.95
+          ? "built into the main camera's zoom"
+          : "none offered to apps",
+      Cameras: i?.cameras?.join("; ") || "?",
+      "Seamless zoom": this.seamlessZoom ? "yes" : "no",
+      "Tap to focus":
+        this.aimMethod ?? "focus, exposure and white balance at the tapped point",
+      Exposure: i?.evSupported
+        ? `${(i.evMin * i.evStep).toFixed(1)} – ${(i.evMax * i.evStep).toFixed(1)} EV`
+        : "not offered",
+      "Zero shutter lag": i?.zsl ? "yes" : "no",
+      Torch: i?.hasFlash ? "yes" : "not offered",
+      Photo: i?.stillW ? `${i.stillW}x${i.stillH}` : "?",
+      Preview: i?.previewW ? `${i.previewW}x${i.previewH}` : "?",
+      "Last capture": this.native.lastCaptureMs != null ? `${this.native.lastCaptureMs} ms` : "none yet",
+      Runtime: "Android app",
+      Build: `${__BUILD_TS__.slice(0, 16).replace("T", " ")} UTC`,
+    };
   }
 
   async captureFrame(): Promise<ImageBitmap> {
@@ -1760,6 +2040,10 @@ export interface CaptureInfo {
   source: "sensor" | "preview frame";
   width: number;
   height: number;
+  engine?: CameraEngine;
+  /** shutter to file, native stills */
+  ms?: number;
+  zsl?: boolean;
 }
 let lastCaptureInfo: CaptureInfo | null = null;
 export function lastCapture(): CaptureInfo | null {

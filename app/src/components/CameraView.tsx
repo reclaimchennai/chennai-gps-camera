@@ -4,7 +4,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { camera } from "../lib/camera";
+import { camera, type CameraEngine } from "../lib/camera";
 import { qualityPlan } from "../lib/quality";
 import { startMeter, stopMeter } from "../lib/audio/meter";
 import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture";
@@ -17,7 +17,6 @@ import { nativeAudioFocus } from "../lib/native";
 import { signStyle } from "../lib/watermark/chennaiSign";
 import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
-import { readLight } from "../lib/lightmeter";
 import { physicalRotation } from "../lib/orientation";
 import {
   isNativeApp,
@@ -105,24 +104,15 @@ export default function CameraView({ active }: { active: boolean }) {
     setVideoLive(false);
     cancelAnimationFrame(livePollRef.current);
     const poll = () => {
-      const v = videoRef.current;
-      const track = (v?.srcObject as MediaStream | null)?.getVideoTracks?.()[0];
-      // a REAL preview: transient junk streams report a 2 px frame with an
-      // already-ended track, and counting that as live is what left the tiny
-      // speck uncovered at boot
-      if (
-        v &&
-        v.videoWidth >= 32 &&
-        !v.paused &&
-        track &&
-        track.readyState === "live"
-      )
-        setVideoLive(true);
+      // the web <video>, or the native preview's own stream state
+      if (camera.previewLive(videoRef.current)) setVideoLive(true);
       else livePollRef.current = requestAnimationFrame(poll);
     };
     livePollRef.current = requestAnimationFrame(poll);
   }, []);
   const [ready, setReady] = useState(false);
+  /** which camera is running — the native one draws behind the page */
+  const [engine, setEngine] = useState<CameraEngine>("web");
   const [camError, setCamError] = useState<string | null>(null);
   /** Whether the lamp is actually burning — derived, not the setting. */
   const [torch, setTorch] = useState(false);
@@ -429,6 +419,10 @@ export default function CameraView({ active }: { active: boolean }) {
     camera.audioWanted =
       forMode === "video" ||
       useSettingsStore.getState().watermark.fields.soundLevel;
+    // photos from the phone's own camera; recordings, and live face blur,
+    // composite from the web stream
+    camera.nativeWanted =
+      forMode === "photo" && !useSettingsStore.getState().settings.liveFaceBlur;
     // cover the zone NOW: the old stream's element keeps its last size, so
     // without this the poll still thought the picture was live and the
     // collapsed/stale <video> showed as the white speck on every resume
@@ -436,6 +430,7 @@ export default function CameraView({ active }: { active: boolean }) {
     try {
       await camera.start();
       if (videoRef.current) camera.attach(videoRef.current);
+      setEngine(camera.engine);
       setReady(true);
       setTorch(false);
       // fresh stream = fresh AF/exposure state
@@ -541,14 +536,46 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => stopMeter();
   }, [active, ready, soundOn, mode]);
 
+  // Photos come from the phone's camera, recordings from the web stream:
+  // when the mode (or live blur, or the engine setting) asks for the other
+  // camera, swap. Re-checked whenever a start finishes, so a switch tapped
+  // while the camera was still starting is not lost.
+  const engineSetting = useSettingsStore((st) => st.settings.cameraEngine);
+  useEffect(() => {
+    if (!active || !ready || camStarting.current) return;
+    const want = camera.engineFor(mode === "photo" && !liveBlur);
+    if (want !== camera.engine) void startCam(mode);
+  }, [active, ready, mode, liveBlur, engineSetting, startCam]);
+
+  // The native preview is a view behind the page, laid under the
+  // viewfinder box: keep it there, show it only with the camera screen,
+  // and make the page see-through above it while it is up.
+  useEffect(() => {
+    const box = boxRef.current;
+    camera.setViewport(box);
+    if (!box) return;
+    const ro = new ResizeObserver(() => camera.syncViewport());
+    ro.observe(box);
+    return () => {
+      ro.disconnect();
+      camera.setViewport(null);
+    };
+  }, []);
+  useEffect(() => {
+    const on = active && engine === "native";
+    document.documentElement.classList.toggle("native-cam", on);
+    camera.setPreviewVisible(active);
+    if (on) camera.syncViewport();
+    return () => document.documentElement.classList.remove("native-cam");
+  }, [active, engine]);
+
   const switchMode = useCallback(
     (m: Mode) => {
       if (m === modeRef.current || recording) return;
-      // No camera restart: the shared stream keeps running, so the switch
-      // is instant and torch/zoom/meter state all survive. The owner chose
-      // this over matching the stock app's framing — steady video and an
-      // instant switch matter more than the last 25% of width, since the
-      // saved photo carries more than the viewfinder shows anyway.
+      // On the web camera, no restart: the shared stream keeps running, so
+      // the switch is instant and torch/zoom/meter state all survive. With
+      // the phone camera taking photos, the effect above swaps cameras —
+      // the price of real zoom and focus, paid once per switch.
       setMode(m);
     },
     [recording]
@@ -602,7 +629,8 @@ export default function CameraView({ active }: { active: boolean }) {
       if (pinching.current) return;
       const canvas = overlayRef.current;
       const video = videoRef.current;
-      if (!canvas || !video || video.videoWidth === 0) return;
+      if (!canvas || !video) return;
+      if (camera.engine === "native" ? !camera.native.streaming : video.videoWidth === 0) return;
       // Size from the BOX, never the video element: getBoundingClientRect
       // on the video includes the digital-zoom scale() transform, so the
       // card grew with every pinch and snapped back on release.
@@ -794,6 +822,9 @@ export default function CameraView({ active }: { active: boolean }) {
       // races) restarts itself — no tap on the overlay button needed
       const v = videoRef.current;
       if (v && v.srcObject && v.paused) void v.play().catch(() => {});
+      // the native preview follows the box through any layout shift the
+      // resize observer cannot see (a bar above it changing height)
+      camera.syncViewport();
       draw();
     }, 300);
 
@@ -865,6 +896,8 @@ export default function CameraView({ active }: { active: boolean }) {
     try {
       const { job, preview } = await grabFrame();
       if (preview) setFlyImg({ src: preview, key: Date.now() });
+      // a phone-camera still is read by the queue; it flies when it lands
+      else job.onPreview = (src) => setFlyImg({ src, key: Date.now() });
       enqueueCapture(
         job,
         ({ record, thumb }) => updateThumb(record.id, thumb),
@@ -1298,8 +1331,7 @@ export default function CameraView({ active }: { active: boolean }) {
     if (!active) return;
     const v = videoRef.current;
     if (v && v.srcObject && v.paused) void v.play().catch(() => {});
-    const track = camera.stream?.getVideoTracks()[0];
-    if (ready && permState === "granted" && (!track || track.readyState !== "live")) {
+    if (ready && permState === "granted" && !camera.running) {
       void startCam(modeRef.current);
     }
     setZoomNow(camera.zoom);
@@ -1342,6 +1374,23 @@ export default function CameraView({ active }: { active: boolean }) {
       void setShutterKeys(false);
     };
   }, [active, onShutter]);
+
+  // The phone camera moved between lenses (the ultrawide below 1x on phones
+  // that list it as a camera of its own): its chips, and its focus, are the
+  // new lens's now. One that will not open is said out loud rather than
+  // leaving a .6 chip that does nothing.
+  useEffect(() => {
+    const onLens = (e: Event) => {
+      setZoomStops(camera.zoomStops());
+      setZoomNow(camera.zoom);
+      setAfLocked(false);
+      if ((e as CustomEvent<{ failed: boolean }>).detail?.failed) {
+        showToast("This phone doesn't let apps use its wide lens");
+      }
+    };
+    window.addEventListener("gpscam:native-lens", onLens);
+    return () => window.removeEventListener("gpscam:native-lens", onLens);
+  }, [showToast]);
 
   // the stream restarted (minimise/restore) and the controller put the zoom
   // back: follow it, so the chips and the indicator match the picture
@@ -1563,10 +1612,16 @@ export default function CameraView({ active }: { active: boolean }) {
       // a constraint apply (and a store write via the label), and in the
       // Android WebView that firehose is what made the watermark overlay
       // stutter during a pinch. ~60 ms is imperceptible to the gesture.
+      //
+      // The phone camera is not a constraint firehose: a zoom there is one
+      // cheap call the camera applies on its next frame, so it follows the
+      // fingers on every move, and only the labels keep the 60 ms pace.
       const now = performance.now();
+      const native = camera.engine === "native";
+      if (native) void camera.setZoom(target);
       if (now - lastZoomApply.current < 60) return;
       lastZoomApply.current = now;
-      void camera.setZoom(target).then((z) => {
+      void (native ? Promise.resolve(camera.zoom) : camera.setZoom(target)).then((z) => {
         setZoomLabel(fmtZoom(z));
         setZoomNow(z);
         showZoomBar();
@@ -1603,12 +1658,17 @@ export default function CameraView({ active }: { active: boolean }) {
             // aim the camera at the tapped point, not just anywhere: the
             // video's rect already includes the digital-zoom transform, so
             // this maps the tap straight into frame coordinates
-            const vr = videoRef.current?.getBoundingClientRect();
+            //
+            // The native preview is laid exactly over the box and maps its
+            // own taps — cropping and the front camera's mirror included —
+            // so it gets plain box coordinates.
+            const native = camera.engine === "native";
+            const vr = (native ? boxRef.current : videoRef.current)?.getBoundingClientRect();
             let point: { x: number; y: number } | undefined;
             if (vr && vr.width > 0 && vr.height > 0) {
               let nx = (e.clientX - vr.left) / vr.width;
               const ny = (e.clientY - vr.top) / vr.height;
-              if (camera.facing === "user") nx = 1 - nx; // preview is mirrored
+              if (!native && camera.facing === "user") nx = 1 - nx; // preview is mirrored
               point = { x: nx, y: ny };
             }
             void camera.focusAt(point);
@@ -1684,7 +1744,7 @@ export default function CameraView({ active }: { active: boolean }) {
     // slow enough that it costs nothing and cannot strobe.
     const tick = () => {
       if (cancelled) return;
-      void apply(readLight(camera.track, videoRef.current, camera.torch).dark);
+      void camera.lightReading(videoRef.current).then((l) => apply(l.dark));
       timer = window.setTimeout(tick, 900);
     };
     tick();
@@ -1796,6 +1856,7 @@ export default function CameraView({ active }: { active: boolean }) {
           ref={boxRef}
           className={`cam-video-box${mirrored ? " mirrored" : ""}`}
           data-live={videoLive}
+          data-engine={engine}
           // long-pressing a live preview must not open the WebView's media
           // context menu (downloadfile.bin / Copy video frame / PiP)
           onContextMenu={(e) => e.preventDefault()}
@@ -2179,7 +2240,8 @@ export default function CameraView({ active }: { active: boolean }) {
                 data-active={Math.abs(z - zoomNow) < 0.05}
                 disabled={recording && false}
                 onClick={() => {
-                  void camera.setZoom(z).then((got) => {
+                  // glide, like the stock camera, rather than cut
+                  void camera.setZoom(z, true).then((got) => {
                     setZoomNow(got);
                     if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
                       showToast("This phone doesn't let apps use that lens directly");

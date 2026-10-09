@@ -63,6 +63,15 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+
+    // Native camera (NativeCameraPlugin): CameraX gives the logical
+    // multi-camera zoom, metered tap-to-focus and zero-shutter-lag stills
+    // that the WebView's getUserMedia camera cannot. Apache-2.0.
+    def camerax = "1.6.2"
+    implementation "androidx.camera:camera-core:$camerax"
+    implementation "androidx.camera:camera-camera2:$camerax"
+    implementation "androidx.camera:camera-lifecycle:$camerax"
+    implementation "androidx.camera:camera-view:$camerax"
 }
 
 apply from: 'capacitor.build.gradle'

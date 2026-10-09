@@ -264,6 +264,15 @@ export interface AppSettings {
    * be recovered by any amount of resolution.
    */
   fullSensorStills: boolean;
+  /**
+   * Which camera photo mode uses in the Android app. "phone" is CameraX —
+   * the phone's own camera stack, with real lens switching, working
+   * tap-to-focus and zero-shutter-lag stills; "browser" is the WebView
+   * camera every version before it used, kept as the way back if a phone
+   * misbehaves. Video and the browser build use the browser camera either
+   * way.
+   */
+  cameraEngine: "phone" | "browser";
   mirrorFrontPhoto: boolean;
   /** Auto-download each captured photo to the device (Downloads folder
    *  on the web build; gallery apps index it). */

@@ -121,12 +121,29 @@ export function readLight(
   lit: boolean
 ): LightReading {
   const s = (track?.getSettings?.() ?? {}) as Record<string, unknown>;
+  const iso = typeof s.iso === "number" ? s.iso : null;
+  const exposure =
+    typeof s.exposureTime === "number" ? exposureSeconds(s.exposureTime) : null;
+  // the pixels are only worth reading when the sensor said nothing
+  const lum = (iso == null || iso <= 0) && exposure == null && video ? framePixels(video) : null;
+  return judgeLight(iso, exposure, lum, lit);
+}
+
+/**
+ * The verdict, from whatever the camera could tell: ISO first, then
+ * shutter time (seconds), then mean frame luminance.
+ */
+export function judgeLight(
+  iso: number | null,
+  exposureS: number | null,
+  lum: number | null,
+  lit: boolean
+): LightReading {
   const record = (r: LightReading): LightReading => {
     last = r;
     return r;
   };
 
-  const iso = typeof s.iso === "number" ? s.iso : null;
   if (iso != null && iso > 0) {
     const limit = lit ? ISO_BRIGHT : ISO_DARK;
     return record({
@@ -136,18 +153,15 @@ export function readLight(
     });
   }
 
-  const exposure =
-    typeof s.exposureTime === "number" ? exposureSeconds(s.exposureTime) : null;
-  if (exposure != null) {
+  if (exposureS != null && exposureS > 0) {
     const limit = lit ? EXPOSURE_BRIGHT_S : EXPOSURE_DARK_S;
     return record({
-      dark: exposure >= limit,
+      dark: exposureS >= limit,
       source: "exposure",
-      detail: `1/${Math.round(1 / exposure)} s (needs 1/${Math.round(1 / limit)})`,
+      detail: `1/${Math.round(1 / exposureS)} s (needs 1/${Math.round(1 / limit)})`,
     });
   }
 
-  const lum = video ? framePixels(video) : null;
   if (lum != null) {
     const limit = lit ? PIXELS_BRIGHT : PIXELS_DARK;
     return record({

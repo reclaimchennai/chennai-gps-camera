@@ -128,6 +128,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   flashMode: "off",
   captureQuality: "auto",
   fullSensorStills: false,
+  cameraEngine: "phone",
   mirrorFrontPhoto: false,
   // Off by default for INSTALLED web apps: saving is a browser download,
   // and Chrome shows a banner for every one — after every photo. In a

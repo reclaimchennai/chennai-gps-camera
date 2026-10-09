@@ -398,6 +398,21 @@ textarea {
   visibility: hidden;
 }
 
+/* The phone camera (CameraX) draws the viewfinder BEHIND the WebView
+   (lib/camera-native.ts): every layer between it and the eye must be
+   see-through while the camera screen is up. The page goes back to
+   opaque the moment another screen opens. */
+html.native-cam,
+html.native-cam body,
+html.native-cam #root,
+html.native-cam .cam-screen {
+  background: transparent;
+}
+.cam-video-box[data-engine="native"] video {
+  visibility: hidden;
+  background: transparent;
+}
+
 .cam-video-box video {
   display: block;
   /* FILL the viewfinder zone, cropping whatever does not fit.

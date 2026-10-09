@@ -7,6 +7,7 @@
  * retained and the backfill queue (backfill.ts) upgrades the photo later.
  */
 import { camera } from "./camera";
+import { readNativeStill } from "./nativeCamera";
 import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
 import { renderLocationQr } from "./watermark/qr";
@@ -216,6 +217,18 @@ export interface CaptureJob {
   liveBlur: boolean;
   wantsDeviceCopy: boolean;
   /**
+   * A phone-camera (CameraX) still, still being written: the path of the
+   * JPEG. `canvas` is empty until the queue reads it (materialize), so a
+   * burst keeps its photos on disk, not decoded in memory. Already upright
+   * for how the phone was held and zoomed by the camera itself.
+   */
+  still?: Promise<string>;
+  /** mirror a front-camera still to match the mirrored preview */
+  mirror?: boolean;
+  /** the small preview for the fly-to-gallery animation, once the still
+   *  is read — set by the shutter for native stills */
+  onPreview?: (dataUrl: string) => void;
+  /**
    * A noise reading still in flight.
    *
    * Photo mode keeps the microphone released, so the level has to be
@@ -248,6 +261,33 @@ export async function grabFrame(): Promise<{
     config.fields.soundLevel && data.db == null && !data.dbStats
       ? sampleNoiseOnce()
       : null;
+
+  // The phone camera: ask for the still and hand its promise to the
+  // queue. The request goes out now — with zero shutter lag the camera
+  // takes the frame of this press from its ring buffer — and nothing here
+  // waits for the file, so the shutter is free again at once.
+  if (camera.engine === "native") {
+    const still = camera.captureNative(physicalRotation());
+    // an unread rejection would be reported as unhandled before the queue
+    // gets to it; the queue still sees it through `still`
+    still.catch(() => {});
+    return {
+      preview: "",
+      job: {
+        canvas: document.createElement("canvas"),
+        w: 0,
+        h: 0,
+        still,
+        mirror: camera.facing === "user" && settings.mirrorFrontPhoto,
+        data,
+        config,
+        lookupResult: live.lookupResult,
+        liveBlur: settings.liveFaceBlur,
+        wantsDeviceCopy: settings.autoSaveToDevice || isNativeApp(),
+        noise,
+      },
+    };
+  }
 
   const frame = await camera.captureFrame();
   const w = frame.width;
@@ -313,17 +353,7 @@ export async function grabFrame(): Promise<{
   // leave it with the identity transform (ctx.restore above does that).
 
   // tiny preview for the fly-to-gallery animation (no watermark needed)
-  let preview = "";
-  try {
-    const pv = document.createElement("canvas");
-    const scale = Math.min(1, 220 / Math.max(outW, outH));
-    pv.width = Math.max(1, Math.round(outW * scale));
-    pv.height = Math.max(1, Math.round(outH * scale));
-    pv.getContext("2d")?.drawImage(outCanvas, 0, 0, pv.width, pv.height);
-    preview = pv.toDataURL("image/jpeg", 0.6);
-  } catch {
-    preview = "";
-  }
+  const preview = flyPreview(outCanvas);
 
   return {
     preview,
@@ -341,6 +371,53 @@ export async function grabFrame(): Promise<{
   };
 }
 
+/** A small JPEG of the frame for the fly-to-gallery animation. */
+function flyPreview(src: HTMLCanvasElement): string {
+  try {
+    const pv = document.createElement("canvas");
+    const scale = Math.min(1, 220 / Math.max(src.width, src.height));
+    pv.width = Math.max(1, Math.round(src.width * scale));
+    pv.height = Math.max(1, Math.round(src.height * scale));
+    pv.getContext("2d")?.drawImage(src, 0, 0, pv.width, pv.height);
+    return pv.toDataURL("image/jpeg", 0.6);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Read a phone-camera still into the job's canvas — in the queue, one
+ * photo at a time, which is what bounds a burst's memory to one decoded
+ * frame.
+ */
+async function materialize(job: CaptureJob): Promise<void> {
+  if (!job.still) return;
+  const bmp = await readNativeStill(await job.still);
+  try {
+    job.w = bmp.width;
+    job.h = bmp.height;
+    job.canvas.width = bmp.width;
+    job.canvas.height = bmp.height;
+    const ctx = job.canvas.getContext("2d");
+    if (!ctx) throw new Error("2d context unavailable");
+    if (job.mirror) {
+      ctx.save();
+      ctx.translate(bmp.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(bmp, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.drawImage(bmp, 0, 0);
+    }
+  } finally {
+    bmp.close();
+  }
+  if (job.onPreview) {
+    const url = flyPreview(job.canvas);
+    if (url) job.onPreview(url);
+  }
+}
+
 /**
  * SLOW path — runs in the background queue, one job at a time. Face
  * blur, watermark composite, EXIF, thumbnail, IndexedDB write, download
@@ -348,6 +425,7 @@ export async function grabFrame(): Promise<{
  * rapid-fire shooting without ever stalling the shutter.
  */
 export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
+  await materialize(job);
   const { profile } = useSettingsStore.getState();
   const { canvas, w, h, data, config, lookupResult, liveBlur } = job;
   // resolve the shutter-time noise reading into the card before it draws
