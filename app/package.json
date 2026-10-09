@@ -26,7 +26,8 @@
     "check:recording": "node scripts/check-recording.mjs",
     "check:orientation": "node scripts/check-orientation.mjs",
     "check:native-camera": "node scripts/check-native-camera.mjs",
-    "check:address-chooser": "node scripts/check-address-chooser.mjs"
+    "check:address-chooser": "node scripts/check-address-chooser.mjs",
+    "check:map": "node scripts/check-map.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
@@ -46,7 +47,6 @@
     "idb": "^8.0.3",
     "konva": "^10.3.0",
     "leaflet": "^1.9.4",
-    "leaflet.heat": "^0.2.0",
     "leaflet.markercluster": "^1.5.3",
     "lucide-react": "^1.24.0",
     "piexifjs": "^1.0.6",
@@ -64,7 +64,6 @@
     "@turf/boolean-intersects": "^7.3.5",
     "@turf/point-on-feature": "^7.3.5",
     "@types/leaflet": "^1.9.21",
-    "@types/leaflet.heat": "^0.2.5",
     "@types/leaflet.markercluster": "^1.5.6",
     "@types/node": "^24.13.2",
     "@types/piexifjs": "^1.0.0",

@@ -18,7 +18,7 @@ import {
   neighbourhoodOrder,
 } from "../lib/viewer-order";
 import L from "leaflet";
-import "leaflet.heat";
+import { smoothHeat } from "../lib/map/smoothHeat";
 import "leaflet.markercluster";
 import "leaflet/dist/leaflet.css";
 import { Screen } from "./ui";
@@ -64,14 +64,9 @@ export default function PhotoMapView() {
       );
 
       // ---- heat layer (far out) ------------------------------------
-      const heat = (
-        L as unknown as {
-          heatLayer: (
-            pts: [number, number][],
-            opts: Record<string, unknown>
-          ) => L.Layer;
-        }
-      ).heatLayer(points, { radius: 28, blur: 22, minOpacity: 0.35 });
+      // painted once, then moved and scaled with the map: follows a pinch
+      // frame by frame (lib/map/smoothHeat.ts)
+      const heat = smoothHeat(points, { radius: 28, blur: 22, minOpacity: 0.35 });
 
       // ---- photo pins + clusters (near) ----------------------------
       const clusters = (
