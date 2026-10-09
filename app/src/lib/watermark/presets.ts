@@ -25,7 +25,9 @@ export const ALL_FIELDS: WatermarkFields = {
 };
 
 export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
-  preset: "chennai", // the street sign is the default board (owner)
+  // The simple card. The street sign was the default for a while and users
+  // said they preferred this one; it stays available as a choice.
+  preset: "detailed",
   fields: { ...ALL_FIELDS },
   fontScale: 0.8, // smallest by default — users can size it up in the editor
   opacity: 0.55,
@@ -66,13 +68,13 @@ export const FIELD_META: FieldMeta[] = [
 ];
 
 export const PRESET_META: { key: WatermarkConfig["preset"]; label: string; hint: string }[] = [
-  { key: "detailed", label: "Detailed card", hint: "Stacked panel with mini-map" },
+  { key: "detailed", label: "Detailed card", hint: "The simple card — every field on a clean panel. The default" },
   { key: "compact", label: "Compact bar", hint: "Single slim bar, essentials only" },
   { key: "minimal", label: "Corner badge", hint: "Coordinates + time badge" },
   {
     key: "chennai",
     label: "Street sign",
-    hint: "Civic board addressed to your local body — the default",
+    hint: "Civic board addressed to your local body",
   },
 ];
 

@@ -212,7 +212,16 @@ export default function WatermarkEditorView() {
               <button
                 key={p.key}
                 data-active={config.preset === p.key}
-                onClick={() => set({ preset: p.key })}
+                onClick={() => {
+                  // remembered so no future default change ever moves a
+                  // layout this person picked on purpose (see store.ts)
+                  try {
+                    localStorage.setItem("gpscam-preset-chosen", "1");
+                  } catch {
+                    // storage unavailable — the choice still applies
+                  }
+                  set({ preset: p.key });
+                }}
               >
                 {p.label}
               </button>

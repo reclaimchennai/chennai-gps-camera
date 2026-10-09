@@ -19,7 +19,8 @@
     "check:a11y": "node scripts/check-a11y.mjs",
     "check:flash": "node scripts/check-flash.mjs",
     "check:rail": "node scripts/check-rail.mjs",
-    "check:blur": "node scripts/check-blur.mjs"
+    "check:blur": "node scripts/check-blur.mjs",
+    "check:defaults": "node scripts/check-defaults.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

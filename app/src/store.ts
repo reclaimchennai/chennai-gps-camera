@@ -64,24 +64,30 @@ interface LiveState {
 }
 
 /**
- * Move existing installs onto the street sign, once.
+ * Put installs back on the simple card, once.
  *
- * New installs get it from DEFAULT_WATERMARK_CONFIG, but a stored config
- * always wins over a default, so anyone who had used the app before would
- * have stayed on the plain detailed card forever. This runs once and only
- * from "detailed" — a user who has deliberately chosen the compact bar or
- * the corner badge keeps it.
+ * An earlier release made the street sign the default AND ran a one-time
+ * migration (adoptStreetSign, keyed "gpscam-street-sign-default") that
+ * moved every existing install from the simple card onto the sign. Users
+ * have since said they prefer the simple card, and for most of them the
+ * sign was never a choice — it was imposed twice over. This undoes that,
+ * once, for anyone still on the sign.
+ *
+ * Someone who picks the sign deliberately from now on is remembered
+ * ("gpscam-preset-chosen", set by the watermark editor) and is never
+ * moved again. Nobody who picked it BEFORE today can be told apart from
+ * someone who simply had it imposed, which is the honest limit of this —
+ * and the reason the old migration should never have been silent.
  */
-function adoptStreetSign(): void {
+export function returnToSimpleCard(): void {
   try {
-    if (localStorage.getItem("gpscam-street-sign-default") === "1") return;
+    if (localStorage.getItem("gpscam-simple-card-default") === "1") return;
     const st = useSettingsStore.getState();
-    // a fix can arrive before hydrateSettings() resolves; claiming the
-    // flag then would burn the one chance against default-valued settings
     if (!st.hydrated) return;
-    localStorage.setItem("gpscam-street-sign-default", "1");
-    if (st.watermark.preset === "detailed") {
-      st.setWatermark({ ...st.watermark, preset: "chennai" });
+    localStorage.setItem("gpscam-simple-card-default", "1");
+    if (localStorage.getItem("gpscam-preset-chosen") === "1") return;
+    if (st.watermark.preset === "chennai") {
+      st.setWatermark({ ...st.watermark, preset: "detailed" });
     }
   } catch {
     // storage unavailable — leave the layout alone
@@ -102,10 +108,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   uiRotation: 0,
   mockLocation: false,
   setFix: (fix) => set({ fix }),
-  setLookupResult: (lookupResult, lookupFor) => {
-    set({ lookupResult, lookupFor });
-    adoptStreetSign();
-  },
+  setLookupResult: (lookupResult, lookupFor) => set({ lookupResult, lookupFor }),
   setBearing: (bearing) => set({ bearing }),
   setGpsStatus: (gpsStatus) => set({ gpsStatus }),
   setAddress: (address, locality, addressFor) =>
@@ -222,6 +225,7 @@ export async function hydrateSettings(): Promise<void> {
       : DEFAULT_WATERMARK_CONFIG,
     profile: { ...DEFAULT_PROFILE, ...profile },
   });
+  returnToSimpleCard();
 }
 
 // run once the store exists
