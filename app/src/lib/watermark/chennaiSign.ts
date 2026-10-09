@@ -39,6 +39,7 @@ import {
 } from "./signboard";
 import {
   ANY_BACKDROP,
+  TARGET,
   composite,
   minPanelAlpha,
   parseColor,
@@ -857,11 +858,19 @@ export function renderChennaiSign(
     darkest: composite(plateRgb, plateAlpha, bd.darkest),
     brightest: composite(plateRgb, plateAlpha, bd.brightest),
   };
+  // A wider margin than the plate gets. The header strip carries the
+  // body's name in the LOCAL script at the smallest size on the board, and
+  // Tamil, Kannada and Devanagari strokes at ~12 px are hairlines next to
+  // Latin ones: anti-aliasing eats a far bigger share of them. Solved to
+  // the plate's target, the Tamil header rendered at 4.34:1 once a real
+  // Tamil font was present — legible in a design tool, marginal on a
+  // street. The strip is a thin band, so being more opaque costs the
+  // photo almost nothing.
   const stripAlpha = minPanelAlpha(
     parseColor(WHITE).rgb,
     [plateColor],
     stripBackdrop,
-    undefined,
+    TARGET + 1.2,
     config.opacity
   );
 
