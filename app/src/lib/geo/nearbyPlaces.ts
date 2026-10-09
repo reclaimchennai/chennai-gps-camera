@@ -36,6 +36,18 @@ export interface PlaceCandidate {
 }
 
 type Source = PlaceCandidate["source"];
+
+/** What one source came back with — shown in the chooser, so "why only
+ *  OpenStreetMap?" answers itself. */
+export interface SourceReport {
+  source: Source;
+  /** answered, did not answer in time, or Google without a key */
+  state: "ok" | "failed" | "no-key";
+  /** results it returned at all */
+  found: number;
+  /** of those, places within reach that made the list */
+  kept: number;
+}
 type At = { lat: number; lng: number };
 
 /** The user's own "50 metres". */
@@ -48,8 +60,8 @@ export const SEARCH_USABLE_M = 150;
 const TIMEOUT_MS = 9000;
 
 function sources(): Source[] {
-  const { geocoder, googleApiKey } = useSettingsStore.getState().settings;
-  const google: Source[] = googleApiKey ? ["google"] : [];
+  const { geocoder } = useSettingsStore.getState().settings;
+  const google: Source[] = ["google"];
   switch (geocoder) {
     case "off":
       return [];
@@ -166,11 +178,15 @@ async function nominatimBuilding(at: At, lang: string): Promise<PlaceCandidate[]
     osm_type?: string;
     osm_id?: number;
     name?: string;
+    category?: string;
     display_name?: string;
     lat?: string;
     lon?: string;
   };
   if (!j.display_name) return [];
+  // the nearest object is often a road or trail: its name is part of an
+  // address, not a place to choose
+  if (j.category === "highway") j.name = undefined;
   const lat = Number(j.lat);
   const lng = Number(j.lon);
   return [
@@ -311,16 +327,26 @@ function merge(lists: PlaceCandidate[][]): PlaceCandidate[] {
   );
 }
 
-/** Named places and addresses within about NEARBY_RADIUS_M of `at`. */
-export async function nearbyCandidates(at: At, lang: string): Promise<PlaceCandidate[]> {
+/** Named places and addresses within about NEARBY_RADIUS_M of `at`,
+ *  and what each source returned. */
+export async function nearbyCandidates(
+  at: At,
+  lang: string
+): Promise<{ places: PlaceCandidate[]; report: SourceReport[] }> {
   const use = sources();
-  const lists = await Promise.all([
-    use.includes("phone")
-      ? withTimeout(nativeNearbyAddresses(at.lat, at.lng, NEARBY_RADIUS_M, lang).then((l) => fromPhone(l, at)), [])
-      : [],
-    use.includes("osm") ? withTimeout(overpassNearby(at, lang), []) : [],
-    use.includes("osm") ? withTimeout(nominatimBuilding(at, lang), []) : [],
-    use.includes("google")
+  const hasKey = Boolean(useSettingsStore.getState().settings.googleApiKey);
+  const isNative = !!(window as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.();
+  const none = Promise.resolve(null);
+  const [phone, overpass, building, google] = await Promise.all([
+    use.includes("phone") && isNative
+      ? withTimeout(
+          nativeNearbyAddresses(at.lat, at.lng, NEARBY_RADIUS_M, lang).then((l) => (l ? fromPhone(l, at) : null)),
+          null
+        )
+      : none,
+    use.includes("osm") ? withTimeout(overpassNearby(at, lang), null) : none,
+    use.includes("osm") ? withTimeout(nominatimBuilding(at, lang), null) : none,
+    use.includes("google") && hasKey
       ? withTimeout(
           googlePlaces(
             "searchNearby",
@@ -334,13 +360,35 @@ export async function nearbyCandidates(at: At, lang: string): Promise<PlaceCandi
             },
             at
           ),
-          []
+          null
         )
-      : [],
+      : none,
   ]);
-  return merge(lists)
+  const places = merge([phone ?? [], overpass ?? [], building ?? [], google ?? []])
     .filter((c) => c.distance == null || c.distance <= NEARBY_KEEP_M)
     .slice(0, 25);
+  const kept = (src: Source) => places.filter((p) => p.source === src).length;
+  const report: SourceReport[] = [];
+  if (use.includes("phone") && isNative) {
+    report.push({ source: "phone", state: phone ? "ok" : "failed", found: phone?.length ?? 0, kept: kept("phone") });
+  }
+  if (use.includes("osm")) {
+    const ok = overpass != null || building != null;
+    report.push({
+      source: "osm",
+      state: ok ? "ok" : "failed",
+      found: (overpass?.length ?? 0) + (building?.length ?? 0),
+      kept: kept("osm"),
+    });
+  }
+  if (use.includes("google")) {
+    report.push(
+      hasKey
+        ? { source: "google", state: google ? "ok" : "failed", found: google?.length ?? 0, kept: kept("google") }
+        : { source: "google", state: "no-key", found: 0, kept: 0 }
+    );
+  }
+  return { places, report };
 }
 
 /** Places matching `query` around `at`, nearest first. Results farther
@@ -352,7 +400,7 @@ export async function searchCandidates(query: string, at: At, lang: string): Pro
   const use = sources();
   const lists = await Promise.all([
     use.includes("phone")
-      ? withTimeout(nativeSearchAddresses(q, at.lat, at.lng, 1.5, lang).then((l) => fromPhone(l, at)), [])
+      ? withTimeout(nativeSearchAddresses(q, at.lat, at.lng, 1.5, lang).then((l) => fromPhone(l, at)), [] as PlaceCandidate[])
       : [],
     use.includes("osm") ? withTimeout(nominatimSearch(q, at, lang), []) : [],
     use.includes("google")

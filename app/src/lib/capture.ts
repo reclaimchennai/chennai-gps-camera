@@ -232,9 +232,6 @@ export interface CaptureJob {
   still?: Promise<string>;
   /** mirror a front-camera still to match the mirrored preview */
   mirror?: boolean;
-  /** the small preview for the fly-to-gallery animation, once the still
-   *  is read — set by the shutter for native stills */
-  onPreview?: (dataUrl: string) => void;
   /**
    * A noise reading still in flight.
    *
@@ -257,6 +254,9 @@ export interface CaptureJob {
 export async function grabFrame(): Promise<{
   job: CaptureJob;
   preview: string;
+  /** the phone camera's viewfinder at the press, for the animation —
+   *  arrives a few milliseconds after the shutter is free again */
+  previewLater?: Promise<string>;
 }> {
   const { watermark: config, settings } = useSettingsStore.getState();
   const live = useLiveStore.getState();
@@ -274,12 +274,15 @@ export async function grabFrame(): Promise<{
   // takes the frame of this press from its ring buffer — and nothing here
   // waits for the file, so the shutter is free again at once.
   if (camera.engine === "native") {
+    // the viewfinder first, so the animation shows the moment of the press
+    const previewLater = camera.native.snapshot(220);
     const still = camera.captureNative(physicalRotation());
     // an unread rejection would be reported as unhandled before the queue
     // gets to it; the queue still sees it through `still`
     still.catch(() => {});
     return {
       preview: "",
+      previewLater,
       job: {
         canvas: document.createElement("canvas"),
         w: 0,
@@ -418,10 +421,6 @@ async function materialize(job: CaptureJob): Promise<void> {
     }
   } finally {
     bmp.close();
-  }
-  if (job.onPreview) {
-    const url = flyPreview(job.canvas);
-    if (url) job.onPreview(url);
   }
 }
 

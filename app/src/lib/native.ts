@@ -351,14 +351,14 @@ export async function nativeNearbyAddresses(
   lng: number,
   radius: number,
   lang = "en"
-): Promise<NativePlace[]> {
+): Promise<NativePlace[] | null> {
   const b = bridge();
-  if (!b?.nearbyAddresses) return [];
+  if (!b?.nearbyAddresses) return null;
   try {
     const r = await b.nearbyAddresses({ lat, lng, radius, lang });
-    return r.ok ? (r.results ?? []) : [];
+    return r.ok ? (r.results ?? []) : null;
   } catch {
-    return [];
+    return null;
   }
 }
 

@@ -26,6 +26,7 @@ import {
   searchCandidates,
   SEARCH_USABLE_M,
   type PlaceCandidate,
+  type SourceReport,
 } from "../lib/geo/nearbyPlaces";
 
 const SOURCE_LABEL: Record<PlaceCandidate["source"], string> = {
@@ -57,6 +58,7 @@ export default function AddressPicker({
   const canLook = lookupsEnabled();
 
   const [nearby, setNearby] = useState<PlaceCandidate[] | null>(canLook && at ? null : []);
+  const [report, setReport] = useState<SourceReport[]>([]);
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [found, setFound] = useState<PlaceCandidate[] | null>(null);
@@ -77,8 +79,10 @@ export default function AddressPicker({
   useEffect(() => {
     if (!canLook || !at) return;
     let gone = false;
-    void nearbyCandidates(at, lang).then((list) => {
-      if (!gone) setNearby(list);
+    void nearbyCandidates(at, lang).then(({ places, report }) => {
+      if (gone) return;
+      setNearby(places);
+      setReport(report);
     });
     return () => {
       gone = true;
@@ -255,6 +259,12 @@ export default function AddressPicker({
           nearby.map((c) => row(c, "nearby"))
         )}
 
+        {report.length > 0 && (
+          <p className="hint addr-sources" aria-live="polite">
+            {report.map(describeSource).join(" · ")}
+          </p>
+        )}
+
         {canLook && at && (
           <form
             className="addr-search"
@@ -329,6 +339,15 @@ export default function AddressPicker({
       </div>
     </div>
   );
+}
+
+/** One source's outcome, in a few words. */
+function describeSource(r: SourceReport): string {
+  const name = r.source === "phone" ? "Phone" : r.source === "osm" ? "OpenStreetMap" : "Google Places";
+  if (r.state === "no-key") return "Google Places: add a key in Settings for shops and offices";
+  if (r.state === "failed") return `${name}: didn't answer`;
+  if (r.kept) return `${name}: ${r.kept}`;
+  return r.found ? `${name}: area name only here` : `${name}: nothing here`;
 }
 
 function formatDistance(m: number | undefined): string {

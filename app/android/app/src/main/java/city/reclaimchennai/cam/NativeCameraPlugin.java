@@ -140,6 +140,8 @@ public class NativeCameraPlugin extends Plugin {
     /** Long edge the stills are held to — see bindTo(). */
     private int maxStill = 4096;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    /** shutter snapshots: never queued behind a still being saved */
+    private final ExecutorService snapIo = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private LiveData<ZoomState> zoomSource;
     private Observer<ZoomState> zoomObserver;
@@ -1003,6 +1005,48 @@ public class NativeCameraPlugin extends Plugin {
     }
 
     // ---- capture -------------------------------------------------------
+
+    /**
+     * The viewfinder as it is at this instant, small, as a JPEG data URL —
+     * for the shutter's fly-to-gallery animation. It used to be made from
+     * the finished photo, which is read back and watermarked in a queue:
+     * in a burst the animations trailed the shutter and kept playing after
+     * the last press. The view's own pixels are ready at the press.
+     */
+    @PluginMethod
+    public void snapshot(PluginCall call) {
+        final int width = Math.max(64, Math.min(640, call.getInt("width", 220)));
+        getActivity().runOnUiThread(() -> {
+            Bitmap full = null;
+            try {
+                if (previewView != null) full = previewView.getBitmap();
+            } catch (Exception ignored) {
+                // nothing on screen
+            }
+            if (full == null) {
+                call.reject("no preview");
+                return;
+            }
+            final Bitmap src = full;
+            snapIo.execute(() -> {
+                try {
+                    int h = Math.max(1, Math.round(src.getHeight() * (width / (float) src.getWidth())));
+                    Bitmap small = Bitmap.createScaledBitmap(src, width, h, true);
+                    java.io.ByteArrayOutputStream jpeg = new java.io.ByteArrayOutputStream();
+                    small.compress(Bitmap.CompressFormat.JPEG, 60, jpeg);
+                    if (small != src) small.recycle();
+                    JSObject out = new JSObject();
+                    out.put("dataUrl", "data:image/jpeg;base64,"
+                        + android.util.Base64.encodeToString(jpeg.toByteArray(), android.util.Base64.NO_WRAP));
+                    call.resolve(out);
+                } catch (Exception e) {
+                    call.reject("snapshot failed: " + e.getMessage());
+                } finally {
+                    src.recycle();
+                }
+            });
+        });
+    }
 
     /**
      * Take a full-sensor still. {@code rotation} is how the phone is held

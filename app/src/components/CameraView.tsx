@@ -551,11 +551,52 @@ export default function CameraView({ active }: { active: boolean }) {
   // camera, swap. Re-checked whenever a start finishes, so a switch tapped
   // while the camera was still starting is not lost.
   const engineSetting = useSettingsStore((st) => st.settings.cameraEngine);
+  /**
+   * The last frame, held (softly blurred) over the viewfinder while one
+   * camera hands over to the other. The handover itself takes a moment —
+   * photos and video run on different cameras — but it no longer shows
+   * as a black screen: the picture stays and the live one fades in.
+   */
+  const [swapImg, setSwapImg] = useState<{ src: string; mirror: boolean } | null>(null);
+  const [swapOut, setSwapOut] = useState(false);
+  const grabSwapFrame = useCallback(async (): Promise<{ src: string; mirror: boolean } | null> => {
+    if (camera.engine === "native") {
+      const src = await camera.native.snapshot(720);
+      return src ? { src, mirror: false } : null;
+    }
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return null;
+    try {
+      const c = document.createElement("canvas");
+      const k = Math.min(1, 720 / v.videoWidth);
+      c.width = Math.round(v.videoWidth * k);
+      c.height = Math.round(v.videoHeight * k);
+      c.getContext("2d")?.drawImage(v, 0, 0, c.width, c.height);
+      return { src: c.toDataURL("image/jpeg", 0.7), mirror: camera.facing === "user" };
+    } catch {
+      return null;
+    }
+  }, []);
   useEffect(() => {
     if (!active || !ready || camStarting.current) return;
     const want = camera.engineFor(mode === "photo" && !liveBlur);
-    if (want !== camera.engine) void startCam(mode);
-  }, [active, ready, mode, liveBlur, engineSetting, startCam]);
+    if (want === camera.engine) return;
+    void (async () => {
+      const frame = await grabSwapFrame();
+      if (frame) {
+        setSwapOut(false);
+        setSwapImg(frame);
+      }
+      void startCam(mode);
+    })();
+  }, [active, ready, mode, liveBlur, engineSetting, startCam, grabSwapFrame]);
+  // the new camera is live: let the held frame go
+  useEffect(() => {
+    if (!swapImg || !videoLive) return;
+    setSwapOut(true);
+    const t = window.setTimeout(() => setSwapImg(null), 260);
+    return () => window.clearTimeout(t);
+  }, [swapImg, videoLive]);
 
   // The native preview is a view behind the page, laid under the
   // viewfinder box: keep it there, show it only with the camera screen,
@@ -904,10 +945,11 @@ export default function CameraView({ active }: { active: boolean }) {
     // background queue, so it lands in the card without delaying the
     // shutter — firing it here left the reading racing the stamp
     try {
-      const { job, preview } = await grabFrame();
+      const { job, preview, previewLater } = await grabFrame();
       if (preview) setFlyImg({ src: preview, key: Date.now() });
-      // a phone-camera still is read by the queue; it flies when it lands
-      else job.onPreview = (src) => setFlyImg({ src, key: Date.now() });
+      // the phone camera's viewfinder at the press: the animation keeps
+      // pace with the shutter instead of trailing the save queue
+      else void previewLater?.then((src) => src && setFlyImg({ src, key: Date.now() }));
       enqueueCapture(
         job,
         ({ record, thumb }) => updateThumb(record.id, thumb),
@@ -1927,6 +1969,15 @@ export default function CameraView({ active }: { active: boolean }) {
             }}
             onEmptied={() => setVideoLive(false)}
           />
+          {swapImg && (
+            <img
+              className="cam-swap"
+              src={swapImg.src}
+              alt=""
+              data-out={swapOut ? "1" : "0"}
+              style={swapImg.mirror ? { transform: "scale(1.04) scaleX(-1)" } : undefined}
+            />
+          )}
           {/* Holds the last frame while a lens switch releases one camera
               and opens another, so crossing 0.6x→1x fades instead of
               flashing black. */}
@@ -1967,7 +2018,7 @@ export default function CameraView({ active }: { active: boolean }) {
         {/* Black fill over the whole viewfinder zone until the stream
             paints. Must sit outside .cam-video-box: that box is sized by
             the <video>, so it has no size to fill before the first frame. */}
-        {!videoLive && permState === "granted" && <div className="cam-prefill" />}
+        {!videoLive && !swapImg && permState === "granted" && <div className="cam-prefill" />}
 
         {(permState === "needed" || permState === "denied") && (
           <div

@@ -195,6 +195,34 @@ export function drawIcon(
   ctx.restore();
 }
 
+/**
+ * The logos of a group side by side from (x, y) along +x, then nothing
+ * else — returns the run's length. Shared by the tower (drawn rotated)
+ * and the landscape row.
+ */
+function drawLogos(
+  ctx: CanvasRenderingContext2D,
+  platforms: string[],
+  x: number,
+  y: number,
+  iconPx: number,
+  gap: number
+): number {
+  let at = x;
+  for (const p of platforms) {
+    if (!hasGlyph(p)) continue;
+    drawIcon(ctx, p, at, y, iconPx, "rgba(255,255,255,0.95)");
+    at += iconPx + gap;
+  }
+  return at > x ? at - x - gap : 0;
+}
+
+/** Length of a group's logo run (see drawLogos). */
+function logosLength(platforms: string[], iconPx: number, gap: number): number {
+  const n = platforms.filter(hasGlyph).length;
+  return n ? n * iconPx + (n - 1) * gap : 0;
+}
+
 /** Platforms with a drawable logo; "Other" renders text-only. */
 export function hasGlyph(platform: string): boolean {
   const key = platform.trim().toLowerCase();
@@ -223,15 +251,17 @@ export function renderSocialStrip(
   panel: WatermarkRect | null,
   position: WatermarkConfig["position"] = "bottom"
 ): void {
-  const handles = showHandles
-    ? profile.handles.filter((h) => h.show && h.handle.trim())
+  // one entry per USERNAME, its platforms' logos side by side: the same
+  // name on four platforms used to be printed four times up the edge
+  const groups = showHandles
+    ? groupHandles(profile.handles.filter((h) => h.show && h.handle.trim()))
     : [];
   const wantPhoto = showPhoto && photo;
-  if (!handles.length && !wantPhoto) return;
+  if (!groups.length && !wantPhoto) return;
 
   if (width > height) {
     renderRow(
-      ctx, width, height, s, handles, wantPhoto ? photo : null, panel, position
+      ctx, width, height, s, groups, wantPhoto ? photo : null, panel, position
     );
     return;
   }
@@ -240,6 +270,7 @@ export function renderSocialStrip(
   const fontPx = Math.max(10, Math.round(20 * s));
   const iconPx = Math.round(fontPx * 1.0);
   const iconTextGap = Math.round(6 * s); // logo → its own handle text
+  const logoGap = Math.round(iconPx * 0.35); // between logos sharing a handle
   const stackGap = Math.round(fontPx * 1.4); // clear space between handles
   // the strip pins to the screen border OPPOSITE the card: a bottom card
   // puts the strip hugging the top edge and vice versa — always clear of
@@ -283,22 +314,19 @@ export function renderSocialStrip(
     cursor = top ? cursor + photoD + stackGap : cursor - photoD - stackGap;
   }
 
-  for (const h of handles) {
-    const text = formatHandle(h.platform, h.handle);
-    if (!text) continue;
-    const iconW = hasGlyph(h.platform) ? iconPx + iconTextGap : 0;
-    const colLen = iconW + ctx.measureText(text).width;
+  for (const g of groups) {
+    const logos = logosLength(g.platforms, iconPx, logoGap);
+    const iconW = logos ? logos + iconTextGap : 0;
+    const colLen = iconW + ctx.measureText(g.text).width;
     // rotate -90°: local +x points UP the screen, so the line reads
     // bottom-to-top; anchor the segment's near-card end at `cursor`
     const originY = top ? cursor + colLen : cursor;
     ctx.save();
     ctx.translate(colCenter, originY);
     ctx.rotate(-Math.PI / 2);
-    if (iconW) {
-      drawIcon(ctx, h.platform, 0, -iconPx / 2, iconPx, "rgba(255,255,255,0.95)");
-    }
+    drawLogos(ctx, g.platforms, 0, -iconPx / 2, iconPx, logoGap);
     ctx.fillStyle = "rgba(255,255,255,0.95)";
-    ctx.fillText(text, iconW, 0);
+    ctx.fillText(g.text, iconW, 0);
     ctx.restore();
     // advance along the SAME column to stack the next handle end-to-end
     cursor = top ? cursor + colLen + stackGap : cursor - colLen - stackGap;
@@ -314,7 +342,7 @@ function renderRow(
   width: number,
   height: number,
   s: number,
-  handles: Profile["handles"],
+  groups: HandleGroup[],
   photo: CanvasImageSource | null | undefined,
   _panel: WatermarkRect | null, // kept for signature parity; strip pins to the border now
   position: WatermarkConfig["position"]
@@ -323,6 +351,7 @@ function renderRow(
   const fontPx = Math.max(10, Math.round(20 * s));
   const iconPx = Math.round(fontPx * 1.0);
   const iconTextGap = Math.round(5 * s); // logo → its own handle text
+  const logoGap = Math.round(iconPx * 0.35); // between logos sharing a handle
   const itemGap = Math.round(fontPx * 0.9); // between handles
   const top = position.startsWith("top");
 
@@ -330,13 +359,11 @@ function renderRow(
   ctx.font = `500 ${fontPx}px system-ui, sans-serif`;
   ctx.textBaseline = "middle";
 
-  const items = handles
-    .map((h) => {
-      const text = formatHandle(h.platform, h.handle);
-      const iconW = hasGlyph(h.platform) ? iconPx + iconTextGap : 0;
-      return { h, text, iconW, w: iconW + ctx.measureText(text).width };
-    })
-    .filter((it) => it.text);
+  const items = groups.map((g) => {
+    const logos = logosLength(g.platforms, iconPx, logoGap);
+    const iconW = logos ? logos + iconTextGap : 0;
+    return { g, text: g.text, iconW, w: iconW + ctx.measureText(g.text).width };
+  });
   const photoD = photo ? Math.round(fontPx * 2) : 0;
   const photoGap = photo && items.length ? itemGap : 0;
   const totalW =
@@ -377,9 +404,7 @@ function renderRow(
 
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.iconW) {
-      drawIcon(ctx, it.h.platform, x, centerY - iconPx / 2, iconPx, "rgba(255,255,255,0.95)");
-    }
+    drawLogos(ctx, it.g.platforms, x, centerY - iconPx / 2, iconPx, logoGap);
     ctx.fillStyle = "rgba(255,255,255,0.95)";
     ctx.font = `500 ${fontPx}px system-ui, sans-serif`;
     ctx.textBaseline = "middle";

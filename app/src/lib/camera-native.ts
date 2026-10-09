@@ -265,6 +265,16 @@ export class NativeEngine {
     }
   }
 
+  /** The viewfinder at this instant as a small JPEG data URL, or "" — for
+   *  the fly-to-gallery animation, which must keep pace with the shutter. */
+  async snapshot(width: number): Promise<string> {
+    try {
+      return (await nativeCamera()?.snapshot({ width }))?.dataUrl ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   /**
    * Ask for a full-sensor still, the right way up for how the phone is
    * held. Returns the file the camera wrote; reading it is left to the

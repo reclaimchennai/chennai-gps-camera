@@ -70,6 +70,8 @@ interface NativeCameraPlugin {
   setExposure(opts: { index: number }): Promise<{ ok: boolean; index?: number }>;
   light(): Promise<{ iso?: number; exposureNs?: number }>;
   capture(opts: { rotation: number }): Promise<{ path: string; ms: number; zsl: boolean }>;
+  /** the viewfinder right now, small — for the shutter animation */
+  snapshot(opts: { width: number }): Promise<{ dataUrl: string }>;
   release(opts: { path: string }): Promise<void>;
   addListener(
     event: "zoom" | "stream" | "lens",
