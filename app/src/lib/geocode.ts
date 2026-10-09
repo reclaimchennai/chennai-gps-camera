@@ -71,12 +71,18 @@ const COUNTRY = new Set(
  *  - strip zone prefixes from area names ("Zone 5 Royapuram" → "Royapuram")
  *  - join the trailing pincode as "Chennai - 600008"
  */
-function cleanAddress(address: string, state?: string): string {
+/** "26RM+6F4" — the grid square Google's geocoders name when they have
+ *  no street address for a point. It opened card addresses ("26RM+6F4,
+ *  Nungambakkam, Chennai…"): noise to anyone reading the photo. */
+const PLUS_CODE = /^[23456789CFGHJMPQRVWX]{2,8}\+[23456789CFGHJMPQRVWX]{0,3}$/i;
+
+export function cleanAddress(address: string, state?: string): string {
   const st = state?.toLowerCase();
   const out: string[] = [];
   for (let seg of address.split(/,\s*/).map((s) => s.trim())) {
     const low = seg.toLowerCase();
     if (!seg || COUNTRY.has(low)) continue;
+    if (PLUS_CODE.test(seg)) continue;
     if (/^cmwssb\s+division\s*\d+$/i.test(seg)) continue;
     if (/^ward\s*\d+[a-z]?$/i.test(seg)) continue;
     if (/^zone\s*\d+$/i.test(seg)) continue;

@@ -119,6 +119,8 @@
   --dim: #94a3b8;
   --accent: #38bdf8;
   --accent-strong: #0369a1;
+  /* the light theme's dark red is for light backgrounds: 2.5:1 here */
+  --danger-ink: #ff8a9b;
 }
 
 * {
@@ -3185,4 +3187,113 @@ a {
   .flash-btn[data-lit="true"] {
     border: 2px solid currentColor;
   }
+}
+
+/* ---- Settings: addresses chosen by hand ---------------------------- */
+.pin-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.pin-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pin-title {
+  font-weight: 600;
+}
+
+/* ---- "Address here" chooser (AddressPicker.tsx) -------------------- */
+.addr-sheet {
+  max-height: 86vh;
+  color: var(--text);
+}
+.addr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 4px;
+}
+.addr-section {
+  margin-top: 10px;
+}
+.addr-note {
+  padding: 4px 12px 8px;
+  margin: 0;
+}
+.addr-option {
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 12px;
+}
+/* a search result too far away: its name recedes, the reason does not */
+.addr-option:disabled {
+  opacity: 1;
+}
+.addr-option:disabled .addr-name,
+.addr-option:disabled .addr-line:not(.addr-far) {
+  color: var(--dim);
+}
+.addr-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.addr-name {
+  font-weight: 600;
+}
+.addr-line {
+  font-size: 13px;
+  color: var(--dim);
+}
+.addr-far {
+  color: var(--danger-ink);
+}
+.addr-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.addr-src {
+  font-size: 11px;
+  opacity: 0.85;
+}
+.addr-search {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+}
+.addr-search input {
+  flex: 1;
+  min-width: 0;
+}
+.addr-search .ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.addr-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 12px;
+}
+.addr-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.addr-save {
+  width: calc(100% - 24px);
+  margin: 4px 12px 0;
 }

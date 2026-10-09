@@ -19,6 +19,7 @@
  * filename. It is the only thing both halves agree on.
  */
 import { listMedia, getMedia, putMedia, kvGet, kvSet } from "./db";
+import { allAddressPins, replaceAddressPins, type AddressPin } from "./geo/addressPins";
 import type { AppSettings, MediaRecord, Profile, WatermarkConfig } from "../types";
 import {
   loadLensOverrides,
@@ -53,6 +54,9 @@ export interface BackupFile {
   calibration: CalibrationBlock;
   /** every media record, minus its pixels */
   media: MediaRecord[];
+  /** addresses chosen by hand for particular spots (geo/addressPins.ts);
+   *  absent from backups made before the chooser existed */
+  addressPins?: AddressPin[];
 }
 
 /**
@@ -103,6 +107,7 @@ export async function buildBackup(appInfo?: {
     profile: st.profile,
     calibration: readCalibration(),
     media: await listMedia(),
+    addressPins: allAddressPins(),
   };
   return new Blob([JSON.stringify(file, null, 1)], {
     type: "application/json",
@@ -147,6 +152,8 @@ export interface RestoreReport {
   watermark: boolean;
   profile: boolean;
   calibration: boolean;
+  /** chosen addresses restored */
+  addressPins: number;
   /** records written whose pixels are already present */
   mediaRestored: number;
   /** records in the backup with no pixels on this device yet — these come
@@ -169,6 +176,7 @@ export async function applyBackup(file: BackupFile): Promise<RestoreReport> {
     watermark: false,
     profile: false,
     calibration: false,
+    addressPins: 0,
     mediaRestored: 0,
     mediaPending: 0,
   };
@@ -193,6 +201,16 @@ export async function applyBackup(file: BackupFile): Promise<RestoreReport> {
   if (file.calibration) {
     applyCalibration(file.calibration);
     report.calibration = true;
+  }
+  if (Array.isArray(file.addressPins) && file.addressPins.length) {
+    // merge: a spot chosen on this device since the backup keeps its
+    // newer choice; everything else comes back
+    const here = allAddressPins();
+    const restored = file.addressPins.filter(
+      (p) => p && typeof p.address === "string" && !here.some((h) => h.id === p.id)
+    );
+    await replaceAddressPins([...here, ...restored]);
+    report.addressPins = restored.length;
   }
 
   const { getBlob } = await import("./db");

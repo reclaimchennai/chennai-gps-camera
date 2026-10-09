@@ -31,8 +31,11 @@ interface Entry {
  * they are stored (lib/geo/refine.ts). A v2 entry is an UNREFINED answer
  * — "Perungudi" for a point in Pallikaranai — and a cache hit returns
  * before refinement ever sees it, so they are all retired.
+ *
+ * v4: Plus Codes are no longer stored as addresses ("26RM+6F4,
+ * Nungambakkam…"); a v3 entry may open with one, so they are retired too.
  */
-const KEY = "geocache-v3";
+const KEY = "geocache-v4";
 /**
  * ~11 m at 4 decimal places.
  *

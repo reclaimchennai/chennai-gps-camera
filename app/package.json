@@ -25,7 +25,8 @@
     "check:address": "node scripts/check-address.mjs",
     "check:recording": "node scripts/check-recording.mjs",
     "check:orientation": "node scripts/check-orientation.mjs",
-    "check:native-camera": "node scripts/check-native-camera.mjs"
+    "check:native-camera": "node scripts/check-native-camera.mjs",
+    "check:address-chooser": "node scripts/check-address-chooser.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

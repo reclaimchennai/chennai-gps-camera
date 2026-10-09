@@ -132,6 +132,9 @@ export interface WatermarkData {
   /** The fix came from a mock/spoofed location provider. Disclosed on the
    *  card, in the details sheet and in shares — never blocked. */
   mockLocation?: boolean;
+  /** The address (and title) were chosen by the photographer for this
+   *  spot rather than looked up (geo/addressPins.ts) — said on the card. */
+  addressChosen?: boolean;
 }
 
 // ---- Profile --------------------------------------------------------
@@ -242,6 +245,14 @@ export interface AppSettings {
    * point of the app and they are not a geocoder's to guess at.
    */
   civicBodyNames: boolean;
+  /**
+   * Let the photographer choose the card's address for a spot — from the
+   * buildings and places within 50 m, a search, or by typing — remembered
+   * for later photos there (geo/addressPins.ts). For buildings with
+   * several tenants, which no geocoder can tell apart. Tapping the card on
+   * the camera screen opens the chooser; off, a tap focuses as usual.
+   */
+  addressChooser: boolean;
   /**
    * Flash: off, automatic, or always on.
    *

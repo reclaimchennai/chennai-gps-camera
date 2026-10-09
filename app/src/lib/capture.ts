@@ -8,6 +8,7 @@
  */
 import { camera } from "./camera";
 import { readNativeStill } from "./nativeCamera";
+import { pinNear } from "./geo/addressPins";
 import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
 import { renderLocationQr } from "./watermark/qr";
@@ -165,12 +166,18 @@ export function collectWatermarkData(): WatermarkData {
     live.addressFor &&
     live.fix &&
     nearEnough(live.addressFor, live.fix);
+  // An address the photographer chose for this spot beats any lookup —
+  // and a station title too, since the choice may be a shop inside it.
+  // Only the place NAMES change: coordinates, ward and police stay as
+  // measured, and the card says the address was chosen.
+  const pin = pinNear(live.fix);
   return {
     fix: live.fix,
     jurisdiction: jurisdictionFor(live),
-    station: stationFor(live, watermark.language),
-    address: addressUsable ? live.address : undefined,
-    locality: addressUsable ? live.locality : undefined,
+    station: pin?.title ? undefined : stationFor(live, watermark.language),
+    address: pin ? pin.address || (addressUsable ? live.address : undefined) : addressUsable ? live.address : undefined,
+    locality: pin?.title ?? (addressUsable ? live.locality : undefined),
+    addressChosen: pin ? true : undefined,
     bearing: live.bearing,
     digipin:
       watermark.fields.digipin && live.fix

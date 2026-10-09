@@ -12,6 +12,12 @@ import { qualitySummary } from "../lib/quality";
 import { camera, loadLensProfile, type Lens } from "../lib/camera";
 import { lastLight } from "../lib/lightmeter";
 import { nativeCameraAvailable } from "../lib/nativeCamera";
+import {
+  allAddressPins,
+  onAddressPinsChange,
+  removeAddressPin,
+  type AddressPin,
+} from "../lib/geo/addressPins";
 
 // TEMPORARY (owner request): show the classic blinking NEW gif on the
 // live-face-blur row until 2026-07-21, after which the Experimental chip
@@ -95,6 +101,42 @@ function lensName(l: Lens): string {
   if (Math.abs(l.factor - 1) < 0.05) return "Main (1x)";
   if (l.factor < 1) return `Ultra-wide (${String(l.factor).replace(/^0/, "")}x)`;
   return `Telephoto (${l.factor}x)`;
+}
+
+/** The addresses chosen by hand, each removable — they are personal
+ *  places, and a stale one should be one tap from gone. */
+function SavedAddresses() {
+  const [pins, setPins] = useState<AddressPin[]>(() => allAddressPins());
+  useEffect(() => onAddressPinsChange(() => setPins(allAddressPins())), []);
+  if (!pins.length) return null;
+  return (
+    <div className="row" style={{ display: "block" }}>
+      <div className="label">Chosen addresses</div>
+      <div className="hint" style={{ margin: "2px 0 8px" }}>
+        Each is used for photos within 50 m of where you chose it. Remove one
+        to go back to the automatic address there.
+      </div>
+      {pins.map((p) => (
+        <div key={p.id} className="pin-row">
+          <div className="pin-text">
+            {p.title && <div className="pin-title">{p.title}</div>}
+            {p.address && <div className="hint">{p.address}</div>}
+            <div className="hint">
+              {p.lat.toFixed(5)}, {p.lng.toFixed(5)} ·{" "}
+              {new Date(p.createdAt).toLocaleDateString()}
+            </div>
+          </div>
+          <button
+            className="ghost-btn"
+            aria-label={`Remove the chosen address ${p.title ?? p.address}`}
+            onClick={() => void removeAddressPin(p.id)}
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function SettingsView() {
@@ -308,6 +350,17 @@ export default function SettingsView() {
                 ))}
               </div>
             </div>
+
+            <Row
+              label="Choose the address by hand"
+              hint="For buildings with several offices or shops, which no map service can tell apart from coordinates. Tap the card on the camera screen to pick from the places within 50 m, search for one, or type it. Your choice is used for every photo you take within 50 m of that spot, and the card says the address was chosen by you. Coordinates, ward and police station are never changed."
+            >
+              <Toggle
+                on={settings.addressChooser}
+                onChange={(v) => setSettings({ addressChooser: v })}
+              />
+            </Row>
+            <SavedAddresses />
 
             <Row
               label="Prefer civic body names"

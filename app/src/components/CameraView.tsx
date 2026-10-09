@@ -18,6 +18,8 @@ import { signStyle } from "../lib/watermark/chennaiSign";
 import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
 import { physicalRotation } from "../lib/orientation";
+import { addressPinsVersion } from "../lib/geo/addressPins";
+import AddressPicker from "./AddressPicker";
 import {
   isNativeApp,
   checkNativePermissions,
@@ -235,6 +237,8 @@ export default function CameraView({ active }: { active: boolean }) {
     [keepFocusUi, showZoomBar]
   );
   const [toast, setToast] = useState<string | null>(null);
+  /** the "Address here" chooser (Settings → Choose the address by hand) */
+  const [addrOpen, setAddrOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recSeconds, setRecSeconds] = useState(0);
   // live watermark card rect (rotated drawing space) from the overlay loop
@@ -664,7 +668,7 @@ export default function CameraView({ active }: { active: boolean }) {
         live.bearing == null ? null : Math.round(live.bearing),
         live.gpsStatus, live.address, live.lookupResult, watermark,
         profile, assetsRef.current.miniMap, assetsRef.current.profilePhoto,
-        live.uiRotation,
+        live.uiRotation, addressPinsVersion(),
       ];
       if (
         !blurLive &&
@@ -1566,6 +1570,40 @@ export default function CameraView({ active }: { active: boolean }) {
     };
   }, [armLivePoll]);
 
+  /** Is a screen point on the live card? Its rect is kept in the overlay's
+   *  rotated drawing space, in canvas pixels (see the overlay loop). */
+  const onCard = (clientX: number, clientY: number): boolean => {
+    const info = cardInfoRef.current;
+    const canvas = overlayRef.current;
+    if (!info?.rect || !canvas) return false;
+    const cr = canvas.getBoundingClientRect();
+    if (!cr.width || !info.w) return false;
+    const kx = cr.width / info.w;
+    const ky = cr.height / info.h;
+    const { rect, rot, w, h } = info;
+    const corner = (u: number, v: number) => {
+      let x = u;
+      let y = v;
+      if (rot === 90) {
+        x = w - v;
+        y = u;
+      } else if (rot === -90) {
+        x = v;
+        y = h - u;
+      }
+      return { x: cr.left + x * kx, y: cr.top + y * ky };
+    };
+    const a = corner(rect.x, rect.y);
+    const b = corner(rect.x + rect.width, rect.y + rect.height);
+    const pad = 8; // a fingertip, not a stylus
+    return (
+      clientX >= Math.min(a.x, b.x) - pad &&
+      clientX <= Math.max(a.x, b.x) + pad &&
+      clientY >= Math.min(a.y, b.y) - pad &&
+      clientY <= Math.max(a.y, b.y) + pad
+    );
+  };
+
   // ---- gestures: tap-to-focus + pinch-to-zoom -----------------------------
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pinchBase = useRef<{ dist: number; zoom: number } | null>(null);
@@ -1654,7 +1692,14 @@ export default function CameraView({ active }: { active: boolean }) {
         if (start && tapCandidate.current) {
           const dx = e.clientX - start.x;
           const dy = e.clientY - start.y;
-          if (Math.hypot(dx, dy) < 8) {
+          if (
+            Math.hypot(dx, dy) < 8 &&
+            useSettingsStore.getState().settings.addressChooser &&
+            onCard(e.clientX, e.clientY)
+          ) {
+            // the card is the address: tapping it chooses the address
+            setAddrOpen(true);
+          } else if (Math.hypot(dx, dy) < 8) {
             // single tap = focus here (and drop any existing AF lock)
             if (afLocked) {
               setAfLocked(false);
@@ -2282,7 +2327,17 @@ export default function CameraView({ active }: { active: boolean }) {
             onClick={() => navigate("/gallery")}
             aria-label="Gallery"
           >
-            {thumbUrl ? <img src={thumbUrl} alt="" /> : <Images size={20} />}
+            {thumbUrl ? (
+              <img
+                src={thumbUrl}
+                alt=""
+                // a thumbnail that cannot be read shows the gallery icon,
+                // never the browser's broken-image glyph
+                onError={() => setThumbUrl(null)}
+              />
+            ) : (
+              <Images size={20} />
+            )}
           </button>
           <button
             className={`shutter${mode === "video" ? (recording ? " recording" : " video") : ""}`}
@@ -2298,6 +2353,9 @@ export default function CameraView({ active }: { active: boolean }) {
           </button>
         </div>
       </div>
+      {addrOpen && active && (
+        <AddressPicker onClose={() => setAddrOpen(false)} onSaved={showToast} />
+      )}
     </div>
   );
 }

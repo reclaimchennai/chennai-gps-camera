@@ -24,6 +24,19 @@ interface NativeBridgePlugin {
     /** every other sub-locality Android offered, nearest result first */
     altSubLocalities?: string[];
   }>;
+  nearbyAddresses(opts: {
+    lat: number;
+    lng: number;
+    radius: number;
+    lang?: string;
+  }): Promise<{ ok: boolean; results?: NativePlace[] }>;
+  searchAddresses(opts: {
+    query: string;
+    lat: number;
+    lng: number;
+    km: number;
+    lang?: string;
+  }): Promise<{ ok: boolean; results?: NativePlace[] }>;
   saveToGalleryBegin(opts: {
     filename: string;
     mime: string;
@@ -315,6 +328,55 @@ export async function nativeReverseGeocode(
     };
   } catch {
     return null;
+  }
+}
+
+/** One result from the phone's geocoder, for the address chooser. */
+export interface NativePlace {
+  line: string;
+  /** building, premises or POI — or just a house number or road */
+  feature?: string;
+  premises?: string;
+  thoroughfare?: string;
+  subThoroughfare?: string;
+  subLocality?: string;
+  locality?: string;
+  lat?: number;
+  lng?: number;
+}
+
+/** Every distinct address the phone's geocoder knows around a point. */
+export async function nativeNearbyAddresses(
+  lat: number,
+  lng: number,
+  radius: number,
+  lang = "en"
+): Promise<NativePlace[]> {
+  const b = bridge();
+  if (!b?.nearbyAddresses) return [];
+  try {
+    const r = await b.nearbyAddresses({ lat, lng, radius, lang });
+    return r.ok ? (r.results ?? []) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Places matching a name within `km` of a point. */
+export async function nativeSearchAddresses(
+  query: string,
+  lat: number,
+  lng: number,
+  km: number,
+  lang = "en"
+): Promise<NativePlace[]> {
+  const b = bridge();
+  if (!b?.searchAddresses) return [];
+  try {
+    const r = await b.searchAddresses({ query, lat, lng, km, lang });
+    return r.ok ? (r.results ?? []) : [];
+  } catch {
+    return [];
   }
 }
 

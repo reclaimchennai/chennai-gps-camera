@@ -43,6 +43,9 @@ export interface CardStrings {
   railStation: string;
   metroStation: string;
   pincode: string;
+  /** Under an address the photographer chose by hand (geo/addressPins.ts):
+   *  a label a person picked is not a measurement, and says so. */
+  chosen: string;
 }
 
 export interface LangDef {
@@ -80,7 +83,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       policeLo: "Police (L&O)", traffic: "Traffic", noise: "Noise",
       avg: "Avg", min: "Min", max: "Max", facing: "Facing",
       acquiring: "GPS: acquiring…", wardPending: "Ward: not yet available",
-      mock: "⚠ Mock location — GPS may be spoofed", approx: "⚠ Location approximate — ward may be wrong", railStation: "Railway Station", metroStation: "Metro Station", pincode: "PIN",
+      mock: "⚠ Mock location — GPS may be spoofed", approx: "⚠ Location approximate — ward may be wrong", railStation: "Railway Station", metroStation: "Metro Station", pincode: "PIN", chosen: "Address chosen by the photographer",
     },
   },
   ta: {
@@ -98,7 +101,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "சராசரி", min: "குறைந்தது", max: "அதிகபட்சம்", facing: "திசை",
       acquiring: "GPS: பெறப்படுகிறது…",
       wardPending: "வார்டு: இன்னும் கிடைக்கவில்லை",
-      mock: "⚠ போலி இருப்பிடம் — GPS தவறாக இருக்கலாம்", approx: "⚠ இருப்பிடம் தோராயமானது — வார்டு தவறாக இருக்கலாம்", railStation: "இரயில் நிலையம்", metroStation: "மெட்ரோ நிலையம்", pincode: "அஞ்சல் குறியீடு",
+      mock: "⚠ போலி இருப்பிடம் — GPS தவறாக இருக்கலாம்", approx: "⚠ இருப்பிடம் தோராயமானது — வார்டு தவறாக இருக்கலாம்", railStation: "இரயில் நிலையம்", metroStation: "மெட்ரோ நிலையம்", pincode: "அஞ்சல் குறியீடு", chosen: "முகவரி: புகைப்படம் எடுத்தவர் தேர்ந்தெடுத்தது",
     },
   },
   hi: {
@@ -116,7 +119,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "औसत", min: "न्यूनतम", max: "अधिकतम", facing: "दिशा",
       acquiring: "GPS: प्राप्त किया जा रहा है…",
       wardPending: "वार्ड: अभी उपलब्ध नहीं",
-      mock: "⚠ नकली स्थान — GPS गलत हो सकता है", approx: "⚠ स्थान अनुमानित — वार्ड गलत हो सकता है", railStation: "रेलवे स्टेशन", metroStation: "मेट्रो स्टेशन", pincode: "पिन कोड",
+      mock: "⚠ नकली स्थान — GPS गलत हो सकता है", approx: "⚠ स्थान अनुमानित — वार्ड गलत हो सकता है", railStation: "रेलवे स्टेशन", metroStation: "मेट्रो स्टेशन", pincode: "पिन कोड", chosen: "पता: फ़ोटो लेने वाले ने चुना",
     },
   },
   kn: {
@@ -134,7 +137,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "ಸರಾಸರಿ", min: "ಕನಿಷ್ಠ", max: "ಗರಿಷ್ಠ", facing: "ದಿಕ್ಕು",
       acquiring: "GPS: ಪಡೆಯಲಾಗುತ್ತಿದೆ…",
       wardPending: "ವಾರ್ಡ್: ಇನ್ನೂ ಲಭ್ಯವಿಲ್ಲ",
-      mock: "⚠ ನಕಲಿ ಸ್ಥಳ — GPS ತಪ್ಪಾಗಿರಬಹುದು", approx: "⚠ ಸ್ಥಳ ಅಂದಾಜು — ವಾರ್ಡ್ ತಪ್ಪಾಗಿರಬಹುದು", railStation: "ರೈಲು ನಿಲ್ದಾಣ", metroStation: "ಮೆಟ್ರೋ ನಿಲ್ದಾಣ", pincode: "ಪಿನ್ ಕೋಡ್",
+      mock: "⚠ ನಕಲಿ ಸ್ಥಳ — GPS ತಪ್ಪಾಗಿರಬಹುದು", approx: "⚠ ಸ್ಥಳ ಅಂದಾಜು — ವಾರ್ಡ್ ತಪ್ಪಾಗಿರಬಹುದು", railStation: "ರೈಲು ನಿಲ್ದಾಣ", metroStation: "ಮೆಟ್ರೋ ನಿಲ್ದಾಣ", pincode: "ಪಿನ್ ಕೋಡ್", chosen: "ವಿಳಾಸ: ಫೋಟೋ ತೆಗೆದವರು ಆಯ್ಕೆ ಮಾಡಿದ್ದು",
     },
   },
   te: {
@@ -152,7 +155,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "సగటు", min: "కనిష్ఠ", max: "గరిష్ఠ", facing: "దిశ",
       acquiring: "GPS: పొందుతోంది…",
       wardPending: "వార్డు: ఇంకా అందుబాటులో లేదు",
-      mock: "⚠ నకిలీ స్థానం — GPS తప్పు కావచ్చు", approx: "⚠ స్థానం సుమారు — వార్డు తప్పు కావచ్చు", railStation: "రైల్వే స్టేషన్", metroStation: "మెట్రో స్టేషన్", pincode: "పిన్ కోడ్",
+      mock: "⚠ నకిలీ స్థానం — GPS తప్పు కావచ్చు", approx: "⚠ స్థానం సుమారు — వార్డు తప్పు కావచ్చు", railStation: "రైల్వే స్టేషన్", metroStation: "మెట్రో స్టేషన్", pincode: "పిన్ కోడ్", chosen: "చిరునామా: ఫోటో తీసినవారు ఎంచుకున్నది",
     },
   },
   mr: {
@@ -170,7 +173,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "सरासरी", min: "किमान", max: "कमाल", facing: "दिशा",
       acquiring: "GPS: मिळवत आहे…",
       wardPending: "प्रभाग: अद्याप उपलब्ध नाही",
-      mock: "⚠ बनावट स्थान — GPS चुकीचे असू शकते", approx: "⚠ स्थान अंदाजे — प्रभाग चुकीचा असू शकतो", railStation: "रेल्वे स्थानक", metroStation: "मेट्रो स्थानक", pincode: "पिन कोड",
+      mock: "⚠ बनावट स्थान — GPS चुकीचे असू शकते", approx: "⚠ स्थान अंदाजे — प्रभाग चुकीचा असू शकतो", railStation: "रेल्वे स्थानक", metroStation: "मेट्रो स्थानक", pincode: "पिन कोड", chosen: "पत्ता: फोटो काढणाऱ्याने निवडलेला",
     },
   },
   bn: {
@@ -188,7 +191,7 @@ export const LANGS: Record<CardLang, LangDef> = {
       avg: "গড়", min: "সর্বনিম্ন", max: "সর্বোচ্চ", facing: "দিক",
       acquiring: "GPS: সংগ্রহ করা হচ্ছে…",
       wardPending: "ওয়ার্ড: এখনও পাওয়া যায়নি",
-      mock: "⚠ নকল অবস্থান — GPS ভুল হতে পারে", approx: "⚠ অবস্থান আনুমানিক — ওয়ার্ড ভুল হতে পারে", railStation: "রেলওয়ে স্টেশন", metroStation: "মেট্রো স্টেশন", pincode: "পিন কোড",
+      mock: "⚠ নকল অবস্থান — GPS ভুল হতে পারে", approx: "⚠ অবস্থান আনুমানিক — ওয়ার্ড ভুল হতে পারে", railStation: "রেলওয়ে স্টেশন", metroStation: "মেট্রো স্টেশন", pincode: "পিন কোড", chosen: "ঠিকানা: ছবি তোলা ব্যক্তির বাছাই করা",
     },
   },
 };

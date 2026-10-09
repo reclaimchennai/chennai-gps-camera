@@ -421,7 +421,18 @@ public class NativeBridgePlugin extends Plugin {
                     call.resolve(out);
                     return;
                 }
+                // The nearest result, unless it is only a Plus Code
+                // ("26RM+6F4, Nungambakkam…"): Google's name for a spot it
+                // has no street address for. The next one usually has the
+                // street, and a card should never open with a grid code.
                 Address a = results.get(0);
+                for (Address r : results) {
+                    String first = r.getMaxAddressLineIndex() >= 0 ? r.getAddressLine(0) : null;
+                    if (first != null && !PLUS_CODE.matcher(first).find()) {
+                        a = r;
+                        break;
+                    }
+                }
                 StringBuilder line = new StringBuilder();
                 for (int i = 0; i <= a.getMaxAddressLineIndex(); i++) {
                     if (line.length() > 0) line.append(", ");
@@ -436,8 +447,9 @@ public class NativeBridgePlugin extends Plugin {
                 com.getcapacitor.JSArray alts = new com.getcapacitor.JSArray();
                 java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
                 if (a.getSubLocality() != null) seen.add(a.getSubLocality());
-                for (int i = 1; i < results.size(); i++) {
-                    String sl = results.get(i).getSubLocality();
+                for (Address r : results) {
+                    if (r == a) continue;
+                    String sl = r.getSubLocality();
                     if (sl != null && seen.add(sl)) alts.put(sl);
                 }
                 if (alts.length() > 0) out.put("altSubLocalities", alts);
@@ -448,6 +460,136 @@ public class NativeBridgePlugin extends Plugin {
             }
         }).start();
     }
+
+    /**
+     * Every distinct address the phone's geocoder knows within about
+     * {@code radius} metres — for the address chooser, where the person
+     * picks the building or tenant they are actually at.
+     *
+     * One lookup answers for one point, and the geocoder snaps a point to
+     * the nearest thing it knows, so the centre alone tends to return the
+     * same building at five granularities. Probing four points around it
+     * as well finds the neighbours: the building across a lane, the other
+     * frontage of a corner plot, the next tenant in a complex.
+     */
+    @PluginMethod
+    public void nearbyAddresses(PluginCall call) {
+        final double lat = call.getDouble("lat", 0.0);
+        final double lng = call.getDouble("lng", 0.0);
+        final double radius = call.getDouble("radius", 50.0);
+        final String lang = call.getString("lang", "en");
+        final Context ctx = getContext();
+        new Thread(() -> {
+            JSObject out = new JSObject();
+            com.getcapacitor.JSArray list = new com.getcapacitor.JSArray();
+            try {
+                if (!Geocoder.isPresent()) {
+                    out.put("ok", false);
+                    call.resolve(out);
+                    return;
+                }
+                Geocoder geocoder = new Geocoder(ctx, localeFor(lang));
+                double dLat = radius * 0.7 / 111_320.0;
+                double dLng = dLat / Math.max(0.2, Math.cos(Math.toRadians(lat)));
+                double[][] probes = {
+                    {lat, lng}, {lat + dLat, lng}, {lat - dLat, lng},
+                    {lat, lng + dLng}, {lat, lng - dLng},
+                };
+                java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+                for (double[] p : probes) {
+                    @SuppressWarnings("deprecation")
+                    List<Address> results = geocoder.getFromLocation(p[0], p[1], 5);
+                    if (results == null) continue;
+                    for (Address a : results) {
+                        JSObject c = describeAddress(a);
+                        String key = c.optString("line", "");
+                        if (key.isEmpty() || !seen.add(key)) continue;
+                        list.put(c);
+                    }
+                }
+                out.put("ok", true);
+                out.put("results", list);
+            } catch (Exception e) {
+                out.put("ok", list.length() > 0);
+                out.put("results", list);
+            }
+            call.resolve(out);
+        }).start();
+    }
+
+    /**
+     * Places matching a name, within about {@code km} of a point — the
+     * chooser's search, for a building the probes did not find.
+     */
+    @PluginMethod
+    public void searchAddresses(PluginCall call) {
+        final String query = call.getString("query", "");
+        final double lat = call.getDouble("lat", 0.0);
+        final double lng = call.getDouble("lng", 0.0);
+        final double km = call.getDouble("km", 1.0);
+        final String lang = call.getString("lang", "en");
+        final Context ctx = getContext();
+        new Thread(() -> {
+            JSObject out = new JSObject();
+            com.getcapacitor.JSArray list = new com.getcapacitor.JSArray();
+            try {
+                if (!Geocoder.isPresent() || query.trim().isEmpty()) {
+                    out.put("ok", false);
+                    call.resolve(out);
+                    return;
+                }
+                Geocoder geocoder = new Geocoder(ctx, localeFor(lang));
+                double dLat = km * 1000 / 111_320.0;
+                double dLng = dLat / Math.max(0.2, Math.cos(Math.toRadians(lat)));
+                @SuppressWarnings("deprecation")
+                List<Address> results = geocoder.getFromLocationName(
+                    query, 8, lat - dLat, lng - dLng, lat + dLat, lng + dLng);
+                if (results != null) {
+                    for (Address a : results) list.put(describeAddress(a));
+                }
+                out.put("ok", true);
+                out.put("results", list);
+            } catch (Exception e) {
+                out.put("ok", false);
+                out.put("results", list);
+            }
+            call.resolve(out);
+        }).start();
+    }
+
+    private static Locale localeFor(String lang) {
+        return "en".equals(lang) || lang == null || lang.isEmpty()
+            ? Locale.ENGLISH
+            : new Locale(lang, "IN");
+    }
+
+    /** One geocoder result as the chooser shows it. */
+    private static JSObject describeAddress(Address a) {
+        JSObject c = new JSObject();
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i <= a.getMaxAddressLineIndex(); i++) {
+            if (line.length() > 0) line.append(", ");
+            line.append(a.getAddressLine(i));
+        }
+        c.put("line", line.toString());
+        // the feature name is the building, premises or POI when there is
+        // one — and just the house number or road when there is not
+        if (a.getFeatureName() != null) c.put("feature", a.getFeatureName());
+        if (a.getPremises() != null) c.put("premises", a.getPremises());
+        if (a.getThoroughfare() != null) c.put("thoroughfare", a.getThoroughfare());
+        if (a.getSubThoroughfare() != null) c.put("subThoroughfare", a.getSubThoroughfare());
+        if (a.getSubLocality() != null) c.put("subLocality", a.getSubLocality());
+        if (a.getLocality() != null) c.put("locality", a.getLocality());
+        if (a.hasLatitude() && a.hasLongitude()) {
+            c.put("lat", a.getLatitude());
+            c.put("lng", a.getLongitude());
+        }
+        return c;
+    }
+
+    private static final java.util.regex.Pattern PLUS_CODE =
+        java.util.regex.Pattern.compile("^[23456789CFGHJMPQRVWX]{2,8}\\+[23456789CFGHJMPQRVWX]{0,3}\\b",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /** Installed APK version — shown in About so update state is
      *  verifiable at a glance. */

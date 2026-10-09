@@ -20,6 +20,7 @@ import { startLiveAddress } from "./lib/liveAddress";
 import { initBackfill } from "./lib/backfill";
 import { initDownloadQueue } from "./lib/downloadQueue";
 import { warmGeodata } from "./lib/geo/geodata";
+import { loadAddressPins } from "./lib/geo/addressPins";
 import { initTheme, applyTheme } from "./lib/theme";
 import { startOrientationWatch } from "./lib/orientation";
 import { isNativeApp } from "./lib/native";
@@ -88,6 +89,8 @@ releaseAudioOnBackground();
 
 void hydrateSettings().then(() => {
   applyTheme();
+  // addresses chosen by hand for particular spots (geo/addressPins.ts)
+  void loadAddressPins();
   // Recordings the app was killed in the middle of are rebuilt from their
   // stored chunks (lib/video/recover.ts). After hydration: saving needs
   // the settings, and it must run before the user can start a new one.

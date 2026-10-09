@@ -125,6 +125,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   gridLines: false,
   plateOcr: false,
   civicBodyNames: false,
+  addressChooser: false,
   flashMode: "off",
   captureQuality: "auto",
   fullSensorStills: false,

@@ -294,6 +294,15 @@ function buildLines(
       lines.push({ text: seg, font: body, role: "dim" });
     }
   }
+  // Chosen by hand: right under what was chosen, smaller and muted — a
+  // disclosure, not a warning, but never left off while the choice shows.
+  if (data.addressChosen && ((f.address && data.address) || f.titleLine)) {
+    lines.push({
+      text: t.chosen,
+      font: `italic ${Math.round(bodyPx * 0.85)}px ${stack}`,
+      role: "dim",
+    });
+  }
 
   if (f.coords) {
     lines.push({

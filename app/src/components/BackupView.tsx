@@ -129,6 +129,10 @@ export default function BackupView() {
       setNote({
         kind: "ok",
         text: `Settings, watermark, profile and calibration restored.${
+          report.addressPins
+            ? ` ${report.addressPins} chosen address${report.addressPins === 1 ? "" : "es"} too.`
+            : ""
+        }${
           report.mediaPending
             ? ` ${report.mediaPending} photo${report.mediaPending === 1 ? "" : "s"} still need their picture files — import them below.`
             : ""
