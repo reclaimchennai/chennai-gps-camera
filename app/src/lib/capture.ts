@@ -45,6 +45,7 @@ import { writeExif } from "./exif";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";
 import { newId, putBlob, putMedia, getBlob } from "./db";
 import { useLiveStore, useSettingsStore } from "../store";
+import { physicalRotation } from "./orientation";
 import { loadedPackFor } from "./geo/geodata";
 import { lookup } from "./geo/lookup";
 import { stationAt, stationTitle } from "./geo/rail";
@@ -268,7 +269,11 @@ export async function grabFrame(): Promise<{
    *   held UI  = -90 for uiRotation 90, +90 for -90 (see the old helper)
    */
   const uprightQ = camera.previewIsPortrait() && w > h ? 1 : 0;
-  const uiQ = live.uiRotation === 90 ? -1 : live.uiRotation === -90 ? 1 : 0;
+  // How the phone is held NOW, not what the UI has caught up to: the UI
+  // waits out wobble before turning its icons, and a photo taken in that
+  // window used to come out laid out for the orientation just left.
+  const held = physicalRotation();
+  const uiQ = held === 90 ? -1 : held === -90 ? 1 : 0;
   const q = (((uprightQ + uiQ) % 4) + 4) % 4; // 0..3 clockwise quarter turns
 
   const swap = q === 1 || q === 3;

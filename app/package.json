@@ -23,7 +23,8 @@
     "check:blur": "node scripts/check-blur.mjs",
     "check:defaults": "node scripts/check-defaults.mjs",
     "check:address": "node scripts/check-address.mjs",
-    "check:recording": "node scripts/check-recording.mjs"
+    "check:recording": "node scripts/check-recording.mjs",
+    "check:orientation": "node scripts/check-orientation.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",

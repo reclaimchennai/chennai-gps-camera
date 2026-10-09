@@ -611,22 +611,51 @@ export function renderWatermark(
   if (!lines.length && !mapSize) return finish(null);
 
   // ---- measure ------------------------------------------------------
-  let textH = 0;
-  let maxLineW = 0;
-  for (const ln of lines) {
-    ctx.font = ln.font;
-    const m = ctx.measureText("Mg");
-    const lh =
-      (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || bodyPx) +
-      lineGap;
-    textH += lh + (ln.gapBefore ? ln.gapBefore * bodyPx : 0);
-    maxLineW = Math.max(maxLineW, ctx.measureText(ln.text).width);
-  }
+  const measureCol = (col: Line[]) => {
+    let h = 0;
+    let w = 0;
+    col.forEach((ln, i) => {
+      ctx.font = ln.font;
+      const m = ctx.measureText("Mg");
+      const lh =
+        (m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || bodyPx) +
+        lineGap;
+      // a column's first line takes no extra gap above it
+      h += lh + (i > 0 && ln.gapBefore ? ln.gapBefore * bodyPx : 0);
+      w = Math.max(w, ctx.measureText(ln.text).width);
+    });
+    return { h, w: Math.min(textW, Math.ceil(w)) };
+  };
 
-  // Shrink-wrap the card to its content: panelW above is only the WRAP
-  // limit — the painted card hugs the longest actual line, so it covers
-  // as little of the photo as the enabled fields allow (no dead space).
-  const usedTextW = lines.length ? Math.min(textW, Math.ceil(maxLineW)) : 0;
+  /**
+   * Landscape gets a landscape card.
+   *
+   * Stacking every row in one column made a landscape photo carry a tall
+   * portrait block — ten rows, a quarter of a 16:9 frame's height — which
+   * is what "the watermark stayed vertical while the photo was
+   * horizontal" describes. In landscape the place rows (title, address,
+   * coordinates, time) sit on the left and the jurisdiction rows (body,
+   * ward, police) on the right, roughly halving the height and using the
+   * width the frame actually has. Only when both columns FIT: otherwise
+   * the single column stands, exactly as before.
+   */
+  const COL_GAP = Math.round(28 * s);
+  let columns: Line[][] = [lines];
+  if (landscape && lines.length >= 5) {
+    const split = lines.findIndex((l) => l.role === "accent" || l.role === "warn");
+    if (split >= 2 && split < lines.length) {
+      const pair = [lines.slice(0, split), lines.slice(split)];
+      const [a, b] = pair.map(measureCol);
+      const twoW = pad * 2 + colW + mapGap + a.w + COL_GAP + b.w;
+      const oneH = measureCol(lines).h;
+      if (twoW <= panelW && Math.max(a.h, b.h) < oneH * 0.8) columns = pair;
+    }
+  }
+  const measured = columns.map(measureCol);
+  const textH = Math.max(...measured.map((m) => m.h));
+  const usedTextW = lines.length
+    ? measured.reduce((acc, m) => acc + m.w, 0) + COL_GAP * (columns.length - 1)
+    : 0;
   // colW, NOT mapSize: with the mini-map off and the QR on, the column is
   // still occupied. Measuring from mapSize made the card too narrow and
   // started the text at the column's left edge — straight over the QR.
@@ -739,18 +768,33 @@ export function renderWatermark(
   }
 
   // ---- text lines ----------------------------------------------------------
-  const tx = panelX + pad + colW + mapGap;
-  let ty = contentY + (contentH - textH) / 2;
+  let tx = panelX + pad + colW + mapGap;
   ctx.textBaseline = "top";
-  for (const ln of lines) {
-    if (ln.gapBefore) ty += ln.gapBefore * bodyPx;
-    ctx.font = ln.font;
-    const m = ctx.measureText("Mg");
-    const asc = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || bodyPx;
-    ctx.fillStyle = colorFor(ln.role);
-    ctx.fillText(ln.text, tx, ty);
-    ty += asc + lineGap;
-  }
+  columns.forEach((col, ci) => {
+    // columns share a top edge: two blocks of text read as a table only
+    // when their first lines line up
+    let ty = contentY + (contentH - textH) / 2;
+    col.forEach((ln, i) => {
+      if (i > 0 && ln.gapBefore) ty += ln.gapBefore * bodyPx;
+      ctx.font = ln.font;
+      const m = ctx.measureText("Mg");
+      const asc = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || bodyPx;
+      ctx.fillStyle = colorFor(ln.role);
+      ctx.fillText(ln.text, tx, ty);
+      ty += asc + lineGap;
+    });
+    if (ci < columns.length - 1) {
+      // a hairline between the columns, in the card's own edge colour
+      const divX = Math.round(tx + measured[ci].w + COL_GAP / 2);
+      ctx.strokeStyle = theme.edge;
+      ctx.lineWidth = Math.max(1, Math.round(1.5 * s));
+      ctx.beginPath();
+      ctx.moveTo(divX, contentY + (contentH - textH) / 2);
+      ctx.lineTo(divX, contentY + (contentH - textH) / 2 + textH);
+      ctx.stroke();
+    }
+    tx += measured[ci].w + COL_GAP;
+  });
   ctx.restore();
   return finish({ x: panelX, y: panelY, width: fitW, height: panelH });
 }

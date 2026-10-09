@@ -18,6 +18,7 @@ import { signStyle } from "../lib/watermark/chennaiSign";
 import { latLngToDigipin } from "../lib/geo/digipin";
 import { useLiveStore, useSettingsStore } from "../store";
 import { readLight } from "../lib/lightmeter";
+import { physicalRotation } from "../lib/orientation";
 import {
   isNativeApp,
   checkNativePermissions,
@@ -948,7 +949,8 @@ export default function CameraView({ active }: { active: boolean }) {
         // physical rotation at record START decides the file's orientation
         // for the whole clip (standard camera-app behaviour): held
         // landscape → a true landscape recording, frame + card upright
-        const recRot = useLiveStore.getState().uiRotation;
+        // the hand's orientation at the press, not the UI's catching-up one
+        const recRot = physicalRotation();
         // Recording resolution comes from the device-tier plan (Settings →
         // Advanced can override): compositing full-size frames at 30 fps
         // is what stutters on low-RAM phones, so entry devices record 720p
@@ -985,7 +987,9 @@ export default function CameraView({ active }: { active: boolean }) {
         // whatever angle the clip started on.
         let wmDelta = 0;
         const deltaNow = () => {
-          const cur = useLiveStore.getState().uiRotation;
+          // same source as recRot, or the card would twitch for the
+          // moment between the hand turning and the UI following it
+          const cur = physicalRotation();
           return (((cur - recRot) % 360) + 360) % 360;
         };
         const renderWm = () => {
