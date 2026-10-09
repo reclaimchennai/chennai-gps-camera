@@ -88,6 +88,10 @@ releaseAudioOnBackground();
 
 void hydrateSettings().then(() => {
   applyTheme();
+  // Recordings the app was killed in the middle of are rebuilt from their
+  // stored chunks (lib/video/recover.ts). After hydration: saving needs
+  // the settings, and it must run before the user can start a new one.
+  void import("./lib/video/recover").then((m) => m.recoverInterruptedRecordings());
   // Native: geolocation NEVER starts before the location grant is
   // confirmed — an ungranted watchPosition fires the WebView geolocation
   // relay, whose grant callback was the first-run crash. FAIL-SAFE: an

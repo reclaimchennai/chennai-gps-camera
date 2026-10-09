@@ -158,16 +158,22 @@ export async function exportVideo(opts: VideoExportOptions): Promise<{
 
   let mimeType = pickRecordingMime();
   let recorder: MediaRecorder;
+  // A keyframe a second, as in the camera: without it MediaRecorder holds
+  // each long fragment in its own memory until the next keyframe, which
+  // on some hardware encoders is the whole export.
+  const kf = { videoKeyFrameIntervalDuration: 1000 } as MediaRecorderOptions;
   try {
     recorder = new MediaRecorder(new MediaStream(streamTracks), {
       mimeType: mimeType || undefined,
       videoBitsPerSecond: 8_000_000,
+      ...kf,
     });
   } catch {
     mimeType = "video/webm";
     recorder = new MediaRecorder(new MediaStream(streamTracks), {
       mimeType,
       videoBitsPerSecond: 8_000_000,
+      ...kf,
     });
   }
   const chunks: Blob[] = [];

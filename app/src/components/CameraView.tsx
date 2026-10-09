@@ -7,7 +7,6 @@ import {
 import { camera } from "../lib/camera";
 import { qualityPlan } from "../lib/quality";
 import { startMeter, stopMeter } from "../lib/audio/meter";
-import { scheduleBackfill } from "../lib/backfill";
 import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
@@ -28,13 +27,12 @@ import {
 } from "../lib/native";
 import { navigate } from "../nav";
 import { hapticTap, hapticDouble } from "../lib/haptics";
-import { listMedia, getBlob, newId, putBlob, putMedia } from "../lib/db";
-import { makeThumbnail } from "../lib/img";
+import { listMedia, getBlob, newId } from "../lib/db";
 import { detectFaces, type DetectedBox } from "../lib/detect/faces";
 import { BoxTracker } from "../lib/detect/tracker";
-import { pickRecordingMime, finalizeVideoBlob } from "../lib/video/postprocess";
-import { downloadBlob, suggestedName } from "../lib/share";
-import type { VideoRecord } from "../types";
+import { pickRecordingMime } from "../lib/video/postprocess";
+import { DurableRecording } from "../lib/video/durableRecording";
+import { saveRecording } from "../lib/video/saveRecording";
 import {
   Zap,
   ZapOff,
@@ -271,7 +269,6 @@ export default function CameraView({ active }: { active: boolean }) {
   const fixAccuracy = useLiveStore((s) => s.fix?.accuracy);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const recChunksRef = useRef<Blob[]>([]);
   const recStartRef = useRef(0);
   const modeRef = useRef<Mode>("photo");
   modeRef.current = mode;
@@ -888,6 +885,34 @@ export default function CameraView({ active }: { active: boolean }) {
   // "saving" pulse reflects the background queue depth
   useEffect(() => onPendingChange(setSaving), []);
 
+  // A recording the app was killed in the middle of has been rebuilt at
+  // launch — say so, once, wherever the user is when it lands.
+  useEffect(() => {
+    const announce = (n: number) => {
+      if (n > 0) {
+        showToast(
+          n === 1
+            ? "Recovered a video that was interrupted — it's in your gallery"
+            : `Recovered ${n} interrupted videos — they're in your gallery`
+        );
+      }
+      try {
+        localStorage.removeItem("gpscam-recovered");
+      } catch {
+        // nothing to clear
+      }
+    };
+    try {
+      const pending = Number(localStorage.getItem("gpscam-recovered") ?? 0);
+      if (pending) announce(pending);
+    } catch {
+      // storage unavailable
+    }
+    const onRecovered = (e: Event) => announce((e as CustomEvent<number>).detail);
+    window.addEventListener("gpscam:recovered", onRecovered);
+    return () => window.removeEventListener("gpscam:recovered", onRecovered);
+  }, [showToast]);
+
   // ---- video record -------------------------------------------------------
   const stopRecording = useCallback(() => {
     hapticDouble(); // two pulses: stopping, distinct from starting
@@ -1121,9 +1146,21 @@ export default function CameraView({ active }: { active: boolean }) {
     let rec: MediaRecorder;
     // canvas captureStream defaults to a low bitrate — keep the
     // composited recording at camera-like quality
-    const recOpts = watermarked
-      ? { videoBitsPerSecond: qualityPlan().videoBitsPerSecond }
-      : {};
+    //
+    // A keyframe every second, too. MediaRecorder only hands over data
+    // when a fragment closes, and a fragment only closes at a keyframe —
+    // so with the encoder's default (long, and on some phones' hardware
+    // encoders very long) keyframe spacing, the recording piles up INSIDE
+    // MediaRecorder, in memory, out of reach of storage. Measured in
+    // Chromium: chunks 1-2.4 s apart by default, and one chunk in six
+    // seconds from the app's composited stream. With this they arrive
+    // every second, so memory stays flat however long the recording runs
+    // and the most a killed app can lose is about a second. Browsers that
+    // do not know the option ignore it.
+    const recOpts = {
+      ...(watermarked ? { videoBitsPerSecond: qualityPlan().videoBitsPerSecond } : {}),
+      videoKeyFrameIntervalDuration: 1000,
+    } as MediaRecorderOptions;
     try {
       rec = new MediaRecorder(
         recStream,
@@ -1135,77 +1172,76 @@ export default function CameraView({ active }: { active: boolean }) {
       mimeType = "video/webm";
       rec = new MediaRecorder(recStream, { mimeType, ...recOpts });
     }
-    recChunksRef.current = [];
+    // Chunks go to storage as they arrive, never into memory: a long
+    // recording held in memory until Stop is what the app used to lose
+    // when Android killed it (lib/video/durableRecording.ts). If the
+    // session cannot even be opened, recording still goes ahead — a
+    // memory-only recording beats refusing to record.
+    const video0 = videoRef.current;
+    const s0 = camera.track?.getSettings();
+    const startedAt = Date.now();
+    let durable: DurableRecording | null = null;
+    try {
+      durable = await DurableRecording.begin({
+        id: newId(),
+        mimeType: mimeType || "video/webm",
+        startedAt,
+        lastChunkAt: startedAt,
+        chunks: 0,
+        width: watermarked ? burnW : (s0?.width ?? video0?.videoWidth ?? 0),
+        height: watermarked ? burnH : (s0?.height ?? video0?.videoHeight ?? 0),
+        data: collectWatermarkData(),
+        config: useSettingsStore.getState().watermark,
+        liveBlur: liveBlurOn || undefined,
+        blurBurned: burned || undefined,
+        watermarkBurned: watermarked || undefined,
+      });
+    } catch {
+      durable = null;
+    }
+    const memoryOnly: Blob[] = [];
     rec.ondataavailable = (e) => {
-      if (e.data.size) recChunksRef.current.push(e.data);
+      if (!e.data.size) return;
+      if (durable) durable.append(e.data);
+      else memoryOnly.push(e.data);
     };
     rec.onstop = () => {
       setRecording(false);
       stopComposite?.();
-      const duration = (Date.now() - recStartRef.current) / 1000;
-      const rawBlob = new Blob(recChunksRef.current, {
-        type: mimeType || "video/webm",
-      });
-      recChunksRef.current = [];
+      const durationMs = Date.now() - recStartRef.current;
+      const session = durable;
       void (async () => {
-        const video = videoRef.current;
-        const track = camera.track;
-        const s = track?.getSettings();
-        const data = collectWatermarkData();
-        const { watermark: wmConfig, settings: appSettings } =
-          useSettingsStore.getState();
-        // address not resolved yet (offline or geocoder still working) —
-        // queue it so a later export carries the full watermark
-        const needsBackfill =
-          Boolean(data.fix) &&
-          appSettings.geocoder !== "off" &&
-          wmConfig.fields.address &&
-          !data.address;
-        const record: VideoRecord = {
-          id: newId(),
-          kind: "video",
-          createdAt: recStartRef.current,
-          duration,
-          width: watermarked ? burnW : (s?.width ?? video?.videoWidth ?? 0),
-          height: watermarked ? burnH : (s?.height ?? video?.videoHeight ?? 0),
-          mimeType: rawBlob.type,
-          data,
-          config: wmConfig,
-          liveBlur: liveBlurOn || undefined,
-          blurBurned: burned || undefined,
-          watermarkBurned: watermarked || undefined,
-          backfill: needsBackfill ? "pending" : "not-needed",
-        };
-        // container fixes: GPS atom for MP4, duration header for webm —
-        // so the file is a proper geotagged video outside this app too
-        const blob = await finalizeVideoBlob(
-          rawBlob,
-          duration * 1000,
-          record.data.fix
-        );
-        await putBlob(record.id, "source", blob);
-        let thumb: Blob | null = null;
-        if (video && video.videoWidth) {
-          try {
-            thumb = await makeThumbnail(video, video.videoWidth, video.videoHeight);
-            await putBlob(record.id, "thumb", thumb);
-          } catch {
-            // no thumb — gallery shows a placeholder
+        try {
+          const raw = session
+            ? await session.assemble()
+            : new Blob(memoryOnly, { type: mimeType || "video/webm" });
+          memoryOnly.length = 0;
+          const s = camera.track?.getSettings();
+          const live = videoRef.current;
+          const { record, thumb } = await saveRecording({
+            raw,
+            durationMs,
+            createdAt: recStartRef.current,
+            data: collectWatermarkData(),
+            config: useSettingsStore.getState().watermark,
+            width: watermarked ? burnW : (s?.width ?? live?.videoWidth ?? 0),
+            height: watermarked ? burnH : (s?.height ?? live?.videoHeight ?? 0),
+            liveBlur: liveBlurOn,
+            blurBurned: burned,
+            watermarkBurned: watermarked,
+            thumbFrom: live,
+          });
+          if (thumb) updateThumb(record.id, thumb);
+          if (session?.incomplete) {
+            showToast("Storage ran low while recording — part of this video may be missing");
           }
-        }
-        await putMedia(record);
-        if (needsBackfill) scheduleBackfill();
-        if (thumb) updateThumb(record.id, thumb);
-        // auto-save to device, same as photos
-        if (useSettingsStore.getState().settings.autoSaveToDevice || isNativeApp()) {
-          try {
-            downloadBlob(
-              blob,
-              suggestedName("video", record.createdAt, blob.type)
-            );
-          } catch {
-            // download blocked — in-app copy is already saved
-          }
+          // only now is the video safe elsewhere; the chunks can go
+          await session?.discard();
+        } catch {
+          // Saving failed. The chunks are still stored, so the next launch
+          // rebuilds this recording instead of it being lost.
+          session?.release();
+          showToast("Couldn't finish saving — the video will be recovered next time the app opens");
         }
       })();
     };

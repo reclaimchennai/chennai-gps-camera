@@ -22,7 +22,8 @@
     "check:rail": "node scripts/check-rail.mjs",
     "check:blur": "node scripts/check-blur.mjs",
     "check:defaults": "node scripts/check-defaults.mjs",
-    "check:address": "node scripts/check-address.mjs"
+    "check:address": "node scripts/check-address.mjs",
+    "check:recording": "node scripts/check-recording.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.2",
@@ -39,7 +40,6 @@
     "@turf/helpers": "^7.3.5",
     "@turf/point-to-line-distance": "^7.3.5",
     "@turf/polygon-to-line": "^7.3.5",
-    "fix-webm-duration": "^1.0.6",
     "idb": "^8.0.3",
     "konva": "^10.3.0",
     "leaflet": "^1.9.4",

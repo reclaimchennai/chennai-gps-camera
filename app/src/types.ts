@@ -207,6 +207,9 @@ export interface VideoRecord {
   /** street address was missing at record time — the queue fills
    *  record.data in later so exports/shares carry the full watermark */
   backfill?: BackfillStatus;
+  /** rebuilt from stored chunks after the app stopped mid-recording —
+   *  everything up to the last complete fragment */
+  recovered?: boolean;
 }
 
 export type MediaRecord = PhotoRecord | VideoRecord;

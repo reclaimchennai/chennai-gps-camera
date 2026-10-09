@@ -1,7 +1,14 @@
 /**
  * Container-level fixes applied to every saved/exported video so the
  * file behaves properly OUTSIDE this app (phone galleries, editors,
- * Google Photos):
+ * Google Photos).
+ *
+ * Every step here works on Blob SLICES and never reads a whole recording
+ * into memory. The previous versions each began with blob.arrayBuffer()
+ * — a gigabyte for ten minutes — and made further full copies, which is
+ * what killed the app at the end of long recordings and lost them. See
+ * remux.ts for the full account.
+ *
  *
  *  - MP4: inject the standard ISO-6709 location atom (moov/udta/©xyz) —
  *    the same field phone cameras write, which gallery apps read as the
@@ -11,8 +18,7 @@
  *    which makes players show a blank length and some editors call the
  *    file corrupted — patch it in with the measured duration.
  */
-import fixWebmDuration from "fix-webm-duration";
-import { remuxFragmentedMp4 } from "./remux";
+import { remuxFragmentedMp4, scanTopLevel } from "./remux";
 import type { Fix } from "../../types";
 
 /** Recording formats in preference order: MP4 first for compatibility. */
@@ -30,308 +36,211 @@ export function pickRecordingMime(): string {
   );
 }
 
-function readU32(b: Uint8Array, o: number): number {
-  return ((b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]) >>> 0;
+const ID_EBML = 0x1a45dfa3;
+const ID_SEGMENT = 0x18538067;
+const ID_INFO = 0x1549a966;
+const ID_TIMECODE_SCALE = 0x2ad7b1;
+const ID_DURATION = 0x4489;
+const ID_CLUSTER = 0x1f43b675;
+
+/** An EBML variable-length integer. Element IDs keep their marker bit;
+ *  sizes do not, and a size of all ones means "unknown" (live streams). */
+function readVint(
+  b: Uint8Array,
+  p: number,
+  keepMarker: boolean
+): { value: number; length: number; unknown: boolean } | null {
+  const first = b[p];
+  if (first === undefined || first === 0) return null;
+  let length = 1;
+  let mask = 0x80;
+  while (!(first & mask)) {
+    mask >>= 1;
+    length++;
+  }
+  if (length > 8 || p + length > b.length) return null;
+  let value = keepMarker ? first : first & (mask - 1);
+  let allOnes = (first & (mask - 1)) === mask - 1;
+  for (let i = 1; i < length; i++) {
+    value = value * 256 + b[p + i];
+    if (b[p + i] !== 0xff) allOnes = false;
+  }
+  return { value, length, unknown: !keepMarker && allOnes };
 }
 
-function makeBox(type: string, payload: Uint8Array): Uint8Array {
-  const size = 8 + payload.length;
-  const out = new Uint8Array(size);
-  out[0] = (size >>> 24) & 0xff;
-  out[1] = (size >>> 16) & 0xff;
-  out[2] = (size >>> 8) & 0xff;
-  out[3] = size & 0xff;
-  for (let i = 0; i < 4; i++) out[4 + i] = type.charCodeAt(i) & 0xff;
-  out.set(payload, 8);
+function encodeVint(value: number, length: number): Uint8Array | null {
+  if (value >= 2 ** (7 * length) - 1) return null;
+  const out = new Uint8Array(length);
+  let v = value;
+  for (let i = length - 1; i >= 0; i--) {
+    out[i] = v % 256;
+    v = Math.floor(v / 256);
+  }
+  out[0] |= 0x80 >> (length - 1);
   return out;
 }
 
 /**
- * MediaRecorder emits FRAGMENTED MP4 (moov + moof/mdat…, optional mfra
- * seek index at the end). Fragments address samples relative to their
- * own moof (Chrome sets default-base-is-moof), so growing moov is safe
- * for playback — but the mfra/tfra index stores ABSOLUTE moof offsets,
- * which must be shifted by the inserted length (or, if its layout ever
- * surprises us, the whole optional mfra is renamed to a `free` box).
+ * MediaRecorder writes WebM with no Duration, so players show a blank
+ * length and some editors call the file corrupt. This writes one into the
+ * Info element, reading only the first megabyte of the file — the old
+ * library read all of it.
  */
-function patchMfraOffsets(out: Uint8Array, delta: number): void {
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-  let off = 0;
-  while (off + 8 <= out.length) {
-    let size = readU32(out, off);
-    const type = String.fromCharCode(
-      out[off + 4], out[off + 5], out[off + 6], out[off + 7]
-    );
-    if (size === 0) size = out.length - off;
-    if (size < 8) return;
-    if (type === "mfra") {
-      try {
-        let child = off + 8;
-        const mfraEnd = off + size;
-        while (child + 8 <= mfraEnd) {
-          const cSize = readU32(out, child);
-          const cType = String.fromCharCode(
-            out[child + 4], out[child + 5], out[child + 6], out[child + 7]
-          );
-          if (cSize < 8) throw new Error("bad child");
-          if (cType === "tfra") {
-            const version = out[child + 8];
-            const lengthSizes = readU32(out, child + 16);
-            const entryTail =
-              (((lengthSizes >> 4) & 3) + 1) +
-              (((lengthSizes >> 2) & 3) + 1) +
-              ((lengthSizes & 3) + 1);
-            const count = readU32(out, child + 20);
-            let e = child + 24;
-            for (let i = 0; i < count; i++) {
-              if (version === 1) {
-                const moofOff = view.getBigUint64(e + 8);
-                view.setBigUint64(e + 8, moofOff + BigInt(delta));
-                e += 16 + entryTail;
-              } else {
-                view.setUint32(e + 4, view.getUint32(e + 4) + delta);
-                e += 8 + entryTail;
-              }
-              if (e > mfraEnd) throw new Error("overrun");
-            }
-          }
-          child += cSize;
-        }
-      } catch {
-        // layout surprise — neutralize the optional index instead
-        out[off + 4] = 0x66; // 'f'
-        out[off + 5] = 0x72; // 'r'
-        out[off + 6] = 0x65; // 'e'
-        out[off + 7] = 0x65; // 'e'
-      }
-    }
-    off += size;
-  }
-}
-
-/**
- * Append moov/udta/©xyz with "+13.0405+080.2337/" (ISO 6709). Returns the
- * original blob untouched on any structural surprise — never corrupts.
- */
-export async function injectMp4Location(
-  blob: Blob,
-  lat: number,
-  lng: number
-): Promise<Blob> {
+export async function fixWebmDurationBounded(blob: Blob, durationMs: number): Promise<Blob> {
   try {
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    let off = 0;
-    let moovStart = -1;
-    let moovSize = 0;
-    while (off + 8 <= buf.length) {
-      let size = readU32(buf, off);
-      const type = String.fromCharCode(
-        buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]
-      );
-      if (size === 1) return blob; // 64-bit boxes — don't touch
-      if (size === 0) size = buf.length - off;
-      if (size < 8) return blob;
-      if (type === "moov") {
-        moovStart = off;
-        moovSize = size;
+    const head = new Uint8Array(await blob.slice(0, Math.min(blob.size, 1 << 20)).arrayBuffer());
+    const el = (p: number) => {
+      const id = readVint(head, p, true);
+      if (!id) return null;
+      const size = readVint(head, p + id.length, false);
+      if (!size) return null;
+      return { id: id.value, idLen: id.length, size, data: p + id.length + size.length };
+    };
+    const ebml = el(0);
+    if (!ebml || ebml.id !== ID_EBML || ebml.size.unknown) return blob;
+    const segAt = ebml.data + ebml.size.value;
+    const seg = el(segAt);
+    if (!seg || seg.id !== ID_SEGMENT) return blob;
+
+    // find Info among the Segment's first children
+    let p = seg.data;
+    let info: NonNullable<ReturnType<typeof el>> | null = null;
+    let infoStart = 0;
+    while (p < head.length) {
+      const c = el(p);
+      if (!c) return blob;
+      if (c.id === ID_INFO) {
+        info = c;
+        infoStart = p;
         break;
       }
-      off += size;
+      if (c.id === ID_CLUSTER || c.size.unknown) return blob; // past the header
+      p = c.data + c.size.value;
     }
-    if (moovStart < 0 || moovStart + moovSize > buf.length) return blob;
+    if (!info || info.size.unknown) return blob;
+    const infoEnd = info.data + info.size.value;
+    if (infoEnd > head.length) return blob;
 
-    // fragments must not carry absolute base offsets (Chrome never sets
-    // them, but verify before shifting anything)
-    if (hasAbsoluteBaseOffsets(buf)) return blob;
+    let scale = 1_000_000;
+    const kept: Uint8Array[] = [];
+    let q = info.data;
+    while (q < infoEnd) {
+      const c = el(q);
+      if (!c) return blob;
+      const end = c.data + c.size.value;
+      if (c.id === ID_TIMECODE_SCALE) {
+        let v = 0;
+        for (let i = c.data; i < end; i++) v = v * 256 + head[i];
+        if (v > 0) scale = v;
+      }
+      if (c.id !== ID_DURATION) kept.push(head.slice(q, end));
+      q = end;
+    }
+    // Duration is a float in TimecodeScale units (nanoseconds / scale)
+    const dur = new Uint8Array(11);
+    dur[0] = 0x44;
+    dur[1] = 0x89;
+    dur[2] = 0x88; // size 8
+    new DataView(dur.buffer).setFloat64(3, (durationMs * 1e6) / scale);
+    kept.push(dur);
+    let bodyLen = 0;
+    for (const k of kept) bodyLen += k.length;
+    const sizeVint = encodeVint(bodyLen, 8);
+    if (!sizeVint) return blob;
+    const newInfo = new Uint8Array(4 + sizeVint.length + bodyLen);
+    newInfo.set(head.subarray(infoStart, infoStart + info.idLen), 0);
+    newInfo.set(sizeVint, info.idLen);
+    let o = info.idLen + sizeVint.length;
+    for (const k of kept) {
+      newInfo.set(k, o);
+      o += k.length;
+    }
+    const delta = newInfo.length - (infoEnd - infoStart);
 
-    const latStr = `${lat >= 0 ? "+" : "-"}${Math.abs(lat).toFixed(4).padStart(7, "0")}`;
-    const lngStr = `${lng >= 0 ? "+" : "-"}${Math.abs(lng).toFixed(4).padStart(8, "0")}`;
-    const loc = new TextEncoder().encode(`${latStr}${lngStr}/`);
-    const payload = new Uint8Array(4 + loc.length);
-    payload[0] = (loc.length >> 8) & 0xff;
-    payload[1] = loc.length & 0xff;
-    payload[2] = 0x15; // packed ISO-639 "eng"
-    payload[3] = 0xc7;
-    payload.set(loc, 4);
-    const udta = makeBox("udta", makeBox("\xa9xyz", payload));
-
-    const newMoovSize = moovSize + udta.length;
-    const out = new Uint8Array(buf.length + udta.length);
-    out.set(buf.subarray(0, moovStart));
-    out[moovStart] = (newMoovSize >>> 24) & 0xff;
-    out[moovStart + 1] = (newMoovSize >>> 16) & 0xff;
-    out[moovStart + 2] = (newMoovSize >>> 8) & 0xff;
-    out[moovStart + 3] = newMoovSize & 0xff;
-    out.set(
-      buf.subarray(moovStart + 4, moovStart + moovSize),
-      moovStart + 4
-    );
-    out.set(udta, moovStart + moovSize);
-    out.set(
-      buf.subarray(moovStart + moovSize),
-      moovStart + moovSize + udta.length
-    );
-
-    patchMfraOffsets(out, udta.length);
-    return new Blob([out], { type: blob.type });
+    // a Segment of known size must grow by the same amount, in the same
+    // number of bytes — MediaRecorder's is "unknown", which needs nothing
+    const before = head.slice(0, infoStart);
+    if (!seg.size.unknown) {
+      const fresh = encodeVint(seg.size.value + delta, seg.size.length);
+      if (!fresh) return blob;
+      before.set(fresh, segAt + seg.idLen);
+    }
+    return new Blob([before, newInfo, blob.slice(infoEnd)], { type: blob.type });
   } catch {
     return blob;
-  }
-}
-
-/** True if any moof/traf/tfhd uses base-data-offset (absolute addressing). */
-function hasAbsoluteBaseOffsets(buf: Uint8Array): boolean {
-  let off = 0;
-  while (off + 8 <= buf.length) {
-    let size = readU32(buf, off);
-    const type = String.fromCharCode(
-      buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]
-    );
-    if (size === 0) size = buf.length - off;
-    if (size < 8) return true; // malformed — treat as unsafe
-    if (type === "moof") {
-      // scan for tfhd boxes inside (moof/traf/tfhd)
-      for (let i = off + 8; i + 12 <= off + size; i++) {
-        if (
-          buf[i] === 0x74 && buf[i + 1] === 0x66 &&
-          buf[i + 2] === 0x68 && buf[i + 3] === 0x64 // "tfhd"
-        ) {
-          const flags = readU32(buf, i + 4) & 0xffffff;
-          if (flags & 0x000001) return true;
-        }
-      }
-    }
-    off += size;
-  }
-  return false;
-}
-
-/** Iterate the immediate child boxes in [start, end), calling cb with the
- *  box type and its start/content/end offsets. Content start is after the
- *  8-byte header (these full boxes never use the 64-bit size form). */
-function eachChildBox(
-  buf: Uint8Array,
-  dv: DataView,
-  start: number,
-  end: number,
-  cb: (type: string, boxStart: number, contentStart: number, boxEnd: number) => void
-): void {
-  let off = start;
-  while (off + 8 <= end) {
-    let size = readU32(buf, off);
-    const type = String.fromCharCode(buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]);
-    let header = 8;
-    if (size === 1) {
-      size = Number(dv.getBigUint64(off + 8));
-      header = 16;
-    } else if (size === 0) {
-      size = end - off;
-    }
-    if (size < header || off + size > end) return;
-    cb(type, off, off + 8, off + size);
-    off += size;
   }
 }
 
 /**
- * MediaRecorder's fragmented MP4 leaves the moov track durations at 0 — the
- * real timing lives in the fragments — so phone galleries and pickers that
- * read only the moov show a bogus (short) length. Patch the measured total
- * into mvhd/tkhd (movie timescale) and each mdhd (its own media timescale),
- * IN PLACE: these are fixed-size fields, so nothing shifts and the mfra
- * seek index stays valid. Any structural surprise → return the blob as-is.
+ * Fallback for an MP4 the remuxer will not rebuild: write the measured
+ * duration into moov IN PLACE. Fixed-size fields, so nothing after the
+ * moov shifts, and only the moov is ever read.
  */
-export async function patchMp4Duration(blob: Blob, durationMs: number): Promise<Blob> {
+async function patchMp4DurationBounded(blob: Blob, durationMs: number): Promise<Blob> {
   try {
-    const buf = new Uint8Array(await blob.arrayBuffer());
-    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const scan = await scanTopLevel(blob);
+    const moov = scan?.boxes.find((b) => b.type === "moov");
+    if (!moov?.bytes || moov.header !== 8) return blob;
+    const buf = moov.bytes.slice();
+    const dv = new DataView(buf.buffer);
     const durSec = durationMs / 1000;
-
-    let moov: { s: number; cs: number; e: number } | null = null;
-    eachChildBox(buf, dv, 0, buf.length, (type, s, cs, e) => {
-      if (type === "moov") moov = { s, cs, e };
-    });
-    if (!moov) return blob;
-    const { cs: moovContent, e: moovEnd } = moov;
-
-    // movie timescale from mvhd (needed for mvhd + every tkhd duration)
-    let movieTs = 0;
-    eachChildBox(buf, dv, moovContent, moovEnd, (type, _s, cs) => {
-      if (type === "mvhd") {
-        const v = buf[cs];
-        movieTs = v === 1 ? dv.getUint32(cs + 20) : dv.getUint32(cs + 12);
+    const kids = (start: number, end: number) => {
+      const out: { type: string; s: number; e: number }[] = [];
+      let off = start;
+      while (off + 8 <= end) {
+        const size = dv.getUint32(off);
+        if (size < 8 || off + size > end) break;
+        out.push({ type: String.fromCharCode(buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]), s: off, e: off + size });
+        off += size;
       }
-    });
+      return out;
+    };
+    const top = kids(8, buf.length);
+    const mvhd = top.find((k) => k.type === "mvhd");
+    if (!mvhd) return blob;
+    const ts = (cs: number) => (buf[cs] === 1 ? dv.getUint32(cs + 20) : dv.getUint32(cs + 12));
+    const movieTs = ts(mvhd.s + 8);
     if (!movieTs) return blob;
-
-    // mvhd/mdhd share a layout: duration at cs+16 (v0, u32) or cs+24 (v1, u64)
-    const writeMvhdLike = (cs: number, ts: number) => {
-      if (!ts) return;
-      const val = Math.round(durSec * ts);
-      if (buf[cs] === 1) dv.setBigUint64(cs + 24, BigInt(val));
-      else dv.setUint32(cs + 16, val >>> 0);
+    const put = (cs: number, at0: number, at1: number, val: number) => {
+      if (buf[cs] === 1) dv.setBigUint64(cs + at1, BigInt(Math.round(val)));
+      else dv.setUint32(cs + at0, Math.round(val) >>> 0);
     };
-    // tkhd: duration at cs+20 (v0, u32) or cs+28 (v1, u64), movie timescale
-    const writeTkhd = (cs: number) => {
-      const val = Math.round(durSec * movieTs);
-      if (buf[cs] === 1) dv.setBigUint64(cs + 28, BigInt(val));
-      else dv.setUint32(cs + 20, val >>> 0);
-    };
-
-    eachChildBox(buf, dv, moovContent, moovEnd, (type, s, cs, e) => {
-      if (type === "mvhd") {
-        writeMvhdLike(cs, movieTs);
-      } else if (type === "trak") {
-        eachChildBox(buf, dv, s + 8, e, (t2, s2, cs2, e2) => {
-          if (t2 === "tkhd") {
-            writeTkhd(cs2);
-          } else if (t2 === "mdia") {
-            eachChildBox(buf, dv, s2 + 8, e2, (t3, _s3, cs3) => {
-              if (t3 === "mdhd") {
-                const v = buf[cs3];
-                const mediaTs = v === 1 ? dv.getUint32(cs3 + 20) : dv.getUint32(cs3 + 12);
-                writeMvhdLike(cs3, mediaTs);
-              }
-            });
+    put(mvhd.s + 8, 16, 24, durSec * movieTs);
+    for (const trak of top.filter((k) => k.type === "trak")) {
+      for (const k of kids(trak.s + 8, trak.e)) {
+        if (k.type === "tkhd") put(k.s + 8, 20, 28, durSec * movieTs);
+        if (k.type === "mdia") {
+          for (const m of kids(k.s + 8, k.e)) {
+            if (m.type === "mdhd") put(m.s + 8, 16, 24, durSec * ts(m.s + 8));
           }
-        });
+        }
       }
-    });
-
-    return new Blob([buf], { type: blob.type });
+    }
+    return new Blob([blob.slice(0, moov.start), buf, blob.slice(moov.end)], { type: blob.type });
   } catch {
     return blob;
   }
 }
 
-/** All post-recording container fixes in one place. */
+/** All post-recording container fixes in one place, in bounded memory. */
 export async function finalizeVideoBlob(
   blob: Blob,
   durationMs: number,
   fix: Fix | null
 ): Promise<Blob> {
   if (blob.type.includes("mp4")) {
-    let out = blob;
-    if (durationMs > 0) out = await patchMp4Duration(out, durationMs);
-    // GPS atom BEFORE the remux: the remuxer carries udta across into the
-    // rebuilt moov. Injecting afterwards would grow moov and shift mdat,
-    // invalidating every chunk offset the remux just wrote.
-    if (fix) out = await injectMp4Location(out, fix.lat, fix.lng);
-    // Fragmented → progressive. MediaRecorder writes fMP4, whose moov has
-    // no sample tables, so editors and social-media trimmers cannot index
-    // it: "trim and upload" posted the whole clip with a corrupted tail
-    // and Google Photos refused to edit at all. Rebuilding the index (no
-    // re-encode) makes the file behave like any camera recording.
-    const progressive = await remuxFragmentedMp4(out);
-    if (progressive) out = progressive;
-    return out;
+    // Fragmented -> progressive, with real durations and the GPS atom
+    // written into the rebuilt moov: editors and social-media trimmers
+    // index samples from it, and galleries read the location from it.
+    const progressive = await remuxFragmentedMp4(blob, {
+      durationMs,
+      fix: fix ? { lat: fix.lat, lng: fix.lng } : null,
+    });
+    if (progressive) return progressive;
+    return durationMs > 0 ? patchMp4DurationBounded(blob, durationMs) : blob;
   }
   if (blob.type.includes("webm") && durationMs > 0) {
-    try {
-      return await fixWebmDuration(blob, durationMs, { logger: false });
-    } catch {
-      return blob;
-    }
+    return fixWebmDurationBounded(blob, durationMs);
   }
   return blob;
 }
