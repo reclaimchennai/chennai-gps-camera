@@ -26,12 +26,25 @@ export interface NativeCameraInfo {
   lensSwitch?: boolean;
   /** the camera the preview is on: "main", or the switched-to lens's id */
   lens?: string;
-  /** every camera the phone offers: "id facing factor MP (n lenses)" */
-  cameras?: string[];
+  /** every camera the phone offers, by camera2 id */
+  cameras?: NativeCameraEntry[];
   stillW?: number;
   stillH?: number;
   previewW?: number;
   previewH?: number;
+}
+
+/** One camera as the phone lists it. */
+export interface NativeCameraEntry {
+  /** the camera2 id — the WebView labels it "camera2 <id>, facing …" */
+  id: string;
+  facing: "back" | "front" | "other";
+  /** zoom it stands for against the main camera facing the same way */
+  factor: number;
+  /** sensor megapixels */
+  mp: number;
+  /** physical lenses, for a logical multi-camera */
+  lenses?: number;
 }
 
 export interface DeviceRect {

@@ -423,6 +423,12 @@ export default function CameraView({ active }: { active: boolean }) {
     // composite from the web stream
     camera.nativeWanted =
       forMode === "photo" && !useSettingsStore.getState().settings.liveFaceBlur;
+    // The box must be known before the first start, or that start cannot
+    // choose the phone camera: launch then opened the web camera, closed
+    // it and opened the phone camera — twice the wait for a viewfinder.
+    // (Refs are attached before any effect runs; the effect below keeps
+    // it current after that.)
+    camera.setViewport(boxRef.current);
     // cover the zone NOW: the old stream's element keeps its last size, so
     // without this the poll still thought the picture was live and the
     // collapsed/stale <video> showed as the white speck on every resume

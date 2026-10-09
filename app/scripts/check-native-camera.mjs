@@ -66,10 +66,19 @@ ws.onmessage = (m) => {
   pending.get(msg.id)?.(msg);
   pending.delete(msg.id);
 };
-const send = (method, params) =>
-  new Promise((r) => {
+/** One DevTools call. A device that stops answering fails the check
+ *  rather than hanging it. */
+const send = (method, params, ms = 60_000) =>
+  new Promise((resolve, reject) => {
     const id = ++seq;
-    pending.set(id, r);
+    const t = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`${method}: no answer in ${ms / 1000} s — is the app still running?`));
+    }, ms);
+    pending.set(id, (msg) => {
+      clearTimeout(t);
+      resolve(msg);
+    });
     ws.send(JSON.stringify({ id, method, params }));
   });
 /** Run an async function body in the page and return its value. */
@@ -153,6 +162,12 @@ const openCamera = () => {
 };
 
 // ---- the phone camera runs photo mode --------------------------------
+// a cold device can take a while to get the app to its viewfinder
+for (let i = 0; i < 60; i++) {
+  const live = await run(`return document.querySelector(".cam-video-box")?.dataset.live === "true";`);
+  if (live) break;
+  await sleep(1000);
+}
 let s = await run(STATE);
 check("photo mode runs on the phone camera", s.engine === "native", `engine ${s.engine}`);
 check("its preview is live", s.live === "true");
@@ -241,6 +256,20 @@ check("a photo taken as video mode opens is still saved", kept === 1);
 await sleep(3000);
 s = await run(STATE);
 check("video mode runs on the web camera", s.engine === "web", `engine ${s.engine}`);
+if (wideChip) {
+  // the phone camera's lens table, used by the web camera: no probing
+  const before = openCamera();
+  await run(`[...document.querySelectorAll(".cam-zoomrow button")].find((b) => b.textContent.startsWith(".")).click();`);
+  await sleep(5000);
+  const label = await run(`return document.querySelector("video")?.srcObject?.getVideoTracks?.()[0]?.label ?? "";`);
+  check(
+    "video mode reaches the ultrawide too",
+    s.chips.includes(wideChip) && openCamera() !== before,
+    `${label}, camera ${before} → ${openCamera()}`
+  );
+  await run(`[...document.querySelectorAll(".cam-zoomrow button")].find((b) => b.textContent === "1×").click();`);
+  await sleep(4000);
+}
 await run(`[...document.querySelectorAll(".cam-mode button")].find((b) => b.textContent.trim() === "PHOTO").click();`);
 await sleep(5000);
 s = await run(STATE);

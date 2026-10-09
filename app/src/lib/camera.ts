@@ -68,6 +68,8 @@ const TELEPHOTO_FACTOR = 3;
 const LENS_KEY = "gpscam-lens-factors";
 /** the whole discovered lens line-up, so it survives a camera restart */
 const LENS_PROFILE_KEY = "gpscam-lens-profile";
+/** the phone camera's own lens table, by camera2 id (camera-native.ts) */
+const NATIVE_LENS_KEY = "gpscam-native-lenses";
 
 /** A physical rear camera the app can switch to. */
 export interface Lens {
@@ -188,6 +190,42 @@ export function resolveLensProfile(devices: MediaDeviceInfo[]): Lens[] {
   return out.length === saved.length && out.length > 1
     ? out.sort((a, b) => a.factor - b.factor)
     : [];
+}
+
+/**
+ * The rear lenses as the phone camera (CameraX) reported them, matched to
+ * the WebView's cameras — exact factors, no probing.
+ *
+ * The web camera otherwise has to open every rear camera in turn to
+ * measure it, then guess from Android's ordering which one is the
+ * ultrawide: slow, and wrong on enough phones to need a calibration
+ * screen. CameraX reports each camera's real field of view by camera2 id,
+ * and the WebView labels its cameras by that same id ("camera2 2, facing
+ * back"). Labels are only readable once the page has used a camera, which
+ * is why this is read here, by the web camera, rather than written into
+ * the profile when the phone camera starts.
+ */
+export function lensesFromNativeTable(devices: MediaDeviceInfo[]): Lens[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(NATIVE_LENS_KEY) ?? "null");
+    if (!raw || raw.v !== 1 || !Array.isArray(raw.lenses) || raw.lenses.length < 2) return [];
+    const cams = devices.filter((d) => d.kind === "videoinput" && d.label);
+    const over = loadLensOverrides();
+    const out: Lens[] = [];
+    for (const l of raw.lenses as { id: string; factor: number }[]) {
+      const d = cams.find((x) => new RegExp(`^camera2 ${l.id}\\b`).test(x.label));
+      if (!d) return []; // the WebView does not list this camera: leave it be
+      out.push({
+        deviceId: d.deviceId,
+        label: d.label,
+        factor: over[d.deviceId] ?? l.factor,
+        isMain: Math.abs(l.factor - 1) < 0.01,
+      });
+    }
+    return out.some((l) => l.isMain) ? out.sort((a, b) => a.factor - b.factor) : [];
+  } catch {
+    return [];
+  }
 }
 
 export function saveLensProfile(lenses: Lens[]): void {
@@ -326,6 +364,28 @@ export class CameraController {
       : "web";
   }
 
+  /**
+   * Keep the phone camera's lens table for the web camera, which video
+   * mode runs on. See lensesFromNativeTable().
+   */
+  private rememberNativeLenses(): void {
+    const backs = (this.native.info?.cameras ?? []).filter(
+      // utility sensors (macro, depth) are not shooting lenses — but the
+      // main camera is the main camera, whatever its size
+      (c) => c.facing === "back" && (c.mp >= 3 || Math.abs(c.factor - 1) < 0.01)
+    );
+    try {
+      if (backs.length < 2) localStorage.removeItem(NATIVE_LENS_KEY);
+      else
+        localStorage.setItem(
+          NATIVE_LENS_KEY,
+          JSON.stringify({ v: 1, lenses: backs.map((c) => ({ id: c.id, factor: c.factor })) })
+        );
+    } catch {
+      // storage unavailable — the web camera discovers as before
+    }
+  }
+
   /** Is a camera open and (about to be) delivering frames? */
   get running(): boolean {
     if (this.engine === "native") return this.native.info != null;
@@ -364,6 +424,7 @@ export class CameraController {
       if (ok) {
         this.nativeFailures[facing] = 0;
         this.engine = "native";
+        if (facing === "environment") this.rememberNativeLenses();
         // the web stream is gone; don't leave its last frame on the element
         if (this.video) {
           this.video.srcObject = null;
@@ -695,9 +756,11 @@ export class CameraController {
     // profile, because every id in it is a dead end.
     let cached: Lens[] = [];
     try {
-      cached = resolveLensProfile(
-        await navigator.mediaDevices.enumerateDevices()
-      );
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      // the phone camera's measurements beat any discovery of our own
+      const exact = lensesFromNativeTable(devices);
+      if (exact.length > 1) saveLensProfile(exact);
+      cached = exact.length > 1 ? exact : resolveLensProfile(devices);
     } catch {
       cached = [];
     }
@@ -1946,7 +2009,14 @@ export class CameraController {
         : this.native.zoomMin < 0.95
           ? "built into the main camera's zoom"
           : "none offered to apps",
-      Cameras: i?.cameras?.join("; ") || "?",
+      Cameras:
+        i?.cameras
+          ?.map(
+            (c) =>
+              `${c.id} ${c.facing} ${c.factor.toFixed(2)}x ${c.mp}MP` +
+              (c.lenses ? ` (${c.lenses} lenses)` : "")
+          )
+          .join("; ") || "?",
       "Seamless zoom": this.seamlessZoom ? "yes" : "no",
       "Tap to focus":
         this.aimMethod ?? "focus, exposure and white balance at the tapped point",

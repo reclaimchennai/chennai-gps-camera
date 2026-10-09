@@ -160,7 +160,8 @@ public class NativeCameraPlugin extends Plugin {
     private float mainZoomMax = 1f;
     /** the lenses inside the main camera, read once it is bound */
     private final TreeSet<Float> mainLensFactors = new TreeSet<>();
-    /** every camera the phone offers, as read — for the capabilities report */
+    /** every camera the phone offers: for the capabilities report, and for
+     *  the web camera's lens switching in video mode */
     private final JSArray cameraList = new JSArray();
     private boolean switching = false;
     private boolean awaitingStream = false;
@@ -605,8 +606,12 @@ public class NativeCameraPlugin extends Plugin {
         while (wideLenses.size() > 1) wideLenses.remove(wideLenses.size() - 1);
     }
 
-    /** Every camera CameraX can open, described for the capabilities
-     *  report: what a phone exposes decides what zoom it can have. */
+    /**
+     * Every camera CameraX can open — by the camera2 id the WebView also
+     * labels it with ("camera2 2, facing back"), so video mode's web camera
+     * can switch to the right lens without probing and guessing. Factors
+     * are against the main camera of the same facing.
+     */
     private void listCameras() {
         while (cameraList.length() > 0) cameraList.remove(0);
         try {
@@ -614,15 +619,25 @@ public class NativeCameraPlugin extends Plugin {
             Double mainView = viewWidth(mainId);
             for (CameraInfo ci : provider.getAvailableCameraInfos()) {
                 String id = idOf(ci);
+                if (id == null) continue;
                 CameraCharacteristics c = characteristics(id);
                 Size px = c != null ? c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE) : null;
-                String facing = ci.getLensFacing() == CameraSelector.LENS_FACING_FRONT ? "front"
-                    : ci.getLensFacing() == CameraSelector.LENS_FACING_BACK ? "back" : "other";
-                cameraList.put(String.format(java.util.Locale.ROOT, "%s %s %.2fx %.1fMP%s",
-                    id, facing, factorOf(ci, id, mainView),
-                    px != null ? px.getWidth() * (double) px.getHeight() / 1e6 : 0.0,
-                    ci.isLogicalMultiCameraSupported()
-                        ? " (" + ci.getPhysicalCameraInfos().size() + " lenses)" : ""));
+                int facing = ci.getLensFacing();
+                JSObject cam = new JSObject();
+                cam.put("id", id);
+                cam.put("facing", facing == CameraSelector.LENS_FACING_FRONT ? "front"
+                    : facing == CameraSelector.LENS_FACING_BACK ? "back" : "other");
+                // only cameras facing the same way as the main one compare
+                cam.put("factor", facing == lensFacing
+                    ? Math.round(factorOf(ci, id, mainView) * 100) / 100.0
+                    : 1.0);
+                cam.put("mp", px != null
+                    ? Math.round(px.getWidth() * (double) px.getHeight() / 1e5) / 10.0
+                    : 0.0);
+                if (ci.isLogicalMultiCameraSupported()) {
+                    cam.put("lenses", ci.getPhysicalCameraInfos().size());
+                }
+                cameraList.put(cam);
             }
         } catch (Exception e) {
             Log.w("NativeCamera", "camera listing failed", e);
