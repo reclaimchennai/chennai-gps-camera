@@ -300,20 +300,28 @@ export default function SettingsView() {
                 <div className="label">Camera for photos</div>
                 <div className="hint" style={{ margin: "2px 0 8px" }}>
                   {settings.cameraEngine === "phone"
-                    ? "The phone's own camera: its real lenses as you zoom, tap-to-focus that sets focus and brightness where you tap, and full-resolution photos with no shutter delay. Video always uses the app camera."
-                    : "The app camera every earlier version used. Choose it only if photos misbehave on this phone with the phone camera."}
+                    ? "Phone camera (beta): the phone's real lenses as you zoom, including the wide lens, and tap-to-focus at the point. Photos are full resolution, so the shutter is slower, photos take longer to reach the gallery, and switching to video changes cameras. Video always uses the app camera."
+                    : "App camera: fast shutter, photos in the gallery at once, and an instant switch to video, framed the same way. Choose the phone camera for its real lens zoom and wide lens."}
                 </div>
                 <div className="seg" style={{ width: "100%" }}>
                   {(
                     [
-                      ["phone", "Phone camera"],
                       ["browser", "App camera"],
+                      ["phone", "Phone camera (beta)"],
                     ] as const
                   ).map(([key, label]) => (
                     <button
                       key={key}
                       data-active={settings.cameraEngine === key}
-                      onClick={() => setSettings({ cameraEngine: key })}
+                      onClick={() => {
+                        // a deliberate choice outlives any default change
+                        try {
+                          localStorage.setItem("gpscam-engine-chosen", "1");
+                        } catch {
+                          // storage unavailable
+                        }
+                        setSettings({ cameraEngine: key });
+                      }}
                     >
                       {label}
                     </button>

@@ -421,16 +421,25 @@ public class NativeBridgePlugin extends Plugin {
                     call.resolve(out);
                     return;
                 }
-                // The nearest result, unless it is only a Plus Code
-                // ("26RM+6F4, Nungambakkam…"): Google's name for a spot it
-                // has no street address for. The next one usually has the
-                // street, and a card should never open with a grid code.
+                // The nearest result. When Google has only a Plus Code for
+                // the exact spot ("26RM+6F4, Nungambakkam…") a later result
+                // may name the street — but only one that is actually
+                // here: taking the next result regardless put a building
+                // on a different street on the card (v1.47). Otherwise the
+                // first answer stands, and JS drops the grid code from it.
                 Address a = results.get(0);
-                for (Address r : results) {
-                    String first = r.getMaxAddressLineIndex() >= 0 ? r.getAddressLine(0) : null;
-                    if (first != null && !PLUS_CODE.matcher(first).find()) {
-                        a = r;
-                        break;
+                String first0 = a.getMaxAddressLineIndex() >= 0 ? a.getAddressLine(0) : null;
+                if (first0 != null && PLUS_CODE.matcher(first0).find()) {
+                    for (Address r : results) {
+                        String line0 = r.getMaxAddressLineIndex() >= 0 ? r.getAddressLine(0) : null;
+                        if (line0 == null || PLUS_CODE.matcher(line0).find()) continue;
+                        if (!r.hasLatitude() || !r.hasLongitude()) continue;
+                        float[] d = new float[1];
+                        android.location.Location.distanceBetween(lat, lng, r.getLatitude(), r.getLongitude(), d);
+                        if (d[0] <= 30f) {
+                            a = r;
+                            break;
+                        }
                     }
                 }
                 StringBuilder line = new StringBuilder();

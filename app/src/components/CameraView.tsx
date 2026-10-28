@@ -405,6 +405,8 @@ export default function CameraView({ active }: { active: boolean }) {
   const MAX_QUEUED_SHOTS = 24;
   const doCaptureRef = useRef<(() => Promise<void>) | null>(null);
   const camStarting = useRef(false);
+  /** last seen video time, and since when — for the stall watchdog */
+  const stallRef = useRef({ t: -1, since: 0 });
   const startCamRef = useRef<((m?: Mode) => Promise<void>) | null>(null);
   const startCam = useCallback(async (_m?: Mode) => {
     if (camStarting.current) return;
@@ -873,6 +875,24 @@ export default function CameraView({ active }: { active: boolean }) {
       // races) restarts itself — no tap on the overlay button needed
       const v = videoRef.current;
       if (v && v.srcObject && v.paused) void v.play().catch(() => {});
+      // A feed that is "playing" but no longer advancing — a camera that
+      // stopped delivering frames after a handover — restarts itself,
+      // rather than waiting for the user to leave and come back.
+      // Never mid-recording: a restart there would cut the recording.
+      if (
+        v && v.srcObject && !v.paused && v.readyState >= 2 &&
+        camera.engine === "web" && !recorderRef.current && !document.hidden
+      ) {
+        const now = performance.now();
+        if (v.currentTime !== stallRef.current.t) {
+          stallRef.current = { t: v.currentTime, since: now };
+        } else if (now - stallRef.current.since > 3000 && !camStarting.current) {
+          stallRef.current = { t: -1, since: now };
+          void startCamRef.current?.(modeRef.current);
+        }
+      } else {
+        stallRef.current = { t: -1, since: performance.now() };
+      }
       // the native preview follows the box through any layout shift the
       // resize observer cannot see (a bar above it changing height)
       camera.syncViewport();
@@ -1295,6 +1315,7 @@ export default function CameraView({ active }: { active: boolean }) {
       else memoryOnly.push(e.data);
     };
     rec.onstop = () => {
+      if (recorderRef.current === rec) recorderRef.current = null;
       setRecording(false);
       stopComposite?.();
       const durationMs = Date.now() - recStartRef.current;

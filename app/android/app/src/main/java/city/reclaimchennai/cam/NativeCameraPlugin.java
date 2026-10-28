@@ -257,6 +257,53 @@ public class NativeCameraPlugin extends Plugin {
     }
 
     /**
+     * Every rear camera Android lists, with the zoom factor its lens stands
+     * for against the main one — read from the camera service without
+     * opening anything. For the APP camera (video, and photos unless the
+     * phone camera is chosen): it otherwise opened each camera in turn and
+     * guessed from Android's ordering which was the ultrawide, which is
+     * why the wide lens failed on many phones.
+     */
+    @PluginMethod
+    public void lensTable(PluginCall call) {
+        JSArray list = new JSArray();
+        try {
+            CameraManager cm = (CameraManager) getContext().getSystemService(Context.CAMERA_SERVICE);
+            Double mainView = null;
+            for (String id : cm.getCameraIdList()) {
+                CameraCharacteristics c = cm.getCameraCharacteristics(id);
+                Integer facing = c.get(CameraCharacteristics.LENS_FACING);
+                if (facing == null || facing != CameraCharacteristics.LENS_FACING_BACK) continue;
+                int[] caps = c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
+                boolean usable = false;
+                if (caps != null) {
+                    for (int cap : caps) {
+                        if (cap == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE) usable = true;
+                    }
+                }
+                if (!usable) continue;
+                Double view = viewWidth(id);
+                if (view == null || view <= 0) continue;
+                // the first rear camera listed is the one apps get by default:
+                // the main camera, 1x
+                if (mainView == null) mainView = view;
+                Size px = c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
+                JSObject cam = new JSObject();
+                cam.put("id", id);
+                cam.put("facing", "back");
+                cam.put("factor", Math.round(mainView / view * 100) / 100.0);
+                cam.put("mp", px != null ? Math.round(px.getWidth() * (double) px.getHeight() / 1e5) / 10.0 : 0.0);
+                list.put(cam);
+            }
+        } catch (Exception e) {
+            Log.w("NativeCamera", "lens table failed", e);
+        }
+        JSObject out = new JSObject();
+        out.put("cameras", list);
+        call.resolve(out);
+    }
+
+    /**
      * Hide the preview while another screen is up. The camera keeps
      * running, so coming back is instant, but a TextureView that is not
      * visible stops drawing every frame underneath the gallery.
@@ -421,11 +468,11 @@ public class NativeCameraPlugin extends Plugin {
     private void bindTo(CameraSelector selector) {
         provider.unbindAll();
 
-        // 4:3 for preview AND stills: it is the sensor's own shape, so the
-        // photo is the full sensor, and what the viewfinder shows is what
-        // the photo contains
+        // 16:9 for preview AND stills — the shape video and the app camera
+        // use, so a photo and a video of the same scene are framed alike
+        // (4:3 stills read as a different camera)
         ResolutionSelector previewRes = new ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
             .build();
         // Stills are held to about 12 MP — the size the phone's own camera
         // app saves by default. HIGHEST_AVAILABLE is 50 or even 108 MP on
@@ -434,9 +481,9 @@ public class NativeCameraPlugin extends Plugin {
         // camera app runs out of memory. Expressed in the sensor's own
         // landscape frame.
         ResolutionSelector stillRes = new ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
             .setResolutionStrategy(new ResolutionStrategy(
-                new Size(maxStill, maxStill * 3 / 4),
+                new Size(maxStill, maxStill * 9 / 16),
                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
             .build();
 

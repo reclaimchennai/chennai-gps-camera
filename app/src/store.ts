@@ -94,6 +94,24 @@ export function returnToSimpleCard(): void {
   }
 }
 
+/**
+ * v1.47–v1.48 made the phone camera the default, and every install that
+ * ran them stored that default. Put them back on the app camera once —
+ * unless someone chose the phone camera in Settings themselves.
+ */
+export function returnToAppCamera(): void {
+  try {
+    if (localStorage.getItem("gpscam-app-camera-default") === "1") return;
+    const st = useSettingsStore.getState();
+    if (!st.hydrated) return;
+    localStorage.setItem("gpscam-app-camera-default", "1");
+    if (localStorage.getItem("gpscam-engine-chosen") === "1") return;
+    if (st.settings.cameraEngine !== "browser") st.setSettings({ cameraEngine: "browser" });
+  } catch {
+    // storage unavailable — leave the setting alone
+  }
+}
+
 export const useLiveStore = create<LiveState>((set) => ({
   fix: null,
   lookupResult: null,
@@ -129,7 +147,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   flashMode: "off",
   captureQuality: "auto",
   fullSensorStills: false,
-  cameraEngine: "phone",
+  // the app camera: the phone camera (CameraX) photographs at 12 MP, which
+  // put a lag on the shutter, a delay before photos reached the gallery,
+  // a camera handover between photo and video, darker shots on some
+  // phones and differently framed photos. Opt-in until it matches.
+  cameraEngine: "browser",
   mirrorFrontPhoto: false,
   // Off by default for INSTALLED web apps: saving is a browser download,
   // and Chrome shows a banner for every one — after every photo. In a
@@ -228,6 +250,7 @@ export async function hydrateSettings(): Promise<void> {
     profile: { ...DEFAULT_PROFILE, ...profile },
   });
   returnToSimpleCard();
+  returnToAppCamera();
 }
 
 // run once the store exists

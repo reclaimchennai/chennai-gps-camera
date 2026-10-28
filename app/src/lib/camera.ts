@@ -13,7 +13,7 @@ import { qualityPlan } from "./quality";
 import { useSettingsStore } from "../store";
 import { measureLensFactor, snapFactor } from "./lens-calibrate";
 import { NativeEngine, NATIVE_ZOOM_CAP } from "./camera-native";
-import { nativeCameraAvailable } from "./nativeCamera";
+import { nativeCamera, nativeCameraAvailable, type NativeCameraEntry } from "./nativeCamera";
 import { judgeLight, readLight, type LightReading } from "./lightmeter";
 
 export type FacingMode = "environment" | "user";
@@ -368,8 +368,8 @@ export class CameraController {
    * Keep the phone camera's lens table for the web camera, which video
    * mode runs on. See lensesFromNativeTable().
    */
-  private rememberNativeLenses(): void {
-    const backs = (this.native.info?.cameras ?? []).filter(
+  private rememberNativeLenses(cameras = this.native.info?.cameras ?? []): void {
+    const backs = cameras.filter(
       // utility sensors (macro, depth) are not shooting lenses — but the
       // main camera is the main camera, whatever its size
       (c) => c.facing === "back" && (c.mp >= 3 || Math.abs(c.factor - 1) < 0.01)
@@ -383,6 +383,21 @@ export class CameraController {
         );
     } catch {
       // storage unavailable — the web camera discovers as before
+    }
+  }
+
+  /** The lens table straight from Android's camera service, for the app
+   *  camera — once a session, and without opening any camera. */
+  private lensTableRead = false;
+  private async readLensTable(): Promise<void> {
+    if (this.lensTableRead) return;
+    this.lensTableRead = true;
+    try {
+      const r = await nativeCamera()?.lensTable();
+      const cams: NativeCameraEntry[] = r?.cameras ?? [];
+      if (cams.length) this.rememberNativeLenses(cams);
+    } catch {
+      // not in this APK — the app camera discovers as before
     }
   }
 
@@ -756,6 +771,7 @@ export class CameraController {
     // profile, because every id in it is a dead end.
     let cached: Lens[] = [];
     try {
+      await this.readLensTable();
       const devices = await navigator.mediaDevices.enumerateDevices();
       // the phone camera's measurements beat any discovery of our own
       const exact = lensesFromNativeTable(devices);

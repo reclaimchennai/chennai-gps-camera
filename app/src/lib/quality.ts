@@ -47,9 +47,11 @@ function detectTier(): "low" | "mid" | "high" {
 
 let cachedTier: "low" | "mid" | "high" | null = null;
 
-/** 4096x3072 takes in the common 4080x3072 binned sensors; 3264x2448 is 8 MP. */
-const STILL_FULL = 4096;
-const STILL_ENTRY = 3264;
+/** 16:9 stills: 3840x2160 (8 MP) — every pixel is decoded, watermarked
+ *  and re-encoded in the WebView, and 12 MP put a lag on the shutter;
+ *  2560x1440 on entry phones. */
+const STILL_FULL = 3840;
+const STILL_ENTRY = 2560;
 
 export function qualityPlan(): QualityPlan {
   cachedTier ??= detectTier();
