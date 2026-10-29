@@ -73,6 +73,7 @@ async function onFix(pos: GeolocationPosition): Promise<void> {
   };
   const store = useLiveStore.getState();
   store.setFix(fix);
+  noteFix(fix);
   /**
    * "ok" means "good enough to name a place", not "a number arrived".
    *
@@ -165,6 +166,56 @@ async function assessMock(pos: GeolocationPosition): Promise<void> {
 
 let startedAt = 0;
 
+/**
+ * Coming back after the screen was off.
+ *
+ * The fix the app holds then is wherever the phone last was with the
+ * screen on — often a different street. Android sends no fixes to a
+ * hidden WebView, so nothing replaced it, and the first photo at the new
+ * place was stamped with the old place's coordinates, ward and address.
+ * From a resume until a fix taken AFTER it arrives, the held fix is
+ * stale: a photo taken in that window waits for the new one (freshFix).
+ */
+const AWAY_MS = 8_000;
+let hiddenAt = 0;
+let resumedAt = 0;
+let stale = false;
+const freshWaiters = new Set<(fix: Fix) => void>();
+
+/** Whether the fix in the store may be from somewhere the phone has left. */
+export function fixIsFromBeforeResume(): boolean {
+  return stale;
+}
+
+/**
+ * A fix that is known to be current: the held one, unless the app has
+ * just come back from the screen being off, in which case the first one
+ * taken after that — or null if none comes within `timeoutMs`.
+ */
+export function freshFix(timeoutMs: number): Promise<Fix | null> {
+  const held = useLiveStore.getState().fix;
+  if (!stale) return Promise.resolve(held);
+  return new Promise((resolve) => {
+    const done = (fix: Fix | null) => {
+      window.clearTimeout(t);
+      freshWaiters.delete(done);
+      resolve(fix);
+    };
+    const t = window.setTimeout(() => done(null), timeoutMs);
+    freshWaiters.add(done);
+  });
+}
+
+function noteFix(fix: Fix): void {
+  if (!stale) return;
+  // Android can hand back its last known position first, stamped with
+  // when it was measured: only one measured since the resume counts.
+  // A little slack for the GPS clock against the phone's.
+  if (fix.timestamp < resumedAt - 2_000) return;
+  stale = false;
+  for (const w of [...freshWaiters]) w(fix);
+}
+
 export function startLocation(): void {
   if (watchId != null || !("geolocation" in navigator)) return;
   startedAt = Date.now();
@@ -244,7 +295,22 @@ export function startLocation(): void {
  *  and the moment the user is about to shoot. Check immediately rather
  *  than waiting up to the next interval. */
 function onVisible(): void {
-  if (!document.hidden) reviveIfStalled();
+  if (document.hidden) {
+    hiddenAt = Date.now();
+    return;
+  }
+  if (hiddenAt && Date.now() - hiddenAt >= AWAY_MS) {
+    stale = true;
+    resumedAt = Date.now();
+    hiddenAt = 0;
+    // Don't wait for the watch to wake up by itself, or for the watchdog:
+    // start over, so the first fix is asked for now.
+    stopLocation();
+    startLocation();
+    return;
+  }
+  hiddenAt = 0;
+  reviveIfStalled();
 }
 
 /**

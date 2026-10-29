@@ -2,9 +2,11 @@
  * Photo capture pipeline (§4 step 3).
  *
  * Everything on the tap→saved path is local: frame grab, watermark
- * composite, EXIF, IndexedDB write. Address text / online map imagery
- * are NEVER waited for — if they aren't already known, the raw frame is
- * retained and the backfill queue (backfill.ts) upgrades the photo later.
+ * composite, EXIF, IndexedDB write. The shutter never waits for the
+ * network. The background queue waits a few seconds at most for a fresh
+ * fix after a resume and for this photo's own address (settleLocation).
+ * Whatever is still missing after that keeps the raw frame, and the
+ * backfill queue (backfill.ts) upgrades the photo later.
  */
 import { camera } from "./camera";
 import { readNativeStill } from "./nativeCamera";
@@ -52,6 +54,8 @@ import { loadedPackFor } from "./geo/geodata";
 import { lookup } from "./geo/lookup";
 import { stationAt, stationTitle } from "./geo/rail";
 import { isNativeApp } from "./native";
+import { freshFix, fixIsFromBeforeResume } from "./location";
+import { reverseGeocode } from "./geocode";
 import type { PhotoRecord, WatermarkData } from "../types";
 import { scheduleBackfill } from "./backfill";
 import { scheduleDownloads } from "./downloadQueue";
@@ -61,6 +65,19 @@ import { makeMosaic, blocksFor } from "./editor/shapes";
 
 /** Live address is only baked in if it was resolved near the capture point. */
 const ADDRESS_REUSE_METERS = 150;
+/**
+ * Nearer than this, the viewfinder's address is this photo's address.
+ * Further, the queue looks up the photo's own spot. 150 m is a street or
+ * two, and the user saw it: the same address carried across a whole
+ * walk. The viewfinder refreshes by distance travelled, so it lags behind
+ * someone walking.
+ */
+const ADDRESS_EXACT_METERS = 30;
+/** How long a photo's save waits for its own address before the backfill
+ *  takes over. Usually a cache hit or a fraction of a second. */
+const ADDRESS_WAIT_MS = 4_000;
+/** How long a photo taken just after a resume waits for a current fix. */
+const FRESH_FIX_WAIT_MS = 10_000;
 /**
  * How far a cached JURISDICTION may have been computed from.
  *
@@ -232,6 +249,16 @@ export interface CaptureJob {
   still?: Promise<string>;
   /** mirror a front-camera still to match the mirrored preview */
   mirror?: boolean;
+  /** where the address in `data` was looked up, if it came from the
+   *  viewfinder's address */
+  addressFor?: { lat: number; lng: number } | null;
+  /**
+   * Taken just after the screen came back on, so the held fix may be the
+   * last place the phone was seen. Resolves to the watermark data at the
+   * first fix measured after the resume, or at the newest fix to arrive
+   * if none was measured in time, or null if no fix arrived at all.
+   */
+  relocated?: Promise<WatermarkData | null>;
   /**
    * A noise reading still in flight.
    *
@@ -261,6 +288,17 @@ export async function grabFrame(): Promise<{
   const { watermark: config, settings } = useSettingsStore.getState();
   const live = useLiveStore.getState();
   const data = collectWatermarkData();
+  const where = {
+    addressFor: live.addressFor,
+    // No fix measured since the resume within the wait: still take the
+    // newest the phone has heard of, if one came after the press. It can
+    // be a position from part-way along the walk, nearer than the held one.
+    relocated: fixIsFromBeforeResume()
+      ? freshFix(FRESH_FIX_WAIT_MS).then((fix) =>
+          fix || useLiveStore.getState().fix !== live.fix ? collectWatermarkData() : null
+        )
+      : undefined,
+  };
 
   // start the reading BEFORE the frame grab so the two overlap, and hand
   // the promise to the queue rather than waiting on it here
@@ -295,6 +333,7 @@ export async function grabFrame(): Promise<{
         liveBlur: settings.liveFaceBlur,
         wantsDeviceCopy: settings.autoSaveToDevice || isNativeApp(),
         noise,
+        ...where,
       },
     };
   }
@@ -377,6 +416,7 @@ export async function grabFrame(): Promise<{
       liveBlur: settings.liveFaceBlur,
       wantsDeviceCopy: settings.autoSaveToDevice || isNativeApp(),
       noise,
+      ...where,
     },
   };
 }
@@ -425,6 +465,68 @@ async function materialize(job: CaptureJob): Promise<void> {
 }
 
 /**
+ * Where this photo was taken, and its address — settled in the queue,
+ * so the shutter never waits for either.
+ *
+ * Two ways the shutter-time snapshot can be wrong. Just after the screen
+ * comes back on, the held fix is where the phone was before it went off
+ * (location.ts): the photo takes the first fix measured after the resume
+ * instead. And the viewfinder's address may have been looked up a street
+ * or more back: the photo then gets its own coordinate looked up, and
+ * the viewfinder takes the answer too if the phone is still there.
+ *
+ * Returns the jurisdiction lookup to draw the mini map with.
+ */
+async function settleLocation(job: CaptureJob): Promise<CaptureJob["lookupResult"]> {
+  const { data } = job;
+  let lookupResult = job.lookupResult;
+  if (job.relocated) {
+    const at = await job.relocated;
+    if (at?.fix) {
+      // only the place moves; the moment, bearing and sound stay the press's
+      data.fix = at.fix;
+      data.jurisdiction = at.jurisdiction;
+      data.station = at.station;
+      data.address = at.address;
+      data.locality = at.locality;
+      data.addressChosen = at.addressChosen;
+      data.digipin = at.digipin;
+      data.mockLocation = at.mockLocation;
+      const live = useLiveStore.getState();
+      job.addressFor = live.addressFor;
+      lookupResult =
+        live.lookupFor && metersApart(live.lookupFor, at.fix) <= JURISDICTION_REUSE_METERS
+          ? live.lookupResult
+          : null;
+    }
+  }
+
+  const fix = data.fix;
+  const settings = useSettingsStore.getState().settings;
+  if (!fix || data.addressChosen || !job.config.fields.address) return lookupResult;
+  if (settings.geocoder === "off" || !navigator.onLine) return lookupResult;
+  const off = data.address && job.addressFor ? metersApart(job.addressFor, fix) : Infinity;
+  if (off <= ADDRESS_EXACT_METERS) return lookupResult;
+  try {
+    const r = await Promise.race([
+      reverseGeocode(fix.lat, fix.lng),
+      new Promise<null>((res) => window.setTimeout(() => res(null), ADDRESS_WAIT_MS)),
+    ]);
+    if (r?.address) {
+      data.address = r.address;
+      data.locality = r.locality;
+      const live = useLiveStore.getState();
+      if (live.fix && metersApart(live.fix, fix) <= ADDRESS_EXACT_METERS) {
+        live.setAddress(r.address, r.locality, { lat: fix.lat, lng: fix.lng });
+      }
+    }
+  } catch {
+    // the shutter-time address stands; the backfill fills a missing one
+  }
+  return lookupResult;
+}
+
+/**
  * SLOW path — runs in the background queue, one job at a time. Face
  * blur, watermark composite, EXIF, thumbnail, IndexedDB write, download
  * scheduling. Never touches the live camera, so it can lag behind
@@ -433,12 +535,13 @@ async function materialize(job: CaptureJob): Promise<void> {
 export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
   await materialize(job);
   const { profile } = useSettingsStore.getState();
-  const { canvas, w, h, data, config, lookupResult, liveBlur } = job;
+  const { canvas, w, h, data, config, liveBlur } = job;
   // resolve the shutter-time noise reading into the card before it draws
   if (job.noise) {
     const db = await job.noise;
     if (db != null && data.db == null) data.db = db;
   }
+  const lookupResult = await settleLocation(job);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("2d context unavailable");
 

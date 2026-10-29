@@ -70,25 +70,6 @@ export default function CameraView({ active }: { active: boolean }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
 
-  // The video must never exceed the viewfinder zone, whatever the screen
-  // or system-bar sizes — measure the real space instead of guessing, so
-  // the watermark card (anchored to the video bottom) is always visible.
-  useEffect(() => {
-    const vp = viewportRef.current;
-    const box = boxRef.current;
-    if (!vp || !box) return;
-    const apply = () => {
-      // while the screen is display:none everything measures 0; writing that
-      // in would collapse the viewfinder on the way back
-      if (!vp.clientHeight || !vp.clientWidth) return;
-      box.style.setProperty("--vph", `${vp.clientHeight}px`);
-      box.style.setProperty("--vpw", `${vp.clientWidth}px`);
-    };
-    apply();
-    const ro = new ResizeObserver(apply);
-    ro.observe(vp);
-    return () => ro.disconnect();
-  }, []);
   const [mode, setMode] = useState<Mode>("photo");
   // true once the stream is genuinely painting, so the viewfinder zone can
   // stay flat black until then instead of showing a stray couple of pixels
@@ -115,6 +96,61 @@ export default function CameraView({ active }: { active: boolean }) {
   const [ready, setReady] = useState(false);
   /** which camera is running — the native one draws behind the page */
   const [engine, setEngine] = useState<CameraEngine>("web");
+
+  /**
+   * The viewfinder's size. It never exceeds the zone, whatever the screen
+   * or system-bar sizes: the real space is measured, not guessed, so the
+   * watermark card (anchored to the video bottom) is always visible.
+   *
+   * Video fills the zone, cropping what does not fit (the owner's call).
+   * A photo shows its whole frame. A 4:3 frame filling a tall phone screen
+   * would lose almost half its width off the sides, and the point of the
+   * 4:3 frame is to see what the phone's own camera sees.
+   */
+  useEffect(() => {
+    const vp = viewportRef.current;
+    const box = boxRef.current;
+    if (!vp || !box) return;
+    const apply = () => {
+      // while the screen is display:none everything measures 0; writing that
+      // in would collapse the viewfinder on the way back
+      if (!vp.clientHeight || !vp.clientWidth) return;
+      let w = vp.clientWidth;
+      let h = vp.clientHeight;
+      const aspect = mode === "photo" ? frameAspect() : 0;
+      if (aspect) {
+        // short over long: the viewfinder is always upright
+        w = Math.min(w, h * aspect);
+        h = w / aspect;
+      }
+      box.style.setProperty("--vph", `${Math.round(h)}px`);
+      box.style.setProperty("--vpw", `${Math.round(w)}px`);
+    };
+    const frameAspect = (): number => {
+      let a = 0;
+      let b = 0;
+      if (camera.engine === "native") {
+        a = camera.native.info?.stillW ?? 0;
+        b = camera.native.info?.stillH ?? 0;
+      } else {
+        a = videoRef.current?.videoWidth ?? 0;
+        b = videoRef.current?.videoHeight ?? 0;
+      }
+      return a && b ? Math.min(a, b) / Math.max(a, b) : 0;
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(vp);
+    // the frame's shape is known once the stream's first frame is
+    const v = videoRef.current;
+    v?.addEventListener("resize", apply);
+    v?.addEventListener("loadedmetadata", apply);
+    return () => {
+      ro.disconnect();
+      v?.removeEventListener("resize", apply);
+      v?.removeEventListener("loadedmetadata", apply);
+    };
+  }, [mode, engine]);
   const [camError, setCamError] = useState<string | null>(null);
   /** Whether the lamp is actually burning — derived, not the setting. */
   const [torch, setTorch] = useState(false);
@@ -422,13 +458,16 @@ export default function CameraView({ active }: { active: boolean }) {
     // silencing the user's music. A short reading is taken at capture
     // instead (see doCapture).
     const forMode = _m ?? modeRef.current;
-    camera.audioWanted =
-      forMode === "video" ||
-      useSettingsStore.getState().watermark.fields.soundLevel;
+    // The noise field does not count: photo mode samples it once at the
+    // shutter (sampleNoiseOnce). Holding the mic for it stopped music, and
+    // every switch back from video restarts the camera through here.
+    camera.audioWanted = forMode === "video";
     // photos from the phone's own camera; recordings, and live face blur,
     // composite from the web stream
     camera.nativeWanted =
       forMode === "photo" && !useSettingsStore.getState().settings.liveFaceBlur;
+    // full 4:3 frame for photos, the stabilised 16:9 profile for video
+    camera.frameShape = forMode;
     // The box must be known before the first start, or that start cannot
     // choose the phone camera: launch then opened the web camera, closed
     // it and opened the phone camera — twice the wait for a viewfinder.
@@ -548,10 +587,10 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => stopMeter();
   }, [active, ready, soundOn, mode]);
 
-  // Photos come from the phone's camera, recordings from the web stream:
-  // when the mode (or live blur, or the engine setting) asks for the other
-  // camera, swap. Re-checked whenever a start finishes, so a switch tapped
-  // while the camera was still starting is not lost.
+  // Photos are a 4:3 frame (or the phone's camera), recordings a 16:9 web
+  // stream: when the mode (or live blur, or the engine setting) asks for
+  // the other camera or shape, swap. Re-checked whenever a start finishes,
+  // so a switch tapped while the camera was still starting is not lost.
   const engineSetting = useSettingsStore((st) => st.settings.cameraEngine);
   /**
    * The last frame, held (softly blurred) over the viewfinder while one
@@ -581,8 +620,7 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
   useEffect(() => {
     if (!active || !ready || camStarting.current) return;
-    const want = camera.engineFor(mode === "photo" && !liveBlur);
-    if (want === camera.engine) return;
+    if (!camera.needsRestartFor(mode, mode === "photo" && !liveBlur)) return;
     void (async () => {
       const frame = await grabSwapFrame();
       if (frame) {
@@ -881,7 +919,11 @@ export default function CameraView({ active }: { active: boolean }) {
       // Never mid-recording: a restart there would cut the recording.
       if (
         v && v.srcObject && !v.paused && v.readyState >= 2 &&
-        camera.engine === "web" && !recorderRef.current && !document.hidden
+        camera.engine === "web" && !recorderRef.current && !document.hidden &&
+        // A lens switch stops one camera before the next opens, and on
+        // Samsung the next can take seconds to come: restarting under it
+        // broke the switch and left zoom stuck between lenses.
+        !camera.switchingLens
       ) {
         const now = performance.now();
         if (v.currentTime !== stallRef.current.t) {

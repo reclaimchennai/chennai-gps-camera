@@ -281,6 +281,16 @@ export class CameraController {
    */
   nativeWanted = false;
   /**
+   * The frame shape the next web camera opens with. Photos take the
+   * sensor's whole 4:3 frame, as the phone's own camera does. Video
+   * keeps a 16:9 video profile, which is what gets stabilised (see
+   * videoSize). Set before start(); a lens switch keeps the shape the
+   * stream opened with.
+   */
+  frameShape: "photo" | "video" = "photo";
+  /** The shape the running web stream was opened with. */
+  openShape: "photo" | "video" | null = null;
+  /**
    * CameraX starts that failed in a row, per camera. After two, stay on
    * the web camera for the session rather than paying a failed native
    * start on every resume; one slow start is not reason enough. The
@@ -477,31 +487,7 @@ export class CameraController {
     // depends on preview size — those captures take the full-sensor
     // ImageCapture path — so this is purely a smoothness dial.
     const plan = qualityPlan();
-    /**
-     * Ask for a standard 16:9 video profile.
-     *
-     * Not about shape any more — the viewfinder crops to fill, so the
-     * frame's aspect no longer decides whether there are black bars. This
-     * is about STABILISATION: phones apply electronic image stabilisation
-     * to their video profiles, and 1440x2560 (what this request produces)
-     * is one. Dropping the height constraint in v1.15.1 let the camera
-     * answer with a stills/preview configuration instead, typically
-     * unstabilised — walking footage went visibly shakier, exactly as
-     * reported.
-     *
-     * start() and useDevice() must stay identical, or switching lens
-     * changes the configuration mid-session.
-     */
-    const size = {
-      width: { ideal: plan.previewLongEdge },
-      // 16:9 for BOTH modes. It costs ~25% of the sensor's width, so the
-      // viewfinder is tighter than the stock camera app — the owner's
-      // explicit trade: steady video and an instant photo/video switch
-      // matter more, and the saved photo carries more than was framed
-      // regardless.
-      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
-      frameRate: { ideal: 30 },
-    };
+    const size = this.videoSize(this.frameShape, plan.previewLongEdge);
     // Open the remembered 1x lens DIRECTLY when a profile exists. A profile
     // is only ever saved on phones WITHOUT a logical cross-lens camera
     // (detectLenses skips discovery entirely when the track zooms below 1x
@@ -573,6 +559,7 @@ export class CameraController {
     }
     if (!opened) throw lastErr instanceof Error ? lastErr : new Error("camera");
     this.stream = opened;
+    this.openShape = this.frameShape;
     // A fresh stream always starts at 1x, but the user's chosen zoom must
     // survive minimising the app: it used to silently drop to 1x while the
     // indicator still read 3x, so the label and the picture disagreed.
@@ -588,6 +575,43 @@ export class CameraController {
     // zoom can hand over to real optics, then put the zoom back
     void this.detectLenses().then(() => this.restoreZoom(wanted));
     return this.stream;
+  }
+
+  /**
+   * The size and shape to ask the web camera for.
+   *
+   * Video: a standard 16:9 video profile. Phones apply electronic image
+   * stabilisation to their video profiles, and 1440x2560 is one. Dropping
+   * the height constraint in v1.15.1 let the camera answer with a
+   * stills/preview configuration instead, typically unstabilised, and
+   * walking footage went visibly shakier, exactly as reported.
+   *
+   * Photo: the whole 4:3 sensor. Photos used to share video's 16:9 so the
+   * switch between them was instant, but that cut about a quarter of the
+   * picture's width away, and next to the phone's own camera every
+   * photo, the 0.6× most of all, looked cropped. The owner chose the full
+   * frame; the switch now reopens the camera behind a held frame.
+   */
+  private videoSize(shape: "photo" | "video", longEdge: number): MediaTrackConstraints {
+    return shape === "photo"
+      ? {
+          width: { ideal: longEdge },
+          height: { ideal: Math.round((longEdge * 3) / 4) },
+          aspectRatio: { ideal: 4 / 3 },
+          frameRate: { ideal: 30 },
+        }
+      : {
+          width: { ideal: longEdge },
+          height: { ideal: Math.round((longEdge * 9) / 16) },
+          frameRate: { ideal: 30 },
+        };
+  }
+
+  /** Whether the running camera is the wrong one for this mode — the
+   *  other engine, or a web stream opened in the other shape. */
+  needsRestartFor(mode: "photo" | "video", nativeWanted: boolean): boolean {
+    if (this.engineFor(nativeWanted) !== this.engine) return true;
+    return this.engine === "web" && this.stream != null && this.openShape !== mode;
   }
 
   /** Zoom the user last asked for; survives a stream restart. */
@@ -624,6 +648,7 @@ export class CameraController {
   }
 
   stop(): void {
+    this.generation++;
     if (this.stream) {
       for (const t of this.stream.getTracks()) t.stop();
       this.stream = null;
@@ -1058,21 +1083,13 @@ export class CameraController {
    * never left with a dead viewfinder.
    */
   private async useDevice(deviceId: string | null): Promise<boolean> {
+    const gen = this.generation;
     const audio = this.stream?.getAudioTracks()[0] ?? null;
     const previous = this.activeLensId;
     const plan = qualityPlan();
-    // Same video profile as start() — see the note there. These must stay
-    // identical, or a lens switch changes the stabilisation behaviour.
-    const size = {
-      width: { ideal: plan.previewLongEdge },
-      // 16:9 for BOTH modes. It costs ~25% of the sensor's width, so the
-      // viewfinder is tighter than the stock camera app — the owner's
-      // explicit trade: steady video and an instant photo/video switch
-      // matter more, and the saved photo carries more than was framed
-      // regardless.
-      height: { ideal: Math.round((plan.previewLongEdge * 9) / 16) },
-      frameRate: { ideal: 30 },
-    };
+    // The shape the stream opened with: a lens switch must not change the
+    // frame, or the stabilisation behaviour with it (see videoSize).
+    const size = this.videoSize(this.openShape ?? this.frameShape, plan.previewLongEdge);
     const wanted = (id: string | null): MediaTrackConstraints =>
       id
         ? { deviceId: { exact: id }, ...size }
@@ -1102,6 +1119,13 @@ export class CameraController {
             audio: false,
             video: wanted(id),
           });
+          // The camera was stopped or restarted while this lens opened
+          // (the app went away, or a restart took over): attaching it now
+          // would put a second camera under the new one's stream.
+          if (gen !== this.generation) {
+            for (const t of s.getTracks()) t.stop();
+            return null;
+          }
           return s.getVideoTracks()[0] ?? null;
         } catch {
           // busy, not unsupported: back off a little more each time
@@ -1113,6 +1137,7 @@ export class CameraController {
 
     let track = await open(deviceId);
     let landedOn = deviceId;
+    if (gen !== this.generation) return false;
     if (!track) {
       // couldn't get the requested lens — restore the previous one
       track = await open(previous);
@@ -1122,11 +1147,18 @@ export class CameraController {
         landedOn = null;
       }
       if (!track) return false;
-      this.attachStream(track, await this.liveAudio(audio), landedOn);
+      this.attachStream(track, await this.audioFor(audio), landedOn);
       return false; // restored, but the requested switch did not happen
     }
-    this.attachStream(track, await this.liveAudio(audio), landedOn);
+    this.attachStream(track, await this.audioFor(audio), landedOn);
     return true;
+  }
+
+  /** The microphone for a stream reopened on another lens: the one it
+   *  had, revived if it died, and none if it had none — a lens switch in
+   *  photo mode has no business taking the mic from the user's music. */
+  private async audioFor(existing: MediaStreamTrack | null): Promise<MediaStreamTrack | null> {
+    return existing || this.audioWanted ? this.liveAudio(existing) : null;
   }
 
   /**
@@ -1173,6 +1205,13 @@ export class CameraController {
     if (have) s.removeTrack(have);
     const fresh = await this.liveAudio(null);
     if (!fresh) return false;
+    // the camera reopened meanwhile (photo to video opens a new stream,
+    // with its own microphone): a track added to the old stream would
+    // hold the mic with nothing to ever release it
+    if (this.stream !== s) {
+      fresh.stop();
+      return false;
+    }
     s.addTrack(fresh);
     return true;
   }
@@ -1300,6 +1339,16 @@ export class CameraController {
   /** deviceId of the lens currently streaming (null = default/main). */
   private activeLensId: string | null = null;
   private lensSwapping = false;
+  /** zoom asked for while a lens was opening, applied once it has */
+  private queuedZoom: number | null = null;
+  /** Bumped by every stop(), so a lens switch still opening can tell it
+   *  was overtaken and let its camera go. */
+  private generation = 0;
+
+  /** A lens switch is under way: the feed is meant to be still. */
+  get switchingLens(): boolean {
+    return this.lensSwapping;
+  }
   /** consecutive open failures per lens, so one miss is not fatal */
   private lensFailures = new Map<string, number>();
   /** true once a physical lens has repeatedly refused to open here */
@@ -1344,6 +1393,16 @@ export class CameraController {
       }
     }
 
+    // A switch is already opening a lens. This zoom must not be dropped,
+    // nor crop the lens that is on its way out: on a phone whose lens
+    // takes a second to open, tapping .6× then 1× left the label at 1×
+    // over the ultrawide's picture. The last request is kept, and applied
+    // when the switch lands.
+    if (this.lensSwapping && this.lenses.length > 1) {
+      this.queuedZoom = clamped;
+      return clamped;
+    }
+
     // OPTICAL: hand over to the physical lens that natively covers
     // this factor (ultra-wide below 1×, telephoto at its factor and up),
     // then crop only the remainder. That is what keeps a 3× shot sharp
@@ -1358,6 +1417,16 @@ export class CameraController {
         // back a different lens entirely on some phones
         const ok = await this.useDevice(want.deviceId);
         this.lensSwapping = false;
+        const queued = this.queuedZoom;
+        this.queuedZoom = null;
+        if (queued != null && Math.abs(queued - clamped) > 0.01) {
+          if (ok) this.zoomValue = clamped;
+          const got = await this.setZoom(queued);
+          window.dispatchEvent(
+            new CustomEvent("gpscam:zoom-changed", { detail: { zoom: got } })
+          );
+          return got;
+        }
         if (ok) {
           this.digitalZoom = Math.max(1, clamped / want.factor);
           this.applyDigitalTransform();

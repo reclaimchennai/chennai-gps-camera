@@ -301,7 +301,7 @@ export default function SettingsView() {
                 <div className="hint" style={{ margin: "2px 0 8px" }}>
                   {settings.cameraEngine === "phone"
                     ? "Phone camera (beta): the phone's real lenses as you zoom, including the wide lens, and tap-to-focus at the point. Photos are full resolution, so the shutter is slower, photos take longer to reach the gallery, and switching to video changes cameras. Video always uses the app camera."
-                    : "App camera: fast shutter, photos in the gallery at once, and an instant switch to video, framed the same way. Choose the phone camera for its real lens zoom and wide lens."}
+                    : "App camera: fast shutter, photos in the gallery at once, the whole 4:3 frame for photos, and the wide lens on phones that let apps use it. Choose the phone camera for full-resolution photos and tap-to-focus at the point."}
                 </div>
                 <div className="seg" style={{ width: "100%" }}>
                   {(
