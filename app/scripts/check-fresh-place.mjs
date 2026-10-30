@@ -8,6 +8,8 @@
  *    new place, not the last one the phone saw before the screen went off.
  *  - A photo a street away from where the viewfinder's address was looked
  *    up gets an address for its own spot.
+ *  - A lookup that never answers (a stalled mobile connection) does not
+ *    hold the viewfinder's address on the old place until a restart.
  *
  * Geolocation is driven by hand (a stand-in for navigator.geolocation),
  * and the geocoder answers from a stub that names the latitude, so which
@@ -45,9 +47,15 @@ const context = await browser.newContext({
   permissions: ["camera"],
   deviceScaleFactor: 2,
 });
+// ~250 m on again, and once more, for the stalled lookup
+const D = { lat: 13.0518, lng: 80.2337 };
+const E = { lat: 13.0541, lng: 80.2337 };
+// a lookup for a latitude listed here is never answered
+const hang = new Set();
 // the geocoder stub: "Street at 13.0416" — the spot is in the answer
 await context.route("https://nominatim.openstreetmap.org/**", (route) => {
   const u = new URL(route.request().url());
+  if (hang.has(Number(u.searchParams.get("lat")).toFixed(4))) return;
   const lat = Number(u.searchParams.get("lat")).toFixed(4);
   return route.fulfill({
     contentType: "application/json",
@@ -228,6 +236,27 @@ try {
   await page.evaluate((p) => window.__geo.send(p), A);
   const after2 = await pending2;
   check("a cached position from before the screen went off is not taken for the new one", Math.abs(after2.lat - A.lat) < 1e-6, String(after2.lat));
+
+  // ---- 4. a lookup that never answers ---------------------------------
+  hang.add(D.lat.toFixed(4));
+  await page.waitForTimeout(6500);
+  await page.evaluate((p) => window.__geo.send(p), D);
+  await page.waitForTimeout(7000);
+  await page.evaluate((p) => window.__geo.send(p), E);
+  // the stalled lookup is given up on; the next fix gets its address
+  const t1 = Date.now();
+  let got = null;
+  while (Date.now() - t1 < 20000) {
+    await page.evaluate((p) => window.__geo.send(p), E);
+    got = await page.evaluate(async () => (await import("/src/store.ts")).useLiveStore.getState().address ?? null);
+    if (/13\.0541/.test(got ?? "")) break;
+    await page.waitForTimeout(1000);
+  }
+  check(
+    "a lookup that never answers does not keep the old address on screen",
+    /13\.0541/.test(got ?? ""),
+    `${got} after ${Math.round((Date.now() - t1) / 1000)} s`
+  );
 
   // standing still with the screen on: no wait at all
   const t0 = Date.now();

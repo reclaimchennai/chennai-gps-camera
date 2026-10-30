@@ -33,6 +33,14 @@ export interface GeocodeResult {
   altSubLocalities?: string[];
 }
 
+/**
+ * How long one provider gets to answer. A request on a patchy mobile
+ * connection can hang for minutes rather than fail, and the viewfinder's
+ * address waits on its lookup before asking again — so one stalled
+ * request kept the old place on screen until the app was restarted.
+ */
+export const LOOKUP_MS = 8_000;
+
 /** "Zone 5 Royapuram" → "Royapuram" (OSM suburbs carry the zone prefix). */
 function cleanArea(name: string | undefined): string | undefined {
   if (!name) return undefined;
@@ -114,6 +122,7 @@ async function nominatim(
   // a place with no Tamil name still comes back named rather than blank
   const r = await fetch(url, {
     headers: { "Accept-Language": lang === "en" ? "en" : `${lang},en` },
+    signal: AbortSignal.timeout(LOOKUP_MS),
   });
   if (!r.ok) return null;
   const j = (await r.json()) as {
@@ -143,7 +152,7 @@ async function mappls(
   const url =
     `https://apis.mappls.com/advancedmaps/v1/${encodeURIComponent(key)}` +
     `/rev_geocode?lat=${lat}&lng=${lng}`;
-  const r = await fetch(url);
+  const r = await fetch(url, { signal: AbortSignal.timeout(LOOKUP_MS) });
   if (!r.ok) return null;
   const j = (await r.json()) as {
     results?: {
@@ -176,7 +185,7 @@ async function google(
     `https://maps.googleapis.com/maps/api/geocode/json` +
     `?latlng=${lat},${lng}&key=${encodeURIComponent(key)}` +
     `&language=${encodeURIComponent(lang)}`;
-  const r = await fetch(url);
+  const r = await fetch(url, { signal: AbortSignal.timeout(LOOKUP_MS) });
   if (!r.ok) return null;
   const j = (await r.json()) as {
     status: string;

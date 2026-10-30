@@ -36,6 +36,11 @@ const WALK_TRIGGER_M = 40;
 /** Fixes further apart in time than this say nothing about speed — the
  *  screen was off, or the app was away. */
 const SPEED_GAP_S = 30;
+/** Longest one lookup may hold the next one back. Each provider has its
+ *  own deadline (geocode.ts); this is the backstop for the chain. A lookup
+ *  that never came back used to keep the old address on screen until the
+ *  app was restarted. */
+const LOOKUP_DEADLINE_MS = 25_000;
 
 let started = false;
 let lastAt = 0;
@@ -109,7 +114,10 @@ async function maybeGeocode(): Promise<void> {
   lastAt = now;
   lastPos = { lat: fix.lat, lng: fix.lng };
   try {
-    const res = await reverseGeocode(fix.lat, fix.lng);
+    const res = await Promise.race([
+      reverseGeocode(fix.lat, fix.lng),
+      new Promise<null>((r) => setTimeout(() => r(null), LOOKUP_DEADLINE_MS)),
+    ]);
     if (res) {
       useLiveStore
         .getState()

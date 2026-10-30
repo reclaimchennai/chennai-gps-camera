@@ -2409,7 +2409,7 @@ export default function CameraView({ active }: { active: boolean }) {
                   void camera.setZoom(z, true).then((got) => {
                     setZoomNow(got);
                     if (Math.abs(got - z) > 0.05 && camera.lensUnavailable) {
-                      showToast("This phone doesn't let apps use that lens directly");
+                      showToast("This lens won't open in the app camera — try Phone camera in Settings");
                     }
                   });
                 }}

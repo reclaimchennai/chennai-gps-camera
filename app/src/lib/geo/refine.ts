@@ -129,7 +129,8 @@ export function refineGeocode(
   // out as a place near here: same source as the street, so the address
   // reads as one voice. Ours is the fallback when none of them does.
   let areaName = ours ? placeLabel(ours, lang) : j?.area;
-  for (const alt of r.altSubLocalities ?? []) {
+  // ...unless the point is inside the outline of ours: then it is settled
+  for (const alt of ours?.inside ? [] : (r.altSubLocalities ?? [])) {
     if (judge(alt, admin, pack, lat, lng).verdict === "here") {
       areaName = alt;
       notes.push(`area: the geocoder's alternative "${alt}" checks out as near here`);

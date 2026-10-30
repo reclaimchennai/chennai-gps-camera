@@ -58,6 +58,21 @@ const MAX_DIGITAL_ZOOM = 4;
 /** How long Android needs to actually release a camera after track.stop().
  *  Opening the next lens sooner fails with NotReadableError. */
 const RELEASE_MS = 180;
+/**
+ * How long a lens gets to open, and then to show its first frame.
+ *
+ * On a Galaxy S25 the ultra-wide could be asked for and never answer:
+ * no error to retry on, no stream — the switch waited forever behind
+ * the held frame, which read as the camera freezing at 0.6×. Past these
+ * the switch counts as failed and the lens that was working is reopened.
+ */
+const LENS_OPEN_MS = 4_000;
+const LENS_FIRST_FRAME_MS = 4_000;
+/** The stall watchdog leaves a lens switch alone for at most this long. */
+const LENS_SWITCH_MAX_MS = 20_000;
+
+const other = (shape: "photo" | "video"): "photo" | "video" =>
+  shape === "photo" ? "video" : "photo";
 /** Effective zoom factor an ultra-wide lens represents (~0.6× on most
  *  Android phones — matches the ".6" chip Samsung/Pixel cameras show). */
 const ULTRA_WIDE_FACTOR = 0.6;
@@ -856,6 +871,7 @@ export class CameraController {
       return;
     }
     this.lensSwapping = true;
+    this.swapStartedAt = Date.now();
     await this.useDevice(main.deviceId);
     this.lensSwapping = false;
     this.digitalZoom = 1;
@@ -1088,12 +1104,20 @@ export class CameraController {
     const previous = this.activeLensId;
     const plan = qualityPlan();
     // The shape the stream opened with: a lens switch must not change the
-    // frame, or the stabilisation behaviour with it (see videoSize).
-    const size = this.videoSize(this.openShape ?? this.frameShape, plan.previewLongEdge);
-    const wanted = (id: string | null): MediaTrackConstraints =>
-      id
-        ? { deviceId: { exact: id }, ...size }
-        : { facingMode: this.facing, ...size };
+    // frame, or the stabilisation behaviour with it (see videoSize) —
+    // unless this lens only works in the other one (see below).
+    const shape = this.openShape ?? this.frameShape;
+    const wanted = (id: string | null, as = shape): MediaTrackConstraints => {
+      const size = this.videoSize(as, plan.previewLongEdge);
+      return id ? { deviceId: { exact: id }, ...size } : { facingMode: this.facing, ...size };
+    };
+    const t0 = Date.now();
+    const lensName = (id: string | null) => {
+      const l = this.lenses.find((x) => x.deviceId === id);
+      return l ? `${l.factor}× lens` : "main lens";
+    };
+    const shapeName = (as: "photo" | "video") => (as === "photo" ? "4:3" : "16:9");
+    const log: string[] = [];
 
     // Hold the last frame over the viewfinder for the switch. Releasing
     // one camera and opening another takes a few hundred ms during which
@@ -1112,13 +1136,27 @@ export class CameraController {
      * on phones that hand the camera over straight away, which is the lag
      * still visible next to the stock camera app.
      */
-    const open = async (id: string | null): Promise<MediaStreamTrack | null> => {
+    const open = async (
+      id: string | null,
+      as = shape
+    ): Promise<MediaStreamTrack | null> => {
       for (let attempt = 0; attempt < 4; attempt++) {
         try {
-          const s = await navigator.mediaDevices.getUserMedia({
+          const asked = navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: wanted(id),
+            video: wanted(id, as),
           });
+          const s = await Promise.race([
+            asked,
+            CameraController.settle(LENS_OPEN_MS).then(() => null),
+          ]);
+          if (!s) {
+            // no answer: let the camera go if it ever does open, and do not
+            // ask again — a request still hanging blocks the next one too
+            void asked.then((late) => late.getTracks().forEach((t) => t.stop()), () => {});
+            log.push(`${shapeName(as)}: no answer in ${LENS_OPEN_MS / 1000} s`);
+            return null;
+          }
           // The camera was stopped or restarted while this lens opened
           // (the app went away, or a restart took over): attaching it now
           // would put a second camera under the new one's stream.
@@ -1127,31 +1165,91 @@ export class CameraController {
             return null;
           }
           return s.getVideoTracks()[0] ?? null;
-        } catch {
+        } catch (e) {
           // busy, not unsupported: back off a little more each time
+          if (attempt === 3) log.push(`${shapeName(as)}: ${(e as Error)?.name ?? "refused"}`);
           await CameraController.settle(RELEASE_MS * (attempt + 1) * 0.5);
         }
       }
       return null;
     };
+    const report = (outcome: string) => {
+      this.lastLensSwitch =
+        `${lensName(deviceId)}: ${[...log, outcome].join("; ")} ` +
+        `(${((Date.now() - t0) / 1000).toFixed(1)} s)`;
+    };
 
-    let track = await open(deviceId);
-    let landedOn = deviceId;
-    if (gen !== this.generation) return false;
-    if (!track) {
-      // couldn't get the requested lens — restore the previous one
-      track = await open(previous);
-      landedOn = previous;
-      if (!track) {
-        track = await open(null);
-        landedOn = null;
+    /**
+     * The lens in the frame shape it is asked for, then in the other one.
+     * The S25's ultra-wide opened in 16:9 (v1.48) and froze once photos
+     * asked for 4:3 (v1.49): a lens that will only stream one shape is
+     * still a lens, and a 16:9 wide photo beats no wide photo. The shape
+     * that worked is remembered for the session.
+     */
+    const first = (deviceId && this.lensShape.get(deviceId)) || shape;
+    for (const as of first === shape ? [shape, other(shape)] : [first]) {
+      const track = await open(deviceId, as);
+      if (gen !== this.generation) return false;
+      if (!track) continue;
+      this.attachStream(track, await this.audioFor(audio), deviceId);
+      if (await this.paints(track)) {
+        if (deviceId && as !== shape) this.lensShape.set(deviceId, as);
+        // a lens switch worked: the hardware is clearly healthy, so wipe
+        // EVERY lens's recorded misses. Counting misses per-lens across
+        // unrelated busy spells is what produced the occasional false
+        // "this phone doesn't let apps use that lens" that later cleared
+        // on its own. Only a switch that WORKED says so — reopening the
+        // old lens after a failed one used to wipe them too, so a lens
+        // that never opens was offered, and frozen on, every time.
+        this.lensFailures.clear();
+        report(`${shapeName(as)}: ok`);
+        return true;
       }
-      if (!track) return false;
-      this.attachStream(track, await this.audioFor(audio), landedOn);
-      return false; // restored, but the requested switch did not happen
+      if (gen !== this.generation) return false;
+      // it opened, but no picture comes from it: as good as not opening
+      log.push(`${shapeName(as)}: opened, but no picture in ${LENS_FIRST_FRAME_MS / 1000} s`);
+      track.stop();
     }
-    this.attachStream(track, await this.audioFor(audio), landedOn);
-    return true;
+    // couldn't get the requested lens — restore the previous one
+    report(`back to the ${lensName(previous)}`);
+    let landedOn = previous;
+    let back = await open(previous);
+    if (!back) {
+      back = await open(null);
+      landedOn = null;
+    }
+    if (!back) return false;
+    this.attachStream(back, await this.audioFor(audio), landedOn);
+    return false; // restored, but the requested switch did not happen
+  }
+
+  /**
+   * Does the viewfinder get a picture from this track? Watched on the
+   * <video> itself, so a lens that works costs no extra wait at all.
+   */
+  private paints(track: MediaStreamTrack): Promise<boolean> {
+    const v = this.video;
+    if (!v) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (done) return;
+        done = true;
+        window.clearTimeout(timer);
+        resolve(ok);
+      };
+      const timer = window.setTimeout(() => finish(false), LENS_FIRST_FRAME_MS);
+      track.addEventListener("ended", () => finish(false), { once: true });
+      if (v.readyState >= 2 && v.srcObject && (v.srcObject as MediaStream).getVideoTracks()[0] === track) {
+        finish(true);
+        return;
+      }
+      v.addEventListener("loadeddata", () => finish(true), { once: true });
+      type WithRvfc = HTMLVideoElement & {
+        requestVideoFrameCallback?: (cb: () => void) => number;
+      };
+      (v as WithRvfc).requestVideoFrameCallback?.call(v, () => finish(true));
+    });
   }
 
   /** The microphone for a stream reopened on another lens: the one it
@@ -1230,11 +1328,6 @@ export class CameraController {
       void this.video.play().catch(() => {});
     }
     this.activeLensId = lensId;
-    // a camera opened: the hardware is clearly healthy, so wipe EVERY
-    // lens's recorded misses. Counting misses per-lens across unrelated
-    // busy spells is what produced the occasional false "this phone
-    // doesn't let apps use that lens" that later cleared on its own.
-    this.lensFailures.clear();
     // A new track focuses continuously and has its own torch state, so any
     // AF lock the UI is showing is no longer real. Say so rather than
     // leaving a padlock on screen that locks nothing.
@@ -1345,9 +1438,18 @@ export class CameraController {
    *  was overtaken and let its camera go. */
   private generation = 0;
 
-  /** A lens switch is under way: the feed is meant to be still. */
+  /** Lenses that only streamed in the other frame shape, this session. */
+  private lensShape = new Map<string, "photo" | "video">();
+  /** How the last lens switch went, for Settings → Camera capabilities. */
+  lastLensSwitch: string | null = null;
+
+  /** When the current lens switch began, for the watchdog's patience. */
+  private swapStartedAt = 0;
+
+  /** A lens switch is under way: the feed is meant to be still — for a
+   *  while. One that runs on past every deadline is a stalled camera. */
   get switchingLens(): boolean {
-    return this.lensSwapping;
+    return this.lensSwapping && Date.now() - this.swapStartedAt < LENS_SWITCH_MAX_MS;
   }
   /** consecutive open failures per lens, so one miss is not fatal */
   private lensFailures = new Map<string, number>();
@@ -1412,6 +1514,7 @@ export class CameraController {
       const want = this.lensFor(clamped);
       if (want && want.deviceId !== (this.activeLensId ?? this.mainDeviceId)) {
         this.lensSwapping = true;
+        this.swapStartedAt = Date.now();
         this.freezeScale = clamped / (this.zoomValue || 1);
         // always switch by explicit deviceId — plain facingMode can hand
         // back a different lens entirely on some phones
@@ -1443,6 +1546,8 @@ export class CameraController {
         if (misses >= 3) {
           this.lenses = this.lenses.filter((l) => l.deviceId !== want.deviceId);
           this.lensUnavailable = true;
+          // the zoom chips are drawn from the lenses: take its chip away
+          window.dispatchEvent(new Event("gpscam:lenses-updated"));
         }
         const floor = this.zoomInfo().min;
         this.digitalZoom = Math.max(1, clamped);
@@ -1863,6 +1968,7 @@ export class CameraController {
     };
     return {
       Camera: String(set.deviceId ?? "default").slice(0, 12),
+      "Last lens switch": this.lastLensSwitch ?? "none yet",
       Zoom: range(caps.zoom),
       "Focus modes": Array.isArray(caps.focusMode)
         ? (caps.focusMode as string[]).join(", ")

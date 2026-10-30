@@ -34,8 +34,12 @@ interface Entry {
  *
  * v4: Plus Codes are no longer stored as addresses ("26RM+6F4,
  * Nungambakkam…"); a v3 entry may open with one, so they are retired too.
+ *
+ * v5: places OSM maps as outlines are now in the place data. Without
+ * them a Velachery street was refined into "…Velachery, Adambakkam,
+ * Chennai", and a v4 entry may hold exactly that.
  */
-const KEY = "geocache-v4";
+const KEY = "geocache-v5";
 /**
  * ~11 m at 4 decimal places.
  *

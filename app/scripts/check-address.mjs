@@ -100,6 +100,21 @@ try {
       }),
       // 8. a Tamil card gets the area in Tamil
       tamil: await run(12.929253, 80.202487, reported, "ta"),
+      // 9. reported from a Galaxy S25: Velachery is mapped in OSM as an
+      //    outline, not a point, and without outlines every Velachery
+      //    address had Adambakkam (the nearest point, 1.3 km off) added
+      velachery: await run(12.981793, 80.221435, {
+        address: "50, Velachery Main Rd, Velachery, Chennai, Tamil Nadu - 600042",
+        locality: "Velachery, Chennai",
+        subLocality: "Velachery",
+        altSubLocalities: ["Adambakkam"],
+      }),
+      // 10. and Adambakkam itself, just outside that outline, keeps its name
+      adambakkam: await run(12.98222, 80.20912, {
+        address: "Brindavan Nagar Main Rd, Adambakkam, Chennai, Tamil Nadu - 600088",
+        locality: "Adambakkam, Chennai",
+        subLocality: "Adambakkam",
+      }),
     };
   });
 
@@ -205,6 +220,18 @@ try {
     "a Tamil card names the area in Tamil",
     /பள்ளிக்கரணை/.test(r.tamil.locality ?? ""),
     r.tamil.locality
+  );
+  check(
+    "a street inside Velachery's outline is in Velachery, with no other area added",
+    r.velachery.address === "50, Velachery Main Rd, Velachery, Chennai, Tamil Nadu - 600042" &&
+      r.velachery.locality === "Velachery, Chennai" &&
+      r.velachery.area === "Velachery",
+    `${r.velachery.address} | area ${r.velachery.area}`
+  );
+  check(
+    "Adambakkam, outside it, is still Adambakkam",
+    r.adambakkam.area === "Adambakkam" && /Adambakkam/.test(r.adambakkam.address) && !/Velachery/.test(r.adambakkam.address),
+    `${r.adambakkam.address} | area ${r.adambakkam.area}`
   );
   check(
     "every change says why",

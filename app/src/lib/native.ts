@@ -308,6 +308,8 @@ export async function nativeAudioFocus(hold: boolean): Promise<void> {
   }
 }
 
+const NATIVE_GEOCODE_MS = 8_000;
+
 export async function nativeReverseGeocode(
   lat: number,
   lng: number,
@@ -316,7 +318,14 @@ export async function nativeReverseGeocode(
   const b = bridge();
   if (!b) return null;
   try {
-    const r = await b.reverseGeocode({ lat, lng, lang });
+    // Android's Geocoder blocks on the network with no deadline of its
+    // own; past this the next provider gets its turn instead
+    const r = await Promise.race([
+      b.reverseGeocode({ lat, lng, lang }),
+      new Promise<{ ok: false; addressLine?: undefined }>((res) =>
+        setTimeout(() => res({ ok: false }), NATIVE_GEOCODE_MS)
+      ),
+    ]);
     if (!r.ok || !r.addressLine) return null;
     return {
       addressLine: r.addressLine,

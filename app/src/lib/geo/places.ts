@@ -18,6 +18,10 @@
  * either. That costs a few hundred metres of precision between two
  * ADJACENT names. Its strength is that it can never be ten kilometres
  * wrong, which is the failure that prompted it.
+ *
+ * Where OSM maps a place as an OUTLINE, the outline decides. Velachery is
+ * one: with only points to go on, a street in the middle of Velachery was
+ * named Adambakkam, the nearest suburb mapped as a point, 1.3 km away.
  */
 import type { GeoPack } from "./geodata";
 
@@ -38,8 +42,12 @@ export interface Place {
   type: PlaceType;
   lat: number;
   lng: number;
-  /** metres from the queried point */
+  /** metres from the queried point — 0 inside the place's outline */
   distance: number;
+  /** OSM maps this place with an outline... */
+  outlined?: boolean;
+  /** ...and the point is inside it */
+  inside?: boolean;
 }
 
 const DECODE: Record<string, PlaceType> = {
@@ -85,6 +93,17 @@ interface Table {
   coords: number[];
   scale: number;
   local?: Record<string, Record<string, string>>;
+  /** place index -> outer rings, interleaved lng,lat like `coords` */
+  areas?: Record<string, number[][]>;
+}
+
+interface Outline {
+  i: number;
+  rings: Float64Array[];
+  w: number;
+  s: number;
+  e: number;
+  n: number;
 }
 
 interface Decoded {
@@ -95,6 +114,8 @@ interface Decoded {
   local: Record<string, Record<string, string>>;
   /** cell key -> place indices */
   grid: Map<string, number[]>;
+  /** place index -> its outline, for places OSM maps as areas */
+  outlines: Map<number, Outline>;
 }
 
 /** 0.02° cells, about 2.2 km: a 3x3 block always covers the reach of
@@ -125,7 +146,27 @@ function decoded(pack: GeoPack | null): Decoded | null {
     if (list) list.push(i);
     else grid.set(k, [i]);
   }
-  const d: Decoded = { names: t.names, types: t.types, lat, lng, local: t.local ?? {}, grid };
+  const outlines = new Map<number, Outline>();
+  for (const [k, rings] of Object.entries(t.areas ?? {})) {
+    const i = Number(k);
+    const o: Outline = { i, rings: [], w: Infinity, s: Infinity, e: -Infinity, n: -Infinity };
+    for (const flat of rings) {
+      const r = new Float64Array(flat.length);
+      for (let j = 0; j < flat.length; j += 2) {
+        r[j] = flat[j] / t.scale;
+        r[j + 1] = flat[j + 1] / t.scale;
+        o.w = Math.min(o.w, r[j]);
+        o.e = Math.max(o.e, r[j]);
+        o.s = Math.min(o.s, r[j + 1]);
+        o.n = Math.max(o.n, r[j + 1]);
+      }
+      o.rings.push(r);
+    }
+    outlines.set(i, o);
+  }
+  const d: Decoded = {
+    names: t.names, types: t.types, lat, lng, local: t.local ?? {}, grid, outlines,
+  };
   cache.set(pack, d);
   return d;
 }
@@ -136,7 +177,37 @@ const metres = (aLat: number, aLng: number, bLat: number, bLng: number) => {
   return Math.hypot(dLat, dLng);
 };
 
+function inOutline(o: Outline, lat: number, lng: number): boolean {
+  if (lng < o.w || lng > o.e || lat < o.s || lat > o.n) return false;
+  for (const r of o.rings) {
+    let inside = false;
+    for (let a = 0, b = r.length - 2; a < r.length; b = a, a += 2) {
+      const xa = r[a], ya = r[a + 1], xb = r[b], yb = r[b + 1];
+      if (ya > lat !== yb > lat && lng < ((xb - xa) * (lat - ya)) / (yb - ya) + xa) {
+        inside = !inside;
+      }
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
+/** Is the point inside place i's outline? Null: it has none. */
+function insidePlace(d: Decoded, i: number, lat: number, lng: number): boolean | null {
+  const o = d.outlines.get(i);
+  return o ? inOutline(o, lat, lng) : null;
+}
+
+/** The outlined places containing the point, smallest first. */
+function containing(d: Decoded, lat: number, lng: number): number[] {
+  const hits: Outline[] = [];
+  for (const o of d.outlines.values()) if (inOutline(o, lat, lng)) hits.push(o);
+  const size = (o: Outline) => (o.e - o.w) * (o.n - o.s);
+  return hits.sort((a, b) => size(a) - size(b)).map((o) => o.i);
+}
+
 function placeAt(d: Decoded, i: number, lat: number, lng: number): Place {
+  const inside = insidePlace(d, i, lat, lng) === true;
   const local: Record<string, string> = {};
   for (const [l, m] of Object.entries(d.local)) {
     const v = m[i];
@@ -148,7 +219,9 @@ function placeAt(d: Decoded, i: number, lat: number, lng: number): Place {
     type: DECODE[d.types[i]] ?? "locality",
     lat: d.lat[i],
     lng: d.lng[i],
-    distance: metres(lat, lng, d.lat[i], d.lng[i]),
+    distance: inside ? 0 : metres(lat, lng, d.lat[i], d.lng[i]),
+    outlined: d.outlines.has(i) || undefined,
+    inside: inside || undefined,
   };
 }
 
@@ -194,16 +267,35 @@ export function placesNear(
  * where it is believable.
  */
 export function areaAt(pack: GeoPack | null, lat: number, lng: number): Place | null {
-  const near = placesNear(pack, lat, lng, REACH_M.town);
+  const d = decoded(pack);
+  if (!d) return null;
+  // inside an area's outline: that is where this is, whatever point is nearer
+  const within = containing(d, lat, lng).map((i) => placeAt(d, i, lat, lng));
+  const area0 = within.find((p) => AREA.includes(p.type));
+  if (area0) return area0;
+  // a place whose outline the point is NOT inside is not here, however
+  // near its point is
+  const near = placesNear(pack, lat, lng, REACH_M.town).filter((p) => !p.outlined);
   const area = near.find((p) => AREA.includes(p.type) && p.distance <= REACH_M[p.type]);
   if (area) return area;
-  return near.find((p) => p.type === "town" && p.distance <= REACH_M.town) ?? null;
+  return (
+    within.find((p) => p.type === "town") ??
+    near.find((p) => p.type === "town" && p.distance <= REACH_M.town) ??
+    null
+  );
 }
 
 /** A finer name than the area, only when it is right on top of the point. */
 export function microAt(pack: GeoPack | null, lat: number, lng: number): Place | null {
+  const d = decoded(pack);
+  if (!d) return null;
+  const within = containing(d, lat, lng).map((i) => placeAt(d, i, lat, lng));
   return (
-    placesNear(pack, lat, lng, MICRO_REACH_M).find((p) => MICRO.includes(p.type)) ?? null
+    within.find((p) => MICRO.includes(p.type)) ??
+    placesNear(pack, lat, lng, MICRO_REACH_M).find(
+      (p) => MICRO.includes(p.type) && !p.outlined
+    ) ??
+    null
   );
 }
 
@@ -234,7 +326,9 @@ export function nearestNamed(
   // evidence about this one, which is why the search stops at 8 km.
   let best = -1;
   let bestM = Infinity;
-  forEachNear(d, lat, lng, searchM, (i, m) => {
+  forEachNear(d, lat, lng, searchM, (i, nodeM) => {
+    // inside the place's outline is as near as it gets
+    const m = insidePlace(d, i, lat, lng) ? 0 : nodeM;
     if (m >= bestM) return;
     let hit = squash(d.names[i]) === want;
     if (!hit) {

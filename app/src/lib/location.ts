@@ -177,9 +177,14 @@ let startedAt = 0;
  * stale: a photo taken in that window waits for the new one (freshFix).
  */
 const AWAY_MS = 8_000;
+/** However the clocks disagree, the held fix stops being suspect this
+ *  long after a resume: past it, the newest fix is the best there is, and
+ *  holding the viewfinder's address back any longer only hides the place. */
+const STALE_MAX_MS = 15_000;
 let hiddenAt = 0;
 let resumedAt = 0;
 let stale = false;
+let staleTimer = 0;
 const freshWaiters = new Set<(fix: Fix) => void>();
 
 /** Whether the fix in the store may be from somewhere the phone has left. */
@@ -213,6 +218,7 @@ function noteFix(fix: Fix): void {
   // A little slack for the GPS clock against the phone's.
   if (fix.timestamp < resumedAt - 2_000) return;
   stale = false;
+  window.clearTimeout(staleTimer);
   for (const w of [...freshWaiters]) w(fix);
 }
 
@@ -303,6 +309,10 @@ function onVisible(): void {
     stale = true;
     resumedAt = Date.now();
     hiddenAt = 0;
+    window.clearTimeout(staleTimer);
+    staleTimer = window.setTimeout(() => {
+      stale = false;
+    }, STALE_MAX_MS);
     // Don't wait for the watch to wake up by itself, or for the watchdog:
     // start over, so the first fix is asked for now.
     stopLocation();

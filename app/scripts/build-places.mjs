@@ -29,6 +29,13 @@
  *     points -where "place IN ('suburb','neighbourhood','quarter','village',\
  *     'hamlet','town','locality','city')"
  *
+ *   # and the places mapped as OUTLINES, not points — Velachery is one,
+ *   # so it was missing altogether and a Velachery street was put in
+ *   # Adambakkam, the nearest suburb that is a point (1.3 km off):
+ *   ogr2ogr -f GeoJSON places-areas-south.geojson southern-zone-latest.osm.pbf \
+ *     multipolygons -where "place IN (...same list...) AND name IS NOT NULL" \
+ *     -simplify 0.00012 -lco COORDINATE_PRECISION=5
+ *
  *   node scripts/build-places.mjs ~/data/osm/places-*.geojson
  *
  * STORAGE IS COLUMNAR. Tamil Nadu's bbox alone holds ~50,000 places; as
@@ -73,7 +80,69 @@ const tagsOf = (p) =>
     )
   );
 
+/** Outer rings only: a hole in a suburb is rare, and a point in one is
+ *  still nearer that suburb than any other. */
+function outerRings(g) {
+  if (g?.type === "Polygon") return [g.coordinates[0]];
+  if (g?.type === "MultiPolygon") return g.coordinates.map((p) => p[0]);
+  return [];
+}
+
+function inRing(ring, lng, lat) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if (yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** A point inside the outline to stand for it: the centroid of its
+ *  largest ring when that is inside, else the middle of the ring's
+ *  widest crossing at the centroid's latitude. */
+function labelPoint(rings) {
+  let best = null;
+  let bestA = -1;
+  for (const r of rings) {
+    let a = 0, cx = 0, cy = 0;
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const k = r[j][0] * r[i][1] - r[i][0] * r[j][1];
+      a += k;
+      cx += (r[j][0] + r[i][0]) * k;
+      cy += (r[j][1] + r[i][1]) * k;
+    }
+    if (Math.abs(a) > bestA) {
+      bestA = Math.abs(a);
+      best = { r, x: a ? cx / (3 * a) : r[0][0], y: a ? cy / (3 * a) : r[0][1] };
+    }
+  }
+  if (!best) return null;
+  if (inRing(best.r, best.x, best.y)) return [best.x, best.y];
+  const xs = [];
+  const { r, y } = best;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    const [xi, yi] = r[i];
+    const [xj, yj] = r[j];
+    if (yi > y !== yj > y) xs.push(((xj - xi) * (y - yi)) / (yj - yi) + xi);
+  }
+  xs.sort((a, b) => a - b);
+  let mid = r[0][0], wide = -1;
+  for (let i = 0; i + 1 < xs.length; i += 2) {
+    if (xs[i + 1] - xs[i] > wide) {
+      wide = xs[i + 1] - xs[i];
+      mid = (xs[i] + xs[i + 1]) / 2;
+    }
+  }
+  return [mid, y];
+}
+
+const squashName = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+
 const all = [];
+const outlines = [];
 for (const file of inputs) {
   const fc = JSON.parse(readFileSync(file, "utf8"));
   for (const f of fc.features) {
@@ -81,18 +150,49 @@ for (const file of inputs) {
     const code = TYPE_CODE[p.place];
     const name = typeof p.name === "string" ? p.name.replace(/\s+/g, " ").trim() : "";
     if (!code || !name) continue;
-    const [lng, lat] = f.geometry?.coordinates ?? [];
-    if (typeof lat !== "number" || typeof lng !== "number") continue;
     const t = tagsOf(p);
     const local = {};
     for (const l of LANG_TAGS) {
       const v = t[`name:${l}`]?.trim();
       if (v && v !== name) local[l] = v;
     }
+    const rings = outerRings(f.geometry).filter((r) => r.length >= 4);
+    if (rings.length) {
+      outlines.push({ name, code, local, rings });
+      continue;
+    }
+    const [lng, lat] = f.geometry?.coordinates ?? [];
+    if (typeof lat !== "number" || typeof lng !== "number") continue;
     all.push({ name, code, lat, lng, local });
   }
 }
-console.log(`${all.length} named places read from ${inputs.length} file(s)`);
+// An outline joins the point of the same name inside it, where there is
+// one — OSM often maps a place twice, as a node and as an area. Otherwise
+// it stands as a place of its own, at a point inside it.
+let joined = 0;
+const byName = new Map();
+for (const p of all) {
+  const k = squashName(p.name);
+  (byName.get(k) ?? byName.set(k, []).get(k)).push(p);
+}
+for (const o of outlines) {
+  const twin = (byName.get(squashName(o.name)) ?? []).find(
+    (p) => !p.rings && o.rings.some((r) => inRing(r, p.lng, p.lat))
+  );
+  if (twin) {
+    twin.rings = o.rings;
+    for (const [l, v] of Object.entries(o.local)) twin.local[l] ??= v;
+    joined++;
+    continue;
+  }
+  const at = labelPoint(o.rings);
+  if (!at) continue;
+  all.push({ name: o.name, code: o.code, lng: at[0], lat: at[1], local: o.local, rings: o.rings });
+}
+console.log(
+  `${all.length} named places read from ${inputs.length} file(s); ` +
+    `${outlines.length} outlines, ${joined} joined to their point`
+);
 
 const index = JSON.parse(readFileSync(join(PACKS, "index.json"), "utf8"));
 for (const entry of index.packs) {
@@ -103,6 +203,8 @@ for (const entry of index.packs) {
   const inside = all.filter(
     (p) => p.lng >= w - pad && p.lng <= e + pad && p.lat >= s - pad && p.lat <= n + pad
   );
+  // an outline wins the dedupe below over a bare point of the same place
+  inside.sort((a, b) => (b.rings ? 1 : 0) - (a.rings ? 1 : 0));
   // the same place mapped twice (a node per name variant, an import
   // overlapping a manual edit) would only ever cost a lookup a comparison
   const seen = new Set();
@@ -117,8 +219,15 @@ for (const entry of index.packs) {
   kept.sort((a, b) => a.lat - b.lat || a.lng - b.lng || a.name.localeCompare(b.name));
 
   const local = {};
+  // index -> rings, each interleaved lng,lat integers like `coords`
+  const areas = {};
   kept.forEach((p, i) => {
     for (const [l, v] of Object.entries(p.local)) (local[l] ??= {})[i] = v;
+    if (p.rings) {
+      areas[i] = p.rings.map((r) =>
+        r.flatMap(([x, y]) => [Math.round(x * SCALE), Math.round(y * SCALE)])
+      );
+    }
   });
   const table = {
     type: "PlaceTable",
@@ -128,6 +237,7 @@ for (const entry of index.packs) {
     coords: kept.flatMap((p) => [Math.round(p.lng * SCALE), Math.round(p.lat * SCALE)]),
     scale: SCALE,
     local,
+    areas,
   };
 
   const file = join(PACKS, entry.file);
@@ -160,6 +270,7 @@ for (const entry of index.packs) {
   const counts = [...table.types].reduce((m, c) => ((m[c] = (m[c] ?? 0) + 1), m), {});
   console.log(
     `pack ${entry.id}: ${kept.length} places ${JSON.stringify(counts)}, ` +
+      `${Object.keys(areas).length} with outlines, ` +
       `${(Buffer.byteLength(JSON.stringify(table)) / 1024).toFixed(0)} KB of ` +
       `${(Buffer.byteLength(json) / 1024).toFixed(0)} KB`
   );
