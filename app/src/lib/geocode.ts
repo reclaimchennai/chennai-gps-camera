@@ -31,6 +31,8 @@ export interface GeocodeResult {
   subAdminArea?: string;
   /** other areas the provider offered for the same point (Android) */
   altSubLocalities?: string[];
+  /** why a different answer than the provider's first was used */
+  pickNote?: string;
 }
 
 /**
@@ -108,6 +110,24 @@ export function cleanAddress(address: string, state?: string): string {
   // "…, Chennai, 600008" → "…, Chennai - 600008"
   joined = joined.replace(/,\s*(\d{6})$/, " - $1");
   return joined;
+}
+
+/**
+ * The road OpenStreetMap puts a point on — its road lines, not buildings.
+ * Asked only to settle which street the phone geocoder's answers are on
+ * when they disagree, so it gets a short deadline: no answer, no hint.
+ */
+async function osmRoad(lat: number, lng: number): Promise<string | undefined> {
+  const url =
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
+    `&lat=${lat}&lon=${lng}&zoom=17&addressdetails=1`;
+  const r = await fetch(url, {
+    headers: { "Accept-Language": "en" },
+    signal: AbortSignal.timeout(3_000),
+  });
+  if (!r.ok) return undefined;
+  const j = (await r.json()) as { address?: { road?: string } };
+  return j.address?.road;
 }
 
 async function nominatim(
@@ -429,7 +449,7 @@ export async function reverseGeocode(
     let r = raw;
     if (raw) {
       const refined = refineGeocode(raw, here.j, here.pack, lat, lng, lang);
-      refinements = refined.notes;
+      refinements = raw.pickNote ? [raw.pickNote, ...refined.notes] : refined.notes;
       r = {
         address: refined.address ?? raw.address,
         locality: refined.locality,
@@ -461,7 +481,14 @@ export async function reverseGeocode(
     const trySystem = async () => {
       // APK build: the OS geocoder answers offline-fast and costs nothing
       // (no-op in the browser)
-      const n = await nativeReverseGeocode(lat, lng, lang);
+      // only in Automatic, where OpenStreetMap is already one of the
+      // providers; a geocoder chosen by hand is not second-guessed
+      const n = await nativeReverseGeocode(
+        lat,
+        lng,
+        lang,
+        mode === "auto" && navigator.onLine ? () => osmRoad(lat, lng) : undefined
+      );
       return n
         ? {
             address: cleanAddress(n.addressLine, n.adminArea ?? stateFallback),
@@ -469,6 +496,7 @@ export async function reverseGeocode(
             subLocality: n.subLocality,
             subAdminArea: n.subAdminArea,
             altSubLocalities: n.altSubLocalities,
+            pickNote: n.pickNote,
           }
         : null;
     };

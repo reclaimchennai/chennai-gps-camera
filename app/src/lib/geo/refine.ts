@@ -76,7 +76,7 @@ function judge(
   lat: number,
   lng: number
 ): { verdict: Verdict; place: Place | null } {
-  const place = nearestNamed(pack, name, lat, lng);
+  const place = nearestNamed(pack, name, lat, lng, undefined, true);
   // Twice a place's reach: nearest-node is imprecise at boundaries, and a
   // name a couple of kilometres off inside a big suburb is still honest.
   if (place && place.distance <= REACH_M[place.type] * 2) {

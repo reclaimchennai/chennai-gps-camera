@@ -115,6 +115,62 @@ try {
         locality: "Adambakkam, Chennai",
         subLocality: "Adambakkam",
       }),
+      // 11. Android's answers at a photo on Brindavan Nagar Main Road, 7 m
+      // from the Mohanapuri 4th Street junction (recorded from the phone
+      // geocoder). Printed first: a corner plot on 4th Street.
+      brindavan: await (async () => {
+        const { pickAddress } = await import("/src/lib/geo/pickAddress.ts");
+        const { cleanAddress } = await import("/src/lib/geocode.ts");
+        const L = ", Adambakkam, Chennai, Tamil Nadu 600088, India";
+        const at = (line, thoroughfare, lat, lng) => ({ line: line + L, thoroughfare, subLocality: "Adambakkam", locality: "Chennai", adminArea: "Tamil Nadu", lat, lng });
+        const pick = (lat, lng, results, road) => {
+          const p = pickAddress(results, lat, lng, road);
+          return { line: p?.chosen.line ?? results[0].line, why: p?.why };
+        };
+        const main = pick(12.985842, 80.205096, [
+          at("Plot No-63, 4th St, Okkiayam, Thouraipakkam, New Colony", "4th Street", 12.9857723, 80.2052094),
+          at("46, Brindavan Nagar Main Rd, Okkiayam, Brindavan Nagar", "Brindavan Nagar Main Road", 12.9858278, 80.2049866),
+          at("Plot no 45A, Brindavan Nagar Main Rd, Okkiayam, Brindavan Nagar", "Brindavan Nagar Main Road", 12.9858303, 80.2050018),
+          at("4/64, Okkiayam, Thouraipakkam, Brindavan Nagar", undefined, 12.9856861, 80.2053094),
+          at("Brindavan Nagar, Mohanapuri, Brindavan Nagar", undefined, 12.986961, 80.205304),
+        ]);
+        // 80 m along 4th Street: there it IS the street
+        const side = pick(12.98567, 80.206, [
+          at("X6P4+7CF, Mohanapuri 4th St, Okkiayam", "Mohanapuri 4th Street", 12.9857, 80.20596),
+          at("14/69, Okkiayam, Thouraipakkam", undefined, 12.98555, 80.206),
+          at("15/62, Mohanapuri, Thouraipakkam", undefined, 12.98552, 80.20592),
+          at("14, Mohanapuri 4th St, Mohanapuri", "Mohanapuri 4th Street", 12.98581, 80.206),
+        ]);
+        // and where the first answer already was right, it is untouched
+        const first = pick(12.985698, 80.205033, [
+          at("46, Brindavan Nagar Main Rd, Okkiayam, Brindavan Nagar", "Brindavan Nagar Main Road", 12.9856918, 80.2050293),
+          at("18A, Brindavan Nagar Main Rd, Okkiayam, Brindavan Nagar", "Brindavan Nagar Main Road", 12.985709, 80.2049651),
+          at("4/64, Okkiayam, Thouraipakkam, Brindavan Nagar", undefined, 12.9856861, 80.2053094),
+        ]);
+        // 4 m from the junction: two 4th Street buildings (two spellings)
+        // outvote one on the main road; OpenStreetMap's road line settles it
+        const corner = [
+          at("Plot No-63, 4th St, Okkiayam, Thouraipakkam, New Colony", "4th Street", 12.9857723, 80.2052094),
+          at("No 56, 1, Mohanapuri 4th St, Okkiayam, Thouraipakkam", "Mohanapuri 4th Street", 12.9858793, 80.2051785),
+          at("56, Brindavan Nagar Main Rd, Mohanapuri", "Brindavan Nagar Main Road", 12.98594, 80.20507),
+          at("4/64, Okkiayam, Thouraipakkam, Brindavan Nagar", undefined, 12.9856861, 80.2053094),
+        ];
+        const { streetsDisagree } = await import("/src/lib/geo/pickAddress.ts");
+        const cornerNoHint = pick(12.9858, 80.20512, corner);
+        const cornerOsm = pick(12.9858, 80.20512, corner, "Brindavan Nagar Main Road");
+        const cornerElsewhere = pick(12.9858, 80.20512, corner, "Some Other Road");
+        const disagree = streetsDisagree(corner, 12.9858, 80.20512);
+        const agreeOnly = streetsDisagree(
+          [at("46, Brindavan Nagar Main Rd", "Brindavan Nagar Main Road", 12.9856918, 80.2050293)],
+          12.985698, 80.205033
+        );
+        const card = await run(12.985698, 80.205033, {
+          address: cleanAddress("36, Brindavan Nagar Main Rd, Okkiayam, Thouraipakkam, New Colony, Adambakkam, Chennai, Tamil Nadu 600088, India", "Tamil Nadu"),
+          locality: "Adambakkam, Chennai",
+          subLocality: "Adambakkam",
+        });
+        return { cornerNoHint, cornerOsm, cornerElsewhere, disagree, agreeOnly, main, side: { ...side, clean: cleanAddress(side.line, "Tamil Nadu") }, first, card };
+      })(),
     };
   });
 
@@ -150,6 +206,61 @@ try {
     // second call is served from the cache — it must hold the refined answer
     const cached = await reverseGeocode(12.929253, 80.202487);
     return { first, cached, diag: lastGeocodeDiagnostic() };
+  });
+
+  // The APK path end to end: the phone geocoder's recorded answers at the
+  // corner, through nativeReverseGeocode -> vote -> OpenStreetMap's road ->
+  // refine -> the card. A stand-in bridge replays what the phone said.
+  const apk = await page.evaluate(async () => {
+    const L = ", Adambakkam, Chennai, Tamil Nadu 600088, India";
+    const at = (line, thoroughfare, lat, lng) => ({ line: line + L, thoroughfare, subLocality: "Adambakkam", locality: "Chennai", adminArea: "Tamil Nadu", lat, lng });
+    const answers = {
+      // the corner: Google's streets disagree
+      "12.9858": [
+        at("Plot No-63, 4th St, Okkiayam, Thouraipakkam, New Colony", "4th Street", 12.9857723, 80.2052094),
+        at("No 56, 1, Mohanapuri 4th St, Okkiayam, Thouraipakkam", "Mohanapuri 4th Street", 12.9858793, 80.2051785),
+        at("56, Brindavan Nagar Main Rd, Mohanapuri", "Brindavan Nagar Main Road", 12.98594, 80.20507),
+      ],
+      // up the main road: every answer is on it
+      "12.9857": [
+        at("46, Brindavan Nagar Main Rd, Okkiayam, Brindavan Nagar", "Brindavan Nagar Main Road", 12.9856918, 80.2050293),
+        at("18A, Brindavan Nagar Main Rd, Okkiayam, Brindavan Nagar", "Brindavan Nagar Main Road", 12.985709, 80.2049651),
+      ],
+    };
+    window.Capacitor = {
+      Plugins: {
+        NativeBridge: {
+          reverseGeocode: async ({ lat }) => {
+            const results = answers[lat.toFixed(4)];
+            const a = results[0];
+            return { ok: true, addressLine: a.line, subLocality: a.subLocality, locality: a.locality, adminArea: a.adminArea, results };
+          },
+        },
+      },
+    };
+    const osmCalls = [];
+    window.fetch = async (url) => {
+      osmCalls.push(String(url));
+      return new Response(
+        JSON.stringify({ display_name: "Brindavan Nagar Main Road, Chennai", address: { road: "Brindavan Nagar Main Road" } }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    };
+    const { useSettingsStore } = await import("/src/store.ts");
+    useSettingsStore.getState().setSettings({ geocoder: "auto" });
+    const { clearAddressCache } = await import("/src/lib/geocache.ts");
+    await clearAddressCache();
+    const { reverseGeocode, lastGeocodeDiagnostic } = await import("/src/lib/geocode.ts");
+    const corner = await reverseGeocode(12.9858, 80.20512);
+    const cornerDiag = lastGeocodeDiagnostic();
+    const cornerCalls = osmCalls.length;
+    const along = await reverseGeocode(12.985698, 80.205033);
+    useSettingsStore.getState().setSettings({ geocoder: "system" });
+    await clearAddressCache();
+    const pinned = await reverseGeocode(12.9858, 80.20512);
+    useSettingsStore.getState().setSettings({ geocoder: "auto" });
+    delete window.Capacitor;
+    return { corner, cornerDiag, cornerCalls, alongCalls: osmCalls.length - cornerCalls, along, pinned };
   });
 
   const a = r.android;
@@ -232,6 +343,58 @@ try {
     "Adambakkam, outside it, is still Adambakkam",
     r.adambakkam.area === "Adambakkam" && /Adambakkam/.test(r.adambakkam.address) && !/Velachery/.test(r.adambakkam.address),
     `${r.adambakkam.address} | area ${r.adambakkam.area}`
+  );
+  const b = r.brindavan;
+  check(
+    "on a main road by a junction, the main road — not the corner plot facing the side street",
+    /^(46|Plot no 45A), Brindavan Nagar Main Rd/.test(b.main.line) && /4th St/.test(b.main.why ?? ""),
+    `${b.main.line.split(",").slice(0, 2).join(",")} | ${b.main.why}`
+  );
+  check(
+    "at the corner itself, OpenStreetMap's road line decides between Google's streets",
+    /^56, Brindavan Nagar Main Rd/.test(b.cornerOsm.line) && /OpenStreetMap/.test(b.cornerOsm.why ?? ""),
+    `${b.cornerOsm.line.split(",").slice(0, 2).join(",")} | ${b.cornerOsm.why}`
+  );
+  check(
+    "without it (offline), the vote stands; a road Google never named changes nothing",
+    /4th St/.test(b.cornerNoHint.line.split(",").slice(0, 3).join(",")) && b.cornerElsewhere.line === b.cornerNoHint.line,
+    `${b.cornerNoHint.line.split(",").slice(0, 3).join(",")} / ${b.cornerElsewhere.line.split(",").slice(0, 3).join(",")}`
+  );
+  check(
+    "OpenStreetMap is asked only when Google's answers name more than one street",
+    b.disagree === true && b.agreeOnly === false,
+    `disagree ${b.disagree}, single street ${b.agreeOnly}`
+  );
+  check(
+    "80 m into the side street, the side street — named even where Google's nearest answer is a grid code",
+    /^Mohanapuri 4th St/.test(b.side.clean),
+    b.side.clean
+  );
+  check(
+    "where the geocoder's first answer was already right, it is used unchanged",
+    /^46, Brindavan Nagar Main Rd/.test(b.first.line) && !b.first.why,
+    b.first.line.split(",").slice(0, 2).join(",")
+  );
+  check(
+    "Google's 'Thouraipakkam' is Thoraipakkam, 6 km away, and leaves the card",
+    !/Thouraipakkam/.test(b.card.address) && /^36, Brindavan Nagar Main Rd/.test(b.card.address) && /Adambakkam/.test(b.card.address),
+    `${b.card.address} | ${b.card.notes.join(" | ")}`
+  );
+  check(
+    "APK: at the corner the card names the main road, settled by OpenStreetMap",
+    /^56, Brindavan Nagar Main Rd/.test(apk.corner?.address ?? "") && apk.cornerCalls === 1 &&
+      (apk.cornerDiag?.refinements ?? []).some((n) => /OpenStreetMap puts this point/.test(n)),
+    `${apk.corner?.address} | OSM asked ${apk.cornerCalls}× | ${(apk.cornerDiag?.refinements ?? [])[0]}`
+  );
+  check(
+    "APK: where Google's answers agree, OpenStreetMap is not asked at all",
+    /^46, Brindavan Nagar Main Rd/.test(apk.along?.address ?? "") && apk.alongCalls === 0,
+    `${apk.along?.address} | OSM asked ${apk.alongCalls}×`
+  );
+  check(
+    "APK: with the phone geocoder chosen by hand, no other service is asked",
+    /^Plot No-63, 4th St/.test(apk.pinned?.address ?? ""),
+    apk.pinned?.address
   );
   check(
     "every change says why",

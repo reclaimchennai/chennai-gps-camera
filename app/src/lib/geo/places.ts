@@ -310,15 +310,48 @@ const squash = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
  * not one of the places we hold within `searchM` — not proof of anything,
  * since plenty of real neighbourhoods are unmapped.
  */
+/**
+ * A romanised Tamil name with its vowels and aspirates taken out:
+ * "Thoraipakkam", "Thouraipakkam" and "Thuraipakkam" are one place spelt
+ * three ways, and all come out "trpkm". Google printed "Thouraipakkam" for
+ * a spot in Adambakkam; matching only the exact spelling, the app could
+ * not tell it was the Thoraipakkam 6 km away and kept it on the card.
+ * Short names lose too much this way ("Okkiyam" is "kym"), so a skeleton
+ * under five letters is not used.
+ */
+function skeleton(s: string): string {
+  const k = s
+    .toLowerCase()
+    .replace(/[^a-z]/g, "")
+    .replace(/[aeiouyh]/g, "")
+    .replace(/(.)\1+/g, "$1");
+  return k.length >= 5 ? k : "";
+}
+
 export function nearestNamed(
   pack: GeoPack | null,
   name: string,
   lat: number,
   lng: number,
-  searchM = 8_000
+  searchM = 8_000,
+  /** also match other spellings of the name (see skeleton) when no
+   *  place has this exact one */
+  loose = false
+): Place | null {
+  const exact = nearestMatching(pack, squash(name), squash, lat, lng, searchM);
+  if (exact || !loose || /[^\x00-\x7f]/.test(name)) return exact;
+  return nearestMatching(pack, skeleton(name), skeleton, lat, lng, searchM);
+}
+
+function nearestMatching(
+  pack: GeoPack | null,
+  want: string,
+  key: (s: string) => string,
+  lat: number,
+  lng: number,
+  searchM: number
 ): Place | null {
   const d = decoded(pack);
-  const want = squash(name);
   if (!d || !want) return null;
   // Names compared before anything is built: in the statewide pack this
   // square holds thousands of places and only the matches matter. A
@@ -330,11 +363,11 @@ export function nearestNamed(
     // inside the place's outline is as near as it gets
     const m = insidePlace(d, i, lat, lng) ? 0 : nodeM;
     if (m >= bestM) return;
-    let hit = squash(d.names[i]) === want;
+    let hit = key(d.names[i]) === want;
     if (!hit) {
       for (const map of Object.values(d.local)) {
         const v = map[i];
-        if (v && squash(v) === want) {
+        if (v && key(v) === want) {
           hit = true;
           break;
         }

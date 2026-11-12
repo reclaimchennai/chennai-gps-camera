@@ -462,6 +462,19 @@ public class NativeBridgePlugin extends Plugin {
                     if (sl != null && seen.add(sl)) alts.put(sl);
                 }
                 if (alts.length() > 0) out.put("altSubLocalities", alts);
+                // Every answer, with where each one is. The first is the
+                // nearest BUILDING Google knows, and a corner plot faces the
+                // side street: standing on a main road a few metres from a
+                // junction printed the side street's address. The JS side
+                // chooses the street from all of them (lib/geo/pickAddress.ts).
+                com.getcapacitor.JSArray all = new com.getcapacitor.JSArray();
+                for (Address r : results) {
+                    JSObject c = describeAddress(r);
+                    if (r.getAdminArea() != null) c.put("adminArea", r.getAdminArea());
+                    if (r.getSubAdminArea() != null) c.put("subAdminArea", r.getSubAdminArea());
+                    all.put(c);
+                }
+                out.put("results", all);
                 call.resolve(out);
             } catch (Exception e) {
                 out.put("ok", false);

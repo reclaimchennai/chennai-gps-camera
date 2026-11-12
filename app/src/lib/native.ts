@@ -11,6 +11,7 @@
  *  - saveToGallery: MediaStore insert, because <a download> with a
  *    blob: URL does nothing inside an Android WebView.
  */
+import { pickAddress, streetsDisagree } from "./geo/pickAddress";
 
 interface NativeBridgePlugin {
   audioFocus(opts: { hold: boolean }): Promise<{ ok: boolean; holding?: boolean }>;
@@ -23,6 +24,8 @@ interface NativeBridgePlugin {
     subAdminArea?: string;
     /** every other sub-locality Android offered, nearest result first */
     altSubLocalities?: string[];
+    /** every answer, with its position (v1.49.2+) */
+    results?: (NativePlace & { adminArea?: string; subAdminArea?: string })[];
   }>;
   nearbyAddresses(opts: {
     lat: number;
@@ -288,6 +291,8 @@ export interface NativeAddress {
   /** the taluk on Indian addresses — what printed "Sholinganallur" */
   subAdminArea?: string;
   altSubLocalities?: string[];
+  /** why the street differs from the geocoder's first answer, if it does */
+  pickNote?: string;
 }
 
 /** OS reverse geocode (English). Null in the browser or on failure. */
@@ -313,7 +318,10 @@ const NATIVE_GEOCODE_MS = 8_000;
 export async function nativeReverseGeocode(
   lat: number,
   lng: number,
-  lang = "en"
+  lang = "en",
+  /** which road OpenStreetMap puts the point on — asked only when the
+   *  geocoder's answers name more than one street (lib/geo/pickAddress.ts) */
+  osmRoad?: () => Promise<string | undefined>
 ): Promise<NativeAddress | null> {
   const b = bridge();
   if (!b) return null;
@@ -327,6 +335,30 @@ export async function nativeReverseGeocode(
       ),
     ]);
     if (!r.ok || !r.addressLine) return null;
+    // The street is chosen from every answer, not taken from the first
+    // (lib/geo/pickAddress.ts). An older APK sends no list.
+    const all = r.results ?? [];
+    const road = all.length && osmRoad && streetsDisagree(all, lat, lng)
+      ? await osmRoad().catch(() => undefined)
+      : undefined;
+    const pick = all.length ? pickAddress(all, lat, lng, road) : null;
+    if (pick) {
+      const c = pick.chosen;
+      const alts: string[] = [];
+      for (const o of all) {
+        const sl = o.subLocality;
+        if (sl && sl !== c.subLocality && !alts.includes(sl)) alts.push(sl);
+      }
+      return {
+        addressLine: c.line,
+        subLocality: c.subLocality,
+        locality: c.locality,
+        adminArea: c.adminArea ?? r.adminArea,
+        subAdminArea: c.subAdminArea ?? r.subAdminArea,
+        altSubLocalities: alts.length ? alts : undefined,
+        pickNote: pick.why,
+      };
+    }
     return {
       addressLine: r.addressLine,
       subLocality: r.subLocality,

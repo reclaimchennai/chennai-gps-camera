@@ -38,8 +38,12 @@ interface Entry {
  * v5: places OSM maps as outlines are now in the place data. Without
  * them a Velachery street was refined into "…Velachery, Adambakkam,
  * Chennai", and a v4 entry may hold exactly that.
+ *
+ * v6: the phone geocoder's street is chosen from all its answers, not
+ * taken from the first (lib/geo/pickAddress.ts); a v5 entry may hold the
+ * side street of a corner plot for a spot on the main road.
  */
-const KEY = "geocache-v5";
+const KEY = "geocache-v6";
 /**
  * ~11 m at 4 decimal places.
  *
