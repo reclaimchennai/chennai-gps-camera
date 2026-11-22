@@ -9,7 +9,13 @@
  * backfill queue (backfill.ts) upgrades the photo later.
  */
 import { camera } from "./camera";
-import { readNativeStill } from "./nativeCamera";
+import {
+  nativeCamera,
+  readNativeFile,
+  readNativeStill,
+  type NativeStill,
+  type OverlayBand,
+} from "./nativeCamera";
 import { pinNear } from "./geo/addressPins";
 import { renderWatermark, type WatermarkAssets } from "./watermark/render";
 import { renderMiniMap } from "./watermark/minimap";
@@ -45,7 +51,8 @@ export async function chennaiSignAssets(
   await ensureCardFont("ta", resetScriptCache); // the boards carry Tamil
   return { gccEmblem, singaraLogo, corpLogo };
 }
-import { writeExif } from "./exif";
+import { writeExif, exifApp1 } from "./exif";
+import { suggestedName } from "./share";
 import { canvasToBlob, makeThumbnail, loadImage } from "./img";
 import { newId, putBlob, putMedia, getBlob } from "./db";
 import { useLiveStore, useSettingsStore } from "../store";
@@ -246,7 +253,10 @@ export interface CaptureJob {
    * burst keeps its photos on disk, not decoded in memory. Already upright
    * for how the phone was held and zoomed by the camera itself.
    */
-  still?: Promise<string>;
+  still?: Promise<NativeStill>;
+  /** the upright size the phone-camera still will have, when known at the
+   *  press — so its card can be drawn while the camera writes it */
+  size?: { w: number; h: number };
   /** mirror a front-camera still to match the mirrored preview */
   mirror?: boolean;
   /** where the address in `data` was looked up, if it came from the
@@ -314,7 +324,16 @@ export async function grabFrame(): Promise<{
   if (camera.engine === "native") {
     // the viewfinder first, so the animation shows the moment of the press
     const previewLater = camera.native.snapshot(220);
-    const still = camera.captureNative(physicalRotation());
+    const held = physicalRotation();
+    const still = camera.captureNative(held);
+    // stillW x stillH is the sensor's landscape frame; a portrait grip
+    // stands it upright
+    const sw = camera.native.info?.stillW ?? 0;
+    const sh = camera.native.info?.stillH ?? 0;
+    const sideways = held === 90 || held === -90;
+    const size = sw && sh
+      ? { w: sideways ? Math.max(sw, sh) : Math.min(sw, sh), h: sideways ? Math.min(sw, sh) : Math.max(sw, sh) }
+      : undefined;
     // an unread rejection would be reported as unhandled before the queue
     // gets to it; the queue still sees it through `still`
     still.catch(() => {});
@@ -326,6 +345,7 @@ export async function grabFrame(): Promise<{
         w: 0,
         h: 0,
         still,
+        size,
         mirror: camera.facing === "user" && settings.mirrorFrontPhoto,
         data,
         config,
@@ -442,7 +462,7 @@ function flyPreview(src: HTMLCanvasElement): string {
  */
 async function materialize(job: CaptureJob): Promise<void> {
   if (!job.still) return;
-  const bmp = await readNativeStill(await job.still);
+  const bmp = await readNativeStill((await job.still).path);
   try {
     job.w = bmp.width;
     job.h = bmp.height;
@@ -533,6 +553,16 @@ async function settleLocation(job: CaptureJob): Promise<CaptureJob["lookupResult
  * rapid-fire shooting without ever stalling the shutter.
  */
 export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
+  // A phone-camera still is finished natively — decoded, stamped, encoded
+  // and put in the gallery by the phone — unless something here has to
+  // read its pixels (live face blur) or the old path is all the APK has.
+  if (job.still && !job.liveBlur && nativeCamera()?.composite) {
+    try {
+      return await finishNatively(job);
+    } catch (e) {
+      console.warn("native finish failed; finishing in the page", e);
+    }
+  }
   await materialize(job);
   const { profile } = useSettingsStore.getState();
   const { canvas, w, h, data, config, liveBlur } = job;
@@ -635,6 +665,235 @@ export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
   if (wantsDeviceCopy) scheduleDownloads();
   // NOTE: plate OCR is user-initiated only (the Details ⓘ button) — no
   // automatic scanning of every capture.
+  return { record, thumb };
+}
+
+/**
+ * The card as strips of transparent PNG, for the phone to draw on a
+ * still. Only the rows that hold something are sent: the card along the
+ * bottom, the handles along an edge — a full-frame transparent PNG of a
+ * 12 MP photo would be mostly nothing, and still costly to encode.
+ */
+async function overlayBands(canvas: HTMLCanvasElement): Promise<OverlayBand[]> {
+  const W = canvas.width;
+  const H = canvas.height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("2d context unavailable");
+  // which cells of a coarse grid hold any ink, read a row of cells at a
+  // time so no single read is the whole photo
+  const cell = Math.max(8, Math.round(W / 96));
+  const gw = Math.ceil(W / cell);
+  const gh = Math.ceil(H / cell);
+  const inked = new Uint8Array(gw * gh);
+  const step = Math.max(2, Math.round(cell / 4));
+  for (let gy = 0; gy < gh; gy++) {
+    const y = gy * cell;
+    const rh = Math.min(cell, H - y);
+    const a = ctx.getImageData(0, y, W, rh).data;
+    for (let yy = 0; yy < rh; yy += step) {
+      const row = yy * W * 4;
+      for (let x = 0; x < W; x += step) {
+        if (a[row + x * 4 + 3] !== 0) inked[gy * gw + Math.floor(x / cell)] = 1;
+      }
+    }
+    if (gy % 16 === 15) await nextFrame();
+  }
+  const ink = (x: number, y: number) => inked[y * gw + x] === 1;
+  const rowHas = (y: number) => {
+    for (let x = 0; x < gw; x++) if (ink(x, y)) return true;
+    return false;
+  };
+  const runs: [number, number][] = [];
+  for (let y = 0; y < gh; y++) {
+    if (!rowHas(y)) continue;
+    const last = runs[runs.length - 1];
+    // a gap of a cell or two is the same element (between lines of text)
+    if (last && y - last[1] <= 2) last[1] = y;
+    else runs.push([y, y]);
+  }
+  const bands: OverlayBand[] = [];
+  for (const [r0, r1] of runs) {
+    let c0 = gw;
+    let c1 = -1;
+    for (let y = r0; y <= r1; y++) {
+      for (let x = 0; x < gw; x++) {
+        if (!ink(x, y)) continue;
+        if (x < c0) c0 = x;
+        if (x > c1) c1 = x;
+      }
+    }
+    // a cell of margin all round: the sampling steps over thin strokes
+    const x0 = Math.max(0, (c0 - 1) * cell);
+    const x1 = Math.min(W, (c1 + 2) * cell);
+    const y0 = Math.max(0, (r0 - 1) * cell);
+    const y1 = Math.min(H, (r1 + 2) * cell);
+    const bw = x1 - x0;
+    const bh = y1 - y0;
+    if (bw <= 0 || bh <= 0) continue;
+    const band = document.createElement("canvas");
+    band.width = bw;
+    band.height = bh;
+    band.getContext("2d")?.putImageData(ctx.getImageData(x0, y0, bw, bh), 0, 0);
+    // WebP, not PNG: Chrome encodes PNG on the page's own thread; WebP is
+    // encoded on a worker. Near-lossless is plenty — the phone encodes
+    // the photo as JPEG right after.
+    const img = await canvasToBlob(band, "image/webp", 0.97);
+    band.width = 0;
+    bands.push({ x: x0, y: y0, png: await blobToBase64(img) });
+    await nextFrame();
+  }
+  return bands;
+}
+
+/** Let the page draw a frame between heavy steps. */
+function nextFrame(): Promise<void> {
+  return new Promise((r) => requestAnimationFrame(() => r()));
+}
+
+function blobToBase64(b: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const s = String(fr.result);
+      resolve(s.slice(s.indexOf(",") + 1));
+    };
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(b);
+  });
+}
+
+/** Where the time went on the last native finish, for Diagnostics. */
+export let lastNativeFinish: Record<string, number> | null = null;
+
+/**
+ * A phone-camera still, finished by the phone. The page draws the card on
+ * a transparent canvas the size of the photo and builds the EXIF block;
+ * the plugin turns the still upright, draws the card's strips on, encodes
+ * once, writes it to the gallery and makes the thumbnail, off the page's
+ * thread. The page then stores the finished file as it is, undecoded.
+ */
+async function finishNatively(job: CaptureJob): Promise<CaptureResult> {
+  const t0 = performance.now();
+  const plugin = nativeCamera();
+  if (!plugin) throw new Error("native camera unavailable");
+  const { profile } = useSettingsStore.getState();
+  const { data, config } = job;
+
+  // Everything the card needs is known at the press, including the
+  // photo's size: draw it while the camera is still writing the photo,
+  // instead of after.
+  const prepared = (async () => {
+    if (job.noise) {
+      const db = await job.noise;
+      if (db != null && data.db == null) data.db = db;
+    }
+    const lookupResult = await settleLocation(job);
+    const assets: WatermarkAssets = {};
+    Object.assign(assets, await chennaiSignAssets(config, data));
+    if (config.fields.miniMap && data.fix) {
+      assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, lookupResult);
+    }
+    if (config.fields.qrCode && data.fix && !assets.qr) {
+      assets.qr = await renderLocationQr({ lat: data.fix.lat, lng: data.fix.lng, digipin: data.digipin });
+    }
+    if (config.fields.profilePhoto) assets.profilePhoto = await getProfilePhoto();
+    return assets;
+  })();
+  const cardFor = async (w: number, h: number, assets: WatermarkAssets) => {
+    await nextFrame();
+    const overlay = document.createElement("canvas");
+    overlay.width = w;
+    overlay.height = h;
+    // CPU-backed: the strips are read straight back out of it, and reading
+    // a GPU canvas of a whole photo stalled the page for half a second
+    const octx = overlay.getContext("2d", { willReadFrequently: true });
+    if (!octx) throw new Error("2d context unavailable");
+    renderWatermark(octx, w, h, data, config, profile, assets);
+    await nextFrame();
+    const bands = await overlayBands(overlay);
+    overlay.width = 0;
+    return { w, h, bands };
+  };
+  const early = job.size
+    ? prepared.then((assets) => cardFor(job.size!.w, job.size!.h, assets))
+    : null;
+  early?.catch(() => {});
+  const still = await job.still!;
+  if (!still.width || !still.height) throw new Error("still size unknown");
+  const w = still.width;
+  const h = still.height;
+  let card = early ? await early : null;
+  // the camera chose another size than it said: draw the card again for it
+  if (!card || card.w !== w || card.h !== h) card = await cardFor(w, h, await prepared);
+  const bands = card.bands;
+  const t1 = performance.now();
+  const t2 = t1;
+
+  const settings = useSettingsStore.getState().settings;
+  const wantsAddress = config.fields.address && !data.address;
+  const wantsGoogleMap =
+    config.fields.miniMap && config.onlineMapUpgrade && Boolean(settings.googleApiKey);
+  const needsBackfill =
+    Boolean(data.fix) && settings.geocoder !== "off" && (wantsAddress || wantsGoogleMap);
+
+  // Into the gallery now, unless the card is still waiting for its
+  // address: device files always carry the whole card (downloadQueue).
+  const toGallery = job.wantsDeviceCopy && !needsBackfill;
+  const done = await plugin.composite({
+    path: still.path,
+    bands,
+    mirror: job.mirror,
+    exif: exifApp1(data) ?? "",
+    quality: 92,
+    galleryName: toGallery ? suggestedName("photo", data.timestamp, "image/jpeg") : undefined,
+    takenAt: data.timestamp,
+  });
+  const t3 = performance.now();
+
+  const [finalBlob, thumb, rawBlob] = await Promise.all([
+    readNativeFile(done.path),
+    readNativeFile(done.thumb),
+    needsBackfill ? readNativeFile(still.path) : Promise.resolve(null),
+  ]);
+  for (const f of [done.path, done.thumb, still.path]) void plugin.release({ path: f });
+
+  const record: PhotoRecord = {
+    id: newId(),
+    kind: "photo",
+    createdAt: data.timestamp,
+    width: done.width,
+    height: done.height,
+    data,
+    config,
+    backfill: needsBackfill ? "pending" : "not-needed",
+    hasRaw: Boolean(rawBlob),
+    download: done.saved ? "done" : job.wantsDeviceCopy ? "queued" : undefined,
+  };
+  await putBlob(record.id, "final", finalBlob);
+  await putBlob(record.id, "thumb", thumb);
+  if (rawBlob) await putBlob(record.id, "raw", rawBlob);
+  await putMedia(record);
+  if (needsBackfill) scheduleBackfill();
+  if (record.download === "queued") scheduleDownloads();
+  const capMs = camera.native.lastCaptureMs;
+  lastNativeFinish = {
+    capture: capMs ?? -1,
+    // from the press's job reaching the queue to the card's strips ready
+    card: Math.round(t1 - t0),
+    bands: Math.round(t2 - t1),
+    bandCount: bands.length,
+    native: Math.round(t3 - t2),
+    decode: done.decodeMs,
+    draw: done.drawMs,
+    encode: done.encodeMs,
+    save: done.saveMs,
+    store: Math.round(performance.now() - t3),
+    total: Math.round(performance.now() - t0),
+  };
+  (window as unknown as { __gpscamFinish?: unknown[] }).__gpscamFinish = [
+    ...((window as unknown as { __gpscamFinish?: unknown[] }).__gpscamFinish ?? []).slice(-19),
+    lastNativeFinish,
+  ];
   return { record, thumb };
 }
 

@@ -72,6 +72,12 @@ dependencies {
     implementation "androidx.camera:camera-camera2:$camerax"
     implementation "androidx.camera:camera-lifecycle:$camerax"
     implementation "androidx.camera:camera-view:$camerax"
+    // recording on the phone's camera, with the card drawn into each frame
+    // on the GPU (OverlayEffect) — no per-frame work in the WebView
+    implementation "androidx.camera:camera-video:$camerax"
+    implementation "androidx.camera:camera-effects:$camerax"
+    // GPS and description tags on stills stamped natively
+    implementation "androidx.exifinterface:exifinterface:1.4.2"
 }
 
 apply from: 'capacitor.build.gradle'

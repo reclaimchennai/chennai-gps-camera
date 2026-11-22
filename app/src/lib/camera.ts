@@ -13,7 +13,7 @@ import { qualityPlan } from "./quality";
 import { useSettingsStore } from "../store";
 import { measureLensFactor, snapFactor } from "./lens-calibrate";
 import { NativeEngine, NATIVE_ZOOM_CAP } from "./camera-native";
-import { nativeCamera, nativeCameraAvailable, type NativeCameraEntry } from "./nativeCamera";
+import { nativeCamera, nativeCameraAvailable, type NativeCameraEntry, type NativeStill } from "./nativeCamera";
 import { judgeLight, readLight, type LightReading } from "./lightmeter";
 
 export type FacingMode = "environment" | "user";
@@ -2151,8 +2151,8 @@ export class CameraController {
    * A native still for how the phone is held (orientation.ts rotation),
    * as the path of the JPEG the camera wrote. The photo queue reads it.
    */
-  async captureNative(rotation: number): Promise<string> {
-    const path = await this.native.capture(rotation);
+  async captureNative(rotation: number): Promise<NativeStill> {
+    const still = await this.native.capture(rotation);
     const i = this.native.info;
     // stillW x stillH is the sensor's landscape frame; a portrait grip
     // stands it upright
@@ -2165,7 +2165,7 @@ export class CameraController {
       ms: this.native.lastCaptureMs ?? undefined,
       zsl: i?.zsl,
     };
-    return path;
+    return still;
   }
 
   /**

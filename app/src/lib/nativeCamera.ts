@@ -47,6 +47,43 @@ export interface NativeCameraEntry {
   lenses?: number;
 }
 
+/** A still the camera wrote, and its upright size when the plugin knows it. */
+export interface NativeStill {
+  path: string;
+  width?: number;
+  height?: number;
+}
+
+/** One strip of the card, at its place in the upright photo. */
+export interface OverlayBand {
+  x: number;
+  y: number;
+  /** PNG or WebP with alpha, base64 */
+  png: string;
+}
+
+export interface NativeComposite {
+  path: string;
+  thumb: string;
+  width: number;
+  height: number;
+  /** written to DCIM/GPS Camera */
+  saved: boolean;
+  decodeMs: number;
+  drawMs: number;
+  encodeMs: number;
+  saveMs: number;
+}
+
+/** A file the plugin wrote, as a Blob, without decoding it. */
+export async function readNativeFile(path: string): Promise<Blob> {
+  const c = cap();
+  const url = c?.convertFileSrc ? c.convertFileSrc(path) : `file://${path}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`read failed: ${res.status}`);
+  return res.blob();
+}
+
 export interface DeviceRect {
   x: number;
   y: number;
@@ -59,7 +96,13 @@ interface ListenerHandle {
 }
 
 interface NativeCameraPlugin {
-  start(opts: { facing: string; rect: DeviceRect; maxStill: number }): Promise<NativeCameraInfo>;
+  start(opts: {
+    facing: string;
+    rect: DeviceRect;
+    maxStill: number;
+    /** frame shape: "4:3" photos, "16:9" video */
+    aspect?: "4:3" | "16:9";
+  }): Promise<NativeCameraInfo>;
   stop(): Promise<void>;
   setRect(opts: { rect: DeviceRect }): Promise<void>;
   setVisible(opts: { visible: boolean }): Promise<void>;
@@ -69,7 +112,24 @@ interface NativeCameraPlugin {
   setTorch(opts: { on: boolean }): Promise<{ ok: boolean }>;
   setExposure(opts: { index: number }): Promise<{ ok: boolean; index?: number }>;
   light(): Promise<{ iso?: number; exposureNs?: number }>;
-  capture(opts: { rotation: number }): Promise<{ path: string; ms: number; zsl: boolean }>;
+  capture(opts: { rotation: number }): Promise<{
+    path: string;
+    ms: number;
+    zsl: boolean;
+    /** upright size of the JPEG (v1.50+) */
+    width?: number;
+    height?: number;
+  }>;
+  /** finish a still natively: upright, card drawn, EXIF, gallery, thumb */
+  composite(opts: {
+    path: string;
+    bands: OverlayBand[];
+    mirror?: boolean;
+    exif?: string;
+    quality?: number;
+    galleryName?: string;
+    takenAt?: number;
+  }): Promise<NativeComposite>;
   /** rear cameras and their lens factors, read without opening any */
   lensTable(): Promise<{ cameras: NativeCameraEntry[] }>;
   /** the viewfinder right now, small — for the shutter animation */

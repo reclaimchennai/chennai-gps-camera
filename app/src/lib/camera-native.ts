@@ -11,6 +11,7 @@ import {
   nativeCamera,
   type DeviceRect,
   type NativeCameraInfo,
+  type NativeStill,
 } from "./nativeCamera";
 
 type Handle = { remove(): Promise<void> | void };
@@ -281,7 +282,7 @@ export class NativeEngine {
    * photo queue, so a burst never holds more than one decoded photo in
    * memory however fast the shutter is pressed.
    */
-  async capture(rotation: number): Promise<string> {
+  async capture(rotation: number): Promise<NativeStill> {
     const p = nativeCamera();
     if (!p) throw new Error("native camera unavailable");
     const req = p.capture({ rotation });
@@ -289,7 +290,7 @@ export class NativeEngine {
     try {
       const r = await req;
       this.lastCaptureMs = r.ms;
-      return r.path;
+      return { path: r.path, width: r.width, height: r.height };
     } finally {
       this.inflight.delete(req);
     }

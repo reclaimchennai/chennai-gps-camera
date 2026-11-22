@@ -49,11 +49,36 @@ function binaryStringToBlob(s: string, type: string): Blob {
 }
 
 /** Insert GPS + descriptive EXIF into a JPEG blob. */
+/**
+ * The EXIF block for a photo, as the base64 APP1 payload ("Exif\0\0" and
+ * the TIFF structure) — for the phone to write into a still it finishes
+ * itself. Null if it cannot be built; the photo then simply has none.
+ */
+export function exifApp1(data: WatermarkData): string | null {
+  try {
+    return btoa(exifDump(data));
+  } catch {
+    return null;
+  }
+}
+
 export async function writeExif(
   jpeg: Blob,
   data: WatermarkData
 ): Promise<Blob> {
   try {
+    const exifBytes = exifDump(data);
+    const asString = await blobToBinaryString(jpeg);
+    const withExif = piexif.insert(exifBytes, asString);
+    return binaryStringToBlob(withExif, "image/jpeg");
+  } catch {
+    // Never lose a photo over metadata — return the plain JPEG.
+    return jpeg;
+  }
+}
+
+function exifDump(data: WatermarkData): string {
+  {
     const zeroth: Record<number, unknown> = {
       [piexif.ImageIFD.Software]: APP_NAME,
     };
@@ -75,7 +100,12 @@ export async function writeExif(
       if (j.trafficStation) descParts.push(`Traffic: ${j.trafficStation}`);
     }
     if (descParts.length) {
-      zeroth[piexif.ImageIFD.ImageDescription] = descParts.join(" | ");
+      // UTF-8 bytes, one per character of the string piexif writes: an
+      // address in Tamil or Hindi otherwise came out as the low bytes of
+      // each character, unreadable everywhere (and broke base64 below)
+      zeroth[piexif.ImageIFD.ImageDescription] = unescape(
+        encodeURIComponent(descParts.join(" | "))
+      );
     }
 
     if (data.fix) {
@@ -102,17 +132,11 @@ export async function writeExif(
         `${utc.getUTCFullYear()}:${pad(utc.getUTCMonth() + 1)}:${pad(utc.getUTCDate())}`;
     }
 
-    const exifBytes = piexif.dump({
+    return piexif.dump({
       "0th": zeroth,
       Exif: exif,
       GPS: gps,
     });
-    const asString = await blobToBinaryString(jpeg);
-    const withExif = piexif.insert(exifBytes, asString);
-    return binaryStringToBlob(withExif, "image/jpeg");
-  } catch {
-    // Never lose a photo over metadata — return the plain JPEG.
-    return jpeg;
   }
 }
 

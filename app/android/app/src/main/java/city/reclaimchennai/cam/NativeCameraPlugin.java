@@ -137,6 +137,8 @@ public class NativeCameraPlugin extends Plugin {
     private ImageCapture imageCapture;
     private int lensFacing = CameraSelector.LENS_FACING_BACK;
     private boolean zslActive = false;
+    /** Frame shape: 4:3 for photos (the whole sensor), 16:9 for video. */
+    private boolean wide169 = false;
     /** Long edge the stills are held to — see bindTo(). */
     private int maxStill = 4096;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -201,6 +203,7 @@ public class NativeCameraPlugin extends Plugin {
             : CameraSelector.LENS_FACING_BACK;
         final JSObject rect = call.getObject("rect", new JSObject());
         maxStill = Math.max(1280, Math.min(8192, call.getInt("maxStill", 4096)));
+        wide169 = "16:9".equals(call.getString("aspect", "4:3"));
         getActivity().runOnUiThread(() -> {
             final int gen = ++generation;
             try {
@@ -427,7 +430,7 @@ public class NativeCameraPlugin extends Plugin {
 
     /** First bind of a start: the main camera, then find its other lenses. */
     private void open(PluginCall call) {
-        mainSelector = new CameraSelector.Builder().requireLensFacing(lensFacing).build();
+        mainSelector = widestZooming(lensFacing);
         try {
             if (!provider.hasCamera(mainSelector)) {
                 teardownViews();
@@ -460,6 +463,55 @@ public class NativeCameraPlugin extends Plugin {
     }
 
     /**
+     * The camera to open for a facing: the one whose zoom reaches widest.
+     *
+     * Android hands apps the first camera of a facing by default, and on
+     * many phones that is the main lens alone (zoom 1x–8x). The same
+     * phones often also list a LOGICAL camera — main and ultrawide behind
+     * one id — that zooms from 0.5x to 8x and hands over between the
+     * lenses by itself; it is what the phone's own camera app uses. On a
+     * moto g84 that is camera 3. Opening it gives the ultrawide without
+     * a camera switch, so moving to 0.6x is as smooth as a pinch.
+     */
+    @SuppressLint("UnsafeOptInUsageError")
+    @androidx.annotation.OptIn(markerClass = ExperimentalCamera2Interop.class)
+    private CameraSelector widestZooming(int facing) {
+        CameraSelector fallback = new CameraSelector.Builder().requireLensFacing(facing).build();
+        if (android.os.Build.VERSION.SDK_INT < 30) return fallback;
+        try {
+            CameraInfo best = null;
+            float bestMin = 0.95f;
+            for (CameraInfo ci : provider.getAvailableCameraInfos()) {
+                if (ci.getLensFacing() != facing) continue;
+                CameraCharacteristics c = characteristics(idOf(ci));
+                if (c == null || !backwardCompatible(c)) continue;
+                Range<Float> zr = c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+                if (zr == null) continue;
+                if (zr.getLower() < bestMin - 0.01f) {
+                    best = ci;
+                    bestMin = zr.getLower();
+                }
+            }
+            if (best != null) {
+                Log.i("NativeCamera", "opening camera " + idOf(best) + ", zoom from " + bestMin);
+                return best.getCameraSelector();
+            }
+        } catch (Exception e) {
+            Log.w("NativeCamera", "camera choice failed", e);
+        }
+        return fallback;
+    }
+
+    private static boolean backwardCompatible(CameraCharacteristics c) {
+        int[] caps = c.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
+        if (caps == null) return false;
+        for (int cap : caps) {
+            if (cap == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE) return true;
+        }
+        return false;
+    }
+
+    /**
      * Bind preview and stills to one camera, replacing whatever was bound.
      * Throws if the camera will not open with them.
      */
@@ -468,11 +520,14 @@ public class NativeCameraPlugin extends Plugin {
     private void bindTo(CameraSelector selector) {
         provider.unbindAll();
 
-        // 16:9 for preview AND stills — the shape video and the app camera
-        // use, so a photo and a video of the same scene are framed alike
-        // (4:3 stills read as a different camera)
+        // Photos take the whole 4:3 sensor, as the phone's own camera does;
+        // video is 16:9. Preview and stills share the shape, so the
+        // viewfinder shows exactly the photo.
+        AspectRatioStrategy shape = wide169
+            ? AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY
+            : AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY;
         ResolutionSelector previewRes = new ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+            .setAspectRatioStrategy(shape)
             .build();
         // Stills are held to about 12 MP — the size the phone's own camera
         // app saves by default. HIGHEST_AVAILABLE is 50 or even 108 MP on
@@ -481,9 +536,9 @@ public class NativeCameraPlugin extends Plugin {
         // camera app runs out of memory. Expressed in the sensor's own
         // landscape frame.
         ResolutionSelector stillRes = new ResolutionSelector.Builder()
-            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+            .setAspectRatioStrategy(shape)
             .setResolutionStrategy(new ResolutionStrategy(
-                new Size(maxStill, maxStill * 9 / 16),
+                new Size(maxStill, wide169 ? maxStill * 9 / 16 : maxStill * 3 / 4),
                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER))
             .build();
 
@@ -1131,6 +1186,20 @@ public class NativeCameraPlugin extends Plugin {
                     JSObject res = new JSObject();
                     res.put("path", out.getAbsolutePath());
                     res.put("ms", (System.nanoTime() - started) / 1_000_000L);
+                    // the upright size, so the card can be drawn for it
+                    // before anything decodes the photo
+                    try {
+                        android.graphics.BitmapFactory.Options b = new android.graphics.BitmapFactory.Options();
+                        b.inJustDecodeBounds = true;
+                        android.graphics.BitmapFactory.decodeFile(out.getAbsolutePath(), b);
+                        int o = new androidx.exifinterface.media.ExifInterface(out.getAbsolutePath())
+                            .getRotationDegrees();
+                        boolean turn = o == 90 || o == 270;
+                        res.put("width", turn ? b.outHeight : b.outWidth);
+                        res.put("height", turn ? b.outWidth : b.outHeight);
+                    } catch (Exception ignored) {
+                        // the web layer decodes it instead
+                    }
                     res.put("zsl", zsl);
                     call.resolve(res);
                 }
@@ -1145,6 +1214,62 @@ public class NativeCameraPlugin extends Plugin {
         }
     }
 
+    /** finishes stills: never queued behind a capture being written */
+    private final ExecutorService compositeIo = Executors.newSingleThreadExecutor();
+
+    /**
+     * Finish a still natively (StillCompositor): upright, the card's bands
+     * drawn on, encoded once with the EXIF block, saved to the gallery when
+     * {@code galleryName} is given, plus a thumbnail. Resolves with the
+     * finished file, the thumbnail and where each step's time went.
+     *
+     * {@code bands}: [{x, y, png (base64)}] in the upright frame.
+     * {@code exif}: base64 APP1 payload, or empty.
+     */
+    @PluginMethod
+    public void composite(PluginCall call) {
+        final String path = call.getString("path", "");
+        final JSArray bandsIn = call.getArray("bands", new JSArray());
+        final boolean mirror = Boolean.TRUE.equals(call.getBoolean("mirror", false));
+        final String exif = call.getString("exif", "");
+        final int quality = Math.max(50, Math.min(100, call.getInt("quality", 92)));
+        final String galleryName = call.getString("galleryName", null);
+        final long takenAt = call.getLong("takenAt", System.currentTimeMillis());
+        compositeIo.execute(() -> {
+            try {
+                File still = new File(path);
+                File cache = getContext().getCacheDir();
+                if (!cache.equals(still.getParentFile()) || !still.getName().startsWith("native-cap-")) {
+                    call.reject("not a capture file");
+                    return;
+                }
+                List<StillCompositor.Band> bands = new ArrayList<>();
+                for (int i = 0; i < bandsIn.length(); i++) {
+                    org.json.JSONObject b = bandsIn.getJSONObject(i);
+                    byte[] png = StillCompositor.b64(b.optString("png", ""));
+                    if (png != null) bands.add(new StillCompositor.Band(b.optInt("x", 0), b.optInt("y", 0), png));
+                }
+                StillCompositor.Result r = StillCompositor.run(getContext(), still, bands, mirror,
+                    StillCompositor.b64(exif), quality, 480,
+                    galleryName != null && !galleryName.isEmpty() ? galleryName : null, takenAt);
+                JSObject out = new JSObject();
+                out.put("path", r.finalFile.getAbsolutePath());
+                out.put("thumb", r.thumbFile.getAbsolutePath());
+                out.put("width", r.width);
+                out.put("height", r.height);
+                out.put("saved", r.galleryUri != null);
+                out.put("decodeMs", r.decodeMs);
+                out.put("drawMs", r.drawMs);
+                out.put("encodeMs", r.encodeMs);
+                out.put("saveMs", r.saveMs);
+                call.resolve(out);
+            } catch (Throwable e) {
+                Log.w("NativeCamera", "composite failed", e);
+                call.reject("composite failed: " + e.getMessage());
+            }
+        });
+    }
+
     /** Delete a still the web layer has finished reading. */
     @PluginMethod
     public void release(PluginCall call) {
@@ -1153,7 +1278,8 @@ public class NativeCameraPlugin extends Plugin {
             File f = new File(path);
             File cache = getContext().getCacheDir();
             // only ever our own capture files
-            if (f.getName().startsWith("native-cap-")
+            String n = f.getName();
+            if ((n.startsWith("native-cap-") || n.startsWith("native-fin-") || n.startsWith("native-thm-"))
                     && cache.equals(f.getParentFile())) {
                 //noinspection ResultOfMethodCallIgnored
                 f.delete();
@@ -1179,7 +1305,8 @@ public class NativeCameraPlugin extends Plugin {
         }
         try {
             File[] stale = getContext().getCacheDir().listFiles(
-                (dir, name) -> name.startsWith("native-cap-"));
+                (dir, name) -> name.startsWith("native-cap-")
+                    || name.startsWith("native-fin-") || name.startsWith("native-thm-"));
             if (stale != null) {
                 long cutoff = System.currentTimeMillis() - 10 * 60 * 1000L;
                 for (File f : stale) {

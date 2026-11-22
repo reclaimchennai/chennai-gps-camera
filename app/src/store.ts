@@ -101,15 +101,29 @@ export function returnToSimpleCard(): void {
  */
 export function returnToAppCamera(): void {
   try {
-    if (localStorage.getItem("gpscam-app-camera-default") === "1") return;
     const st = useSettingsStore.getState();
     if (!st.hydrated) return;
     localStorage.setItem("gpscam-app-camera-default", "1");
-    if (localStorage.getItem("gpscam-engine-chosen") === "1") return;
-    if (st.settings.cameraEngine !== "browser") st.setSettings({ cameraEngine: "browser" });
+    phoneCameraDefault();
   } catch {
     // storage unavailable — leave the setting alone
   }
+}
+
+/**
+ * v1.50: the phone camera is the default again, once, for everyone who did
+ * not choose a camera in Settings themselves. What made it laggy in v1.48
+ * — every photo decoded, stamped and re-encoded in the WebView — is now
+ * done by the phone (StillCompositor.java), and on many phones (a moto g84
+ * among them) it is the only way to the ultrawide at all: the WebView is
+ * shown the main and front cameras and nothing else.
+ */
+function phoneCameraDefault(): void {
+  if (localStorage.getItem("gpscam-phone-camera-v150") === "1") return;
+  localStorage.setItem("gpscam-phone-camera-v150", "1");
+  if (localStorage.getItem("gpscam-engine-chosen") === "1") return;
+  const st = useSettingsStore.getState();
+  if (st.settings.cameraEngine !== "phone") st.setSettings({ cameraEngine: "phone" });
 }
 
 export const useLiveStore = create<LiveState>((set) => ({
@@ -151,7 +165,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // put a lag on the shutter, a delay before photos reached the gallery,
   // a camera handover between photo and video, darker shots on some
   // phones and differently framed photos. Opt-in until it matches.
-  cameraEngine: "browser",
+  cameraEngine: "phone",
   mirrorFrontPhoto: false,
   // Off by default for INSTALLED web apps: saving is a browser download,
   // and Chrome shows a banner for every one — after every photo. In a

@@ -125,6 +125,23 @@ export default function CameraView({ active }: { active: boolean }) {
       }
       box.style.setProperty("--vph", `${Math.round(h)}px`);
       box.style.setProperty("--vpw", `${Math.round(w)}px`);
+      // A 4:3 photo frame on a tall phone is shorter than the zone. Pinned
+      // to the very top it sat under the status bar and the flash and
+      // settings buttons, and left a black band of a quarter of the screen
+      // above the controls. Like the phone's own camera, the frame starts
+      // below the top buttons when there is room for that, and the band
+      // shrinks by as much.
+      const top = document.querySelector(".cam-top");
+      const room = vp.clientHeight - h;
+      let drop = 0;
+      if (top && room > 0) {
+        const below = top.getBoundingClientRect().bottom - vp.getBoundingClientRect().top + 8;
+        drop = Math.max(0, Math.min(room, below));
+      }
+      const was = box.style.marginTop;
+      box.style.marginTop = drop ? `${Math.round(drop)}px` : "";
+      // a move is not a resize: the native preview follows by hand
+      if (box.style.marginTop !== was) camera.syncViewport();
     };
     const frameAspect = (): number => {
       let a = 0;
