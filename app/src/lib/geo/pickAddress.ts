@@ -49,6 +49,8 @@ const REACH_M = 40;
 /** the distance at which an answer's vote is worth half a nearby one's */
 const HALF_M = 15;
 
+const PLUS_CODE = /^[23456789CFGHJMPQRVWX]{2,8}\+/i;
+
 const ABBR = new Map([
   ["rd", "road"],
   ["st", "street"],
@@ -100,6 +102,16 @@ export function pickAddress<T extends GeocodedPlace>(
   /** the road OpenStreetMap puts this point on, when it was asked */
   osmRoad?: string
 ): Pick<T> | null {
+  // The vote chooses BETWEEN STREETS. When the geocoder's own first answer
+  // names none — a house numbered within its sector or block, as all of
+  // Chandigarh and many Indian layouts are ("128, Sector 11-A") — there is
+  // no street to correct, and that answer is the most precise one there
+  // is. v1.49.2 let the nearest house on a named road outvote it, and a
+  // photo taken at home in Sector 11 was stamped "178, Vidya Path".
+  // (A Plus Code first answer is different: it is Google having no
+  // address at all for the spot, and its street is what the vote is for.)
+  const first = results[0];
+  if (first && first.line && !first.thoroughfare && !PLUS_CODE.test(first.line.trim())) return null;
   const streets = streetsNear(results, lat, lng);
   // no street near enough to judge: the geocoder's own choice stands
   if (streets.length === 0) return null;
@@ -110,7 +122,6 @@ export function pickAddress<T extends GeocodedPlace>(
   const win = onOsm ?? streets[0];
   const chosen = win.nearest;
   if (chosen === results[0]) return { chosen };
-  const first = results[0];
   const firstStreet = first.thoroughfare ? `"${first.thoroughfare}"` : "no street";
   const tally = streets.map((s) => `${s.name} ${s.score.toFixed(2)}`).join(", ");
   const reason = onOsm && onOsm !== streets[0]

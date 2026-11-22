@@ -156,6 +156,14 @@ try {
           at("4/64, Okkiayam, Thouraipakkam, Brindavan Nagar", undefined, 12.9856861, 80.2053094),
         ];
         const { streetsDisagree } = await import("/src/lib/geo/pickAddress.ts");
+        // Chandigarh: houses are numbered within the sector, with no street.
+        // The first answer is the house; a numbered house on the nearest
+        // named road must not outvote it (v1.49.2 did: "178, Vidya Path").
+        const sector = pick(30.761618, 76.784141, [
+          { line: "128, Sector 11-A, Sector 11, Chandigarh, 160011, India", subLocality: "Sector 11", locality: "Chandigarh", lat: 30.76163, lng: 76.78412 },
+          { line: "178, Vidya Path, Sector 11-A, Sector 11, Chandigarh, 160011, India", thoroughfare: "Vidya Path", subLocality: "Sector 11", locality: "Chandigarh", lat: 30.76171, lng: 76.78418 },
+          { line: "180, Vidya Path, Sector 11-A, Sector 11, Chandigarh, 160011, India", thoroughfare: "Vidya Path", subLocality: "Sector 11", locality: "Chandigarh", lat: 30.76175, lng: 76.78421 },
+        ]);
         const cornerNoHint = pick(12.9858, 80.20512, corner);
         const cornerOsm = pick(12.9858, 80.20512, corner, "Brindavan Nagar Main Road");
         const cornerElsewhere = pick(12.9858, 80.20512, corner, "Some Other Road");
@@ -169,7 +177,7 @@ try {
           locality: "Adambakkam, Chennai",
           subLocality: "Adambakkam",
         });
-        return { cornerNoHint, cornerOsm, cornerElsewhere, disagree, agreeOnly, main, side: { ...side, clean: cleanAddress(side.line, "Tamil Nadu") }, first, card };
+        return { sector, cornerNoHint, cornerOsm, cornerElsewhere, disagree, agreeOnly, main, side: { ...side, clean: cleanAddress(side.line, "Tamil Nadu") }, first, card };
       })(),
     };
   });
@@ -349,6 +357,11 @@ try {
     "on a main road by a junction, the main road — not the corner plot facing the side street",
     /^(46|Plot no 45A), Brindavan Nagar Main Rd/.test(b.main.line) && /4th St/.test(b.main.why ?? ""),
     `${b.main.line.split(",").slice(0, 2).join(",")} | ${b.main.why}`
+  );
+  check(
+    "a house numbered within its sector keeps its address; no nearby road outvotes it",
+    /^128, Sector 11-A/.test(b.sector.line) && !b.sector.why,
+    b.sector.line.split(",").slice(0, 3).join(",")
   );
   check(
     "at the corner itself, OpenStreetMap's road line decides between Google's streets",

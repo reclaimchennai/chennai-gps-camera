@@ -283,6 +283,7 @@ public class NativeCameraPlugin extends Plugin {
             } catch (Exception ignored) {
                 // already released
             }
+            stopReframeWatch();
             camera = null;
             imageCapture = null;
             videoCapture = null;
@@ -1111,14 +1112,23 @@ public class NativeCameraPlugin extends Plugin {
                     FocusMeteringAction.FLAG_AF
                         | FocusMeteringAction.FLAG_AE
                         | FocusMeteringAction.FLAG_AWB);
-                if (lock) b.disableAutoCancel();
-                else b.setAutoCancelDuration(5, TimeUnit.SECONDS);
+                // Both kinds hold until we let go. A tap holds focus on the
+                // subject until the phone is turned to a new scene (see
+                // watchForReframe), as the phone's own camera does; it used
+                // to drop back to centre autofocus after 5 s, while the
+                // tapped subject was still being framed. A lock holds until
+                // the next tap.
+                b.disableAutoCancel();
+                if (lock) stopReframeWatch();
+                else watchForReframe();
                 ListenableFuture<FocusMeteringResult> fut =
                     camera.getCameraControl().startFocusAndMetering(b.build());
                 fut.addListener(() -> {
                     JSObject out = new JSObject();
                     try {
-                        out.put("success", fut.get().isFocusSuccessful());
+                        boolean ok = fut.get().isFocusSuccessful();
+                        Log.i("NativeCamera", "focus at " + nx + "," + ny + (lock ? " (lock)" : "") + ": " + ok);
+                        out.put("success", ok);
                     } catch (Exception e) {
                         // cancelled by a newer tap, or no AF on this lens
                         out.put("success", false);
@@ -1133,9 +1143,80 @@ public class NativeCameraPlugin extends Plugin {
         });
     }
 
+    // ---- tap-to-focus that stays on the subject --------------------------
+
+    /** Turned this far from where the tap was made, it is a new scene. */
+    private static final double REFRAME_DEGREES = 6.0;
+    /** And however still the phone is, a tap does not hold forever. */
+    private static final long TAP_HOLD_MAX_MS = 60_000;
+    private android.hardware.SensorEventListener reframeListener;
+    private float[] tapAttitude;
+    private final Runnable tapExpired = this::releaseTapFocus;
+
+    /** Return to continuous autofocus when the phone turns to a new scene. */
+    private void watchForReframe() {
+        stopReframeWatch();
+        android.hardware.SensorManager sm =
+            (android.hardware.SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
+        if (sm == null) return;
+        android.hardware.Sensor rv = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR);
+        if (rv == null) rv = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR);
+        main.postDelayed(tapExpired, TAP_HOLD_MAX_MS);
+        if (rv == null) return;
+        tapAttitude = null;
+        reframeListener = new android.hardware.SensorEventListener() {
+            @Override
+            public void onSensorChanged(android.hardware.SensorEvent e) {
+                float[] q = new float[4];
+                android.hardware.SensorManager.getQuaternionFromVector(q, e.values);
+                if (tapAttitude == null) {
+                    tapAttitude = q;
+                    return;
+                }
+                double dot = Math.abs(q[0] * tapAttitude[0] + q[1] * tapAttitude[1]
+                    + q[2] * tapAttitude[2] + q[3] * tapAttitude[3]);
+                double deg = Math.toDegrees(2 * Math.acos(Math.min(1.0, dot)));
+                if (deg > REFRAME_DEGREES) {
+                    Log.i("NativeCamera", "reframed " + Math.round(deg) + "°: back to continuous focus");
+                    main.post(NativeCameraPlugin.this::releaseTapFocus);
+                }
+            }
+
+            @Override
+            public void onAccuracyChanged(android.hardware.Sensor s, int a) {}
+        };
+        sm.registerListener(reframeListener, rv, android.hardware.SensorManager.SENSOR_DELAY_UI);
+    }
+
+    private void stopReframeWatch() {
+        main.removeCallbacks(tapExpired);
+        if (reframeListener != null) {
+            android.hardware.SensorManager sm =
+                (android.hardware.SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
+            if (sm != null) sm.unregisterListener(reframeListener);
+            reframeListener = null;
+        }
+        tapAttitude = null;
+    }
+
+    /** The scene changed: back to continuous focus, and tell the page so
+     *  its focus ring and exposure slider can go. */
+    private void releaseTapFocus() {
+        stopReframeWatch();
+        try {
+            if (camera != null) camera.getCameraControl().cancelFocusAndMetering();
+        } catch (Exception ignored) {
+            // nothing to cancel
+        }
+        JSObject ev = new JSObject();
+        ev.put("state", "continuous");
+        notifyListeners("focus", ev);
+    }
+
     /** Back to continuous autofocus and auto exposure. */
     @PluginMethod
     public void cancelFocus(PluginCall call) {
+        stopReframeWatch();
         getActivity().runOnUiThread(() -> {
             try {
                 if (camera != null) camera.getCameraControl().cancelFocusAndMetering();
