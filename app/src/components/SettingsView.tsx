@@ -297,11 +297,11 @@ export default function SettingsView() {
           <div>
             {phoneCam && (
               <div className="row" style={{ display: "block" }}>
-                <div className="label">Camera for photos</div>
+                <div className="label">Camera</div>
                 <div className="hint" style={{ margin: "2px 0 8px" }}>
                   {settings.cameraEngine === "phone"
-                    ? "Phone camera: the phone's real lenses as you zoom, including the wide lens, tap-to-focus at the point, and full-resolution photos finished by the phone itself."
-                    : "App camera: the browser's view of the camera. Lower-resolution photos, and on many phones no wide lens. Needed only for live face blur."}
+                    ? "Phone camera: the phone's real lenses as you zoom, including the wide lens where the phone allows apps to use it, focus that stays on what you tap, full-resolution photos, and video recorded by the phone with the card in every frame."
+                    : "App camera: the browser's view of the camera. Lower-resolution photos, and on many phones no wide lens. Live face blur always uses it."}
                 </div>
                 <div className="seg" style={{ width: "100%" }}>
                   {(

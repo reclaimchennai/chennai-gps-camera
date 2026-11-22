@@ -73,6 +73,13 @@ export class NativeEngine {
   async setMode(mode: "photo" | "video", rec: { longEdge: number; bitrate: number }): Promise<boolean> {
     const p = nativeCamera();
     if (!p?.setMode || !this.info) return false;
+    // a photo still being written would fail under the rebind: let it land
+    if (this.inflight.size) {
+      await Promise.race([
+        Promise.allSettled(this.inflight),
+        new Promise((r) => window.setTimeout(r, CAPTURE_DRAIN_MS)),
+      ]);
+    }
     try {
       this.info = await withTimeout(
         p.setMode({ mode, recordLongEdge: rec.longEdge, recordBitrate: rec.bitrate }),
