@@ -15,10 +15,8 @@ import { useSettingsStore } from "../store";
 import { langOf } from "./watermark/signboard";
 import { langsFor } from "./i18n/languages";
 import { cachedAddress, rememberAddress } from "./geocache";
-import { currentPackId, loadGeodataFor, type GeoPack } from "./geo/geodata";
+import { currentPackId, loadGeodataFor } from "./geo/geodata";
 import { lookup } from "./geo/lookup";
-import { refineGeocode } from "./geo/refine";
-import type { Jurisdiction } from "../types";
 import { nativeReverseGeocode } from "./native";
 
 export interface GeocodeResult {
@@ -31,8 +29,6 @@ export interface GeocodeResult {
   subAdminArea?: string;
   /** other areas the provider offered for the same point (Android) */
   altSubLocalities?: string[];
-  /** why a different answer than the provider's first was used */
-  pickNote?: string;
 }
 
 /**
@@ -110,24 +106,6 @@ export function cleanAddress(address: string, state?: string): string {
   // "…, Chennai, 600008" → "…, Chennai - 600008"
   joined = joined.replace(/,\s*(\d{6})$/, " - $1");
   return joined;
-}
-
-/**
- * The road OpenStreetMap puts a point on — its road lines, not buildings.
- * Asked only to settle which street the phone geocoder's answers are on
- * when they disagree, so it gets a short deadline: no answer, no hint.
- */
-async function osmRoad(lat: number, lng: number): Promise<string | undefined> {
-  const url =
-    `https://nominatim.openstreetmap.org/reverse?format=jsonv2` +
-    `&lat=${lat}&lon=${lng}&zoom=17&addressdetails=1`;
-  const r = await fetch(url, {
-    headers: { "Accept-Language": "en" },
-    signal: AbortSignal.timeout(3_000),
-  });
-  if (!r.ok) return undefined;
-  const j = (await r.json()) as { address?: { road?: string } };
-  return j.address?.road;
 }
 
 async function nominatim(
@@ -273,21 +251,6 @@ function inLanguage(text: string | undefined, lang: string): boolean {
  * app exists — so they are also the yardstick for whether an outside
  * geocoder's answer is plausible.
  */
-/** Our own pack and jurisdiction for this point — what refinement checks
- *  a geocoder's place names against. */
-async function localContext(
-  lat: number,
-  lng: number
-): Promise<{ pack: GeoPack | null; j: Jurisdiction | null }> {
-  try {
-    const pack = await loadGeodataFor(lat, lng);
-    if (!pack) return { pack: null, j: null };
-    return { pack, j: lookup(pack, lat, lng).jurisdiction };
-  } catch {
-    return { pack: null, j: null };
-  }
-}
-
 async function localTruth(lat: number, lng: number): Promise<string[]> {
   try {
     const pack = await loadGeodataFor(lat, lng);
@@ -406,7 +369,6 @@ export async function reverseGeocode(
   // A place we have already asked about answers instantly and costs the
   // provider nothing. Same cell, same language, within a month.
   const truth = await localTruth(lat, lng);
-  const here = await localContext(lat, lng);
   // The setting changes what is STORED (a suppressed entry has no
   // locality at all), so entries must not cross between the two modes —
   // toggling it would otherwise keep serving the other mode's answers
@@ -441,20 +403,16 @@ export async function reverseGeocode(
     provider: string,
     raw: GeocodeResult | null
   ): Promise<GeocodeResult | null> => {
-    // Check the answer's PLACE names against our own data before anything
-    // else sees it: a geocoder climbs an administrative ladder and prints
-    // zones and taluks as if they were neighbourhoods (lib/geo/refine.ts).
-    // The street it gave is kept exactly; only the places are judged.
-    let refinements: string[] = [];
-    let r = raw;
-    if (raw) {
-      const refined = refineGeocode(raw, here.j, here.pack, lat, lng, lang);
-      refinements = raw.pickNote ? [raw.pickNote, ...refined.notes] : refined.notes;
-      r = {
-        address: refined.address ?? raw.address,
-        locality: refined.locality,
-      };
-    }
+    // The geocoder's answer, as it gave it. On the phone that is Android's
+    // own geocoder (Google's address for the spot), which is what every
+    // other camera app prints. Layers of correction on top of it — a
+    // street vote, an OpenStreetMap tie-break, renaming areas from our own
+    // place data — each fixed one place and broke another (v1.47–v1.50:
+    // Adambakkam stamped on Velachery, a Vidya Path house on 128 Sector
+    // 11-A). Ward, zone and police come from our boundary maps, not from
+    // here, and are unaffected.
+    const refinements: string[] = [];
+    const r = raw ? { address: raw.address, locality: raw.locality } : null;
     const ok = corroborated(r, truth);
     // With civic-body names off, the geocoder's answer stands as given —
     // corroboration is still MEASURED, so Diagnostics can still show
@@ -481,14 +439,7 @@ export async function reverseGeocode(
     const trySystem = async () => {
       // APK build: the OS geocoder answers offline-fast and costs nothing
       // (no-op in the browser)
-      // only in Automatic, where OpenStreetMap is already one of the
-      // providers; a geocoder chosen by hand is not second-guessed
-      const n = await nativeReverseGeocode(
-        lat,
-        lng,
-        lang,
-        mode === "auto" && navigator.onLine ? () => osmRoad(lat, lng) : undefined
-      );
+      const n = await nativeReverseGeocode(lat, lng, lang);
       return n
         ? {
             address: cleanAddress(n.addressLine, n.adminArea ?? stateFallback),
@@ -496,7 +447,6 @@ export async function reverseGeocode(
             subLocality: n.subLocality,
             subAdminArea: n.subAdminArea,
             altSubLocalities: n.altSubLocalities,
-            pickNote: n.pickNote,
           }
         : null;
     };
