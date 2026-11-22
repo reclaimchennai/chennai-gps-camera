@@ -12,6 +12,8 @@ import {
   type DeviceRect,
   type NativeCameraInfo,
   type NativeStill,
+  type NativeRecorded,
+  type OverlayBand,
 } from "./nativeCamera";
 
 type Handle = { remove(): Promise<void> | void };
@@ -62,10 +64,47 @@ export class NativeEngine {
   /** stills asked for and not yet written */
   private inflight = new Set<Promise<unknown>>();
 
+  /** This APK records natively (v1.50+). */
+  get recordsVideo(): boolean {
+    return typeof nativeCamera()?.startRecording === "function";
+  }
+
+  /** Photo <-> video on the running camera, behind the last frame. */
+  async setMode(mode: "photo" | "video", rec: { longEdge: number; bitrate: number }): Promise<boolean> {
+    const p = nativeCamera();
+    if (!p?.setMode || !this.info) return false;
+    try {
+      this.info = await withTimeout(
+        p.setMode({ mode, recordLongEdge: rec.longEdge, recordBitrate: rec.bitrate }),
+        START_TIMEOUT_MS
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async setOverlay(bands: OverlayBand[], width: number, height: number): Promise<void> {
+    await nativeCamera()?.setOverlay?.({ bands, width, height });
+  }
+
+  async startRecording(rotation: number, at?: { lat: number; lng: number } | null) {
+    const p = nativeCamera();
+    if (!p?.startRecording) throw new Error("native recording unavailable");
+    return p.startRecording({ rotation, lat: at?.lat, lng: at?.lng });
+  }
+
+  async stopRecording(galleryName?: string): Promise<NativeRecorded> {
+    const p = nativeCamera();
+    if (!p?.stopRecording) throw new Error("native recording unavailable");
+    return p.stopRecording({ galleryName });
+  }
+
   async start(
     box: Element,
     facing: "environment" | "user",
-    maxStill: number
+    maxStill: number,
+    opts: { mode?: "photo" | "video"; recordLongEdge?: number; recordBitrate?: number } = {}
   ): Promise<boolean> {
     const p = nativeCamera();
     if (!p) return false;
@@ -98,7 +137,10 @@ export class NativeEngine {
       );
       const rect = deviceRectOf(box);
       this.lastRect = JSON.stringify(rect);
-      this.info = await withTimeout(p.start({ facing, rect, maxStill }), START_TIMEOUT_MS);
+      this.info = await withTimeout(
+        p.start({ facing, rect, maxStill, mode: opts.mode, recordLongEdge: opts.recordLongEdge, recordBitrate: opts.recordBitrate }),
+        START_TIMEOUT_MS
+      );
       this.zoom = this.info.zoom ?? 1;
       this.torchOn = false;
       this.lastPoint = null;

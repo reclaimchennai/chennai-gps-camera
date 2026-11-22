@@ -674,7 +674,7 @@ export async function processCapture(job: CaptureJob): Promise<CaptureResult> {
  * bottom, the handles along an edge — a full-frame transparent PNG of a
  * 12 MP photo would be mostly nothing, and still costly to encode.
  */
-async function overlayBands(canvas: HTMLCanvasElement): Promise<OverlayBand[]> {
+async function inkedRects(canvas: HTMLCanvasElement): Promise<StripRect[]> {
   const W = canvas.width;
   const H = canvas.height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -711,7 +711,7 @@ async function overlayBands(canvas: HTMLCanvasElement): Promise<OverlayBand[]> {
     if (last && y - last[1] <= 2) last[1] = y;
     else runs.push([y, y]);
   }
-  const bands: OverlayBand[] = [];
+  const rects: StripRect[] = [];
   for (const [r0, r1] of runs) {
     let c0 = gw;
     let c1 = -1;
@@ -729,20 +729,79 @@ async function overlayBands(canvas: HTMLCanvasElement): Promise<OverlayBand[]> {
     const y1 = Math.min(H, (r1 + 2) * cell);
     const bw = x1 - x0;
     const bh = y1 - y0;
-    if (bw <= 0 || bh <= 0) continue;
+    if (bw > 0 && bh > 0) rects.push({ x: x0, y: y0, w: bw, h: bh });
+  }
+  return rects;
+}
+
+/** The images a card draws: crest, mini map, QR, profile photo. */
+export async function cardAssets(
+  data: WatermarkData,
+  config: import("../types").WatermarkConfig,
+  lookupResult: CaptureJob["lookupResult"]
+): Promise<WatermarkAssets> {
+  const assets: WatermarkAssets = {};
+  Object.assign(assets, await chennaiSignAssets(config, data));
+  if (config.fields.miniMap && data.fix) {
+    assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, lookupResult);
+  }
+  if (config.fields.qrCode && data.fix && !assets.qr) {
+    assets.qr = await renderLocationQr({ lat: data.fix.lat, lng: data.fix.lng, digipin: data.digipin });
+  }
+  if (config.fields.profilePhoto) assets.profilePhoto = await getProfilePhoto();
+  return assets;
+}
+
+/**
+ * The card for a frame of w x h, as the strips that hold ink — for the
+ * phone to draw on a still, or into every frame of a recording. Where it
+ * was drawn last time can be passed in (`where`): a recording redraws
+ * the card every second in the same place, and skipping the search for
+ * it is most of the cost.
+ */
+export async function cardStrips(
+  w: number,
+  h: number,
+  data: WatermarkData,
+  config: import("../types").WatermarkConfig,
+  profile: import("../types").Profile,
+  assets: WatermarkAssets,
+  where?: StripRect[]
+): Promise<{ bands: OverlayBand[]; where: StripRect[] }> {
+  await nextFrame();
+  const overlay = document.createElement("canvas");
+  overlay.width = w;
+  overlay.height = h;
+  // CPU-backed: the strips are read straight back out of it, and reading
+  // a GPU canvas of a whole photo stalled the page for half a second
+  const octx = overlay.getContext("2d", { willReadFrequently: true });
+  if (!octx) throw new Error("2d context unavailable");
+  renderWatermark(octx, w, h, data, config, profile, assets);
+  await nextFrame();
+  const rects = where ?? (await inkedRects(overlay));
+  const bands: OverlayBand[] = [];
+  for (const r of rects) {
     const band = document.createElement("canvas");
-    band.width = bw;
-    band.height = bh;
-    band.getContext("2d")?.putImageData(ctx.getImageData(x0, y0, bw, bh), 0, 0);
+    band.width = r.w;
+    band.height = r.h;
+    band.getContext("2d")?.putImageData(octx.getImageData(r.x, r.y, r.w, r.h), 0, 0);
     // WebP, not PNG: Chrome encodes PNG on the page's own thread; WebP is
-    // encoded on a worker. Near-lossless is plenty — the phone encodes
-    // the photo as JPEG right after.
+    // encoded on a worker. Near-lossless is plenty — the phone encodes the
+    // photo as JPEG (or the frame as video) right after.
     const img = await canvasToBlob(band, "image/webp", 0.97);
     band.width = 0;
-    bands.push({ x: x0, y: y0, png: await blobToBase64(img) });
+    bands.push({ x: r.x, y: r.y, png: await blobToBase64(img) });
     await nextFrame();
   }
-  return bands;
+  overlay.width = 0;
+  return { bands, where: rects };
+}
+
+export interface StripRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 /** Let the page draw a frame between heavy steps. */
@@ -788,32 +847,13 @@ async function finishNatively(job: CaptureJob): Promise<CaptureResult> {
       if (db != null && data.db == null) data.db = db;
     }
     const lookupResult = await settleLocation(job);
-    const assets: WatermarkAssets = {};
-    Object.assign(assets, await chennaiSignAssets(config, data));
-    if (config.fields.miniMap && data.fix) {
-      assets.miniMap = await renderMiniMap(data.fix.lat, data.fix.lng, lookupResult);
-    }
-    if (config.fields.qrCode && data.fix && !assets.qr) {
-      assets.qr = await renderLocationQr({ lat: data.fix.lat, lng: data.fix.lng, digipin: data.digipin });
-    }
-    if (config.fields.profilePhoto) assets.profilePhoto = await getProfilePhoto();
-    return assets;
+    return cardAssets(data, config, lookupResult);
   })();
-  const cardFor = async (w: number, h: number, assets: WatermarkAssets) => {
-    await nextFrame();
-    const overlay = document.createElement("canvas");
-    overlay.width = w;
-    overlay.height = h;
-    // CPU-backed: the strips are read straight back out of it, and reading
-    // a GPU canvas of a whole photo stalled the page for half a second
-    const octx = overlay.getContext("2d", { willReadFrequently: true });
-    if (!octx) throw new Error("2d context unavailable");
-    renderWatermark(octx, w, h, data, config, profile, assets);
-    await nextFrame();
-    const bands = await overlayBands(overlay);
-    overlay.width = 0;
-    return { w, h, bands };
-  };
+  const cardFor = async (w: number, h: number, assets: WatermarkAssets) => ({
+    w,
+    h,
+    bands: (await cardStrips(w, h, data, config, profile, assets)).bands,
+  });
   const early = job.size
     ? prepared.then((assets) => cardFor(job.size!.w, job.size!.h, assets))
     : null;

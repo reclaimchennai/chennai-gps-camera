@@ -7,6 +7,13 @@ import {
 import { camera, type CameraEngine } from "../lib/camera";
 import { qualityPlan } from "../lib/quality";
 import { startMeter, stopMeter } from "../lib/audio/meter";
+import {
+  fileNativeRecording,
+  startNativeRecording,
+  stopNativeRecording,
+  type NativeSession,
+} from "../lib/video/nativeRecording";
+import { nativeCamera } from "../lib/nativeCamera";
 import { grabFrame, collectWatermarkData, getProfilePhoto } from "../lib/capture";
 import { enqueueCapture, onPendingChange } from "../lib/captureQueue";
 import { renderWatermark, type WatermarkAssets } from "../lib/watermark/render";
@@ -162,12 +169,44 @@ export default function CameraView({ active }: { active: boolean }) {
     const v = videoRef.current;
     v?.addEventListener("resize", apply);
     v?.addEventListener("loadedmetadata", apply);
+    // the phone camera changed mode in place: its frame shape is new
+    window.addEventListener("gpscam:frame-shape", apply);
     return () => {
       ro.disconnect();
       v?.removeEventListener("resize", apply);
       v?.removeEventListener("loadedmetadata", apply);
+      window.removeEventListener("gpscam:frame-shape", apply);
     };
   }, [mode, engine]);
+
+  // A phone-camera recording that ended without the stop button — an
+  // error, or the app leaving the screen — is still in the gallery (the
+  // phone put it there); file it in the app too.
+  useEffect(() => {
+    const p = nativeCamera();
+    if (!p) return;
+    let handle: { remove(): Promise<void> | void } | null = null;
+    let gone = false;
+    void Promise.resolve(
+      p.addListener("recorded", (d) => {
+        const res = d as unknown as Parameters<typeof fileNativeRecording>[0];
+        if (res.asked) return;
+        nativeRecRef.current?.stopFeed();
+        nativeRecRef.current = null;
+        setRecording(false);
+        void fileNativeRecording(res).then((saved) => {
+          if (saved?.thumb) updateThumbRef.current?.(saved.record.id, saved.thumb);
+        });
+      })
+    ).then((h) => {
+      if (gone) void h.remove();
+      else handle = h;
+    });
+    return () => {
+      gone = true;
+      void handle?.remove();
+    };
+  }, []);
   const [camError, setCamError] = useState<string | null>(null);
   /** Whether the lamp is actually burning — derived, not the setting. */
   const [torch, setTorch] = useState(false);
@@ -317,6 +356,10 @@ export default function CameraView({ active }: { active: boolean }) {
   const fixAccuracy = useLiveStore((s) => s.fix?.accuracy);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
+  /** a recording on the phone camera (lib/video/nativeRecording.ts) */
+  const nativeRecRef = useRef<NativeSession | null>(null);
+  const finishNativeRef = useRef<((s: NativeSession) => Promise<void>) | null>(null);
+  const updateThumbRef = useRef<((id: string, blob: Blob) => void) | null>(null);
   const recStartRef = useRef(0);
   const modeRef = useRef<Mode>("photo");
   modeRef.current = mode;
@@ -481,8 +524,12 @@ export default function CameraView({ active }: { active: boolean }) {
     camera.audioWanted = forMode === "video";
     // photos from the phone's own camera; recordings, and live face blur,
     // composite from the web stream
+    // The phone camera for photos, and for video when this APK records
+    // natively; live face blur samples the web stream, so it keeps the
+    // web camera for both.
     camera.nativeWanted =
-      forMode === "photo" && !useSettingsStore.getState().settings.liveFaceBlur;
+      !useSettingsStore.getState().settings.liveFaceBlur &&
+      (forMode === "photo" || camera.native.recordsVideo);
     // full 4:3 frame for photos, the stabilised 16:9 profile for video
     camera.frameShape = forMode;
     // The box must be known before the first start, or that start cannot
@@ -566,6 +613,13 @@ export default function CameraView({ active }: { active: boolean }) {
     const onVis = () => {
       if (document.hidden) {
         recorderRef.current?.stop();
+        // a phone-camera recording is stopped (and filed) before the
+        // camera closes under it
+        const ns = nativeRecRef.current;
+        if (ns) {
+          nativeRecRef.current = null;
+          void finishNativeRef.current?.(ns);
+        }
         camera.stop();
         stopMeter();
         // hand the music back on the way out; stopMeter covers the meter's
@@ -637,7 +691,18 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
   useEffect(() => {
     if (!active || !ready || camStarting.current) return;
-    if (!camera.needsRestartFor(mode, mode === "photo" && !liveBlur)) return;
+    const nativeWanted = !liveBlur && (mode === "photo" || camera.native.recordsVideo);
+    // the phone camera changes mode in place, behind its own last frame
+    if (camera.canSwitchInPlace(mode, nativeWanted)) {
+      camera.nativeWanted = nativeWanted;
+      camera.audioWanted = mode === "video";
+      void (async () => {
+        if (!(await camera.switchModeInPlace(mode))) void startCam(mode);
+        else window.dispatchEvent(new Event("gpscam:frame-shape"));
+      })();
+      return;
+    }
+    if (!camera.needsRestartFor(mode, nativeWanted)) return;
     void (async () => {
       const frame = await grabSwapFrame();
       if (frame) {
@@ -706,6 +771,7 @@ export default function CameraView({ active }: { active: boolean }) {
       return URL.createObjectURL(blob);
     });
   }, []);
+  updateThumbRef.current = updateThumb;
 
   // ---- live watermark overlay (§4 step 2) -----------------------------
   const assetsRef = useRef<WatermarkAssets>({});
@@ -1079,12 +1145,47 @@ export default function CameraView({ active }: { active: boolean }) {
   }, [showToast]);
 
   // ---- video record -------------------------------------------------------
+  const finishNative = useCallback(
+    async (ns: NativeSession) => {
+      setRecording(false);
+      try {
+        const saved = await stopNativeRecording(ns);
+        if (saved?.thumb) updateThumb(saved.record.id, saved.thumb);
+        if (!saved) showToast("This recording could not be saved");
+      } catch {
+        showToast("This recording could not be saved");
+      }
+    },
+    [updateThumb, showToast]
+  );
+  finishNativeRef.current = finishNative;
   const stopRecording = useCallback(() => {
     hapticDouble(); // two pulses: stopping, distinct from starting
+    const ns = nativeRecRef.current;
+    if (ns) {
+      nativeRecRef.current = null;
+      void finishNative(ns);
+      return;
+    }
     recorderRef.current?.stop();
-  }, []);
+  }, [finishNative]);
 
   const startRecording = useCallback(async () => {
+    if (camera.engine === "native" && camera.native.recordsVideo) {
+      if (nativeRecRef.current) return;
+      try {
+        const ns = await startNativeRecording(physicalRotation());
+        nativeRecRef.current = ns;
+        recStartRef.current = ns.startedAt;
+        hapticTap(); // recording is starting
+        setRecording(true);
+        setRecSeconds(0);
+        if (!ns.audio) showToast("No microphone permission — this recording will be silent");
+      } catch {
+        showToast("Couldn't start recording — try again");
+      }
+      return;
+    }
     const stream = camera.stream;
     if (!stream) return;
     // A MediaStream can hold an ENDED microphone track — Android can kill it

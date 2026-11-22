@@ -4,6 +4,8 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
@@ -44,6 +46,18 @@ import androidx.camera.core.resolutionselector.AspectRatioStrategy;
 import androidx.camera.core.resolutionselector.ResolutionSelector;
 import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.core.CameraEffect;
+import androidx.camera.core.UseCaseGroup;
+import androidx.camera.effects.OverlayEffect;
+import androidx.camera.video.FallbackStrategy;
+import androidx.camera.video.FileOutputOptions;
+import androidx.camera.video.PendingRecording;
+import androidx.camera.video.Quality;
+import androidx.camera.video.QualitySelector;
+import androidx.camera.video.Recorder;
+import androidx.camera.video.Recording;
+import androidx.camera.video.VideoCapture;
+import androidx.camera.video.VideoRecordEvent;
 import androidx.camera.view.PreviewView;
 import androidx.core.content.ContextCompat;
 import androidx.lifecycle.LifecycleOwner;
@@ -139,6 +153,32 @@ public class NativeCameraPlugin extends Plugin {
     private boolean zslActive = false;
     /** Frame shape: 4:3 for photos (the whole sensor), 16:9 for video. */
     private boolean wide169 = false;
+    /** Video mode: preview + recorder instead of preview + stills. */
+    private boolean videoMode = false;
+    private int recordLongEdge = 1920;
+    private int recordBitrate = 0;
+    private VideoCapture<Recorder> videoCapture;
+    private Recording recording;
+    private File recordFile;
+    private long recordStartedAt;
+    private PluginCall stopCall;
+    /** draws the card into recorded frames */
+    private OverlayEffect overlay;
+    private android.os.HandlerThread overlayThread;
+    /** the card's strips, upright, and the upright size they were drawn for */
+    private volatile List<Placed> overlayBands = new ArrayList<>();
+    private volatile int overlayW = 0, overlayH = 0;
+
+    private static final class Placed {
+        final Bitmap bmp;
+        final float x, y;
+
+        Placed(Bitmap bmp, float x, float y) {
+            this.bmp = bmp;
+            this.x = x;
+            this.y = y;
+        }
+    }
     /** Long edge the stills are held to — see bindTo(). */
     private int maxStill = 4096;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
@@ -203,7 +243,10 @@ public class NativeCameraPlugin extends Plugin {
             : CameraSelector.LENS_FACING_BACK;
         final JSObject rect = call.getObject("rect", new JSObject());
         maxStill = Math.max(1280, Math.min(8192, call.getInt("maxStill", 4096)));
-        wide169 = "16:9".equals(call.getString("aspect", "4:3"));
+        videoMode = "video".equals(call.getString("mode", "photo"));
+        wide169 = videoMode || "16:9".equals(call.getString("aspect", "4:3"));
+        recordLongEdge = call.getInt("recordLongEdge", 1920);
+        recordBitrate = call.getInt("recordBitrate", 0);
         getActivity().runOnUiThread(() -> {
             final int gen = ++generation;
             try {
@@ -242,6 +285,7 @@ public class NativeCameraPlugin extends Plugin {
             }
             camera = null;
             imageCapture = null;
+            videoCapture = null;
             preview = null;
             endSwitch();
             teardownViews();
@@ -561,6 +605,17 @@ public class NativeCameraPlugin extends Plugin {
         preview = pb.build();
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
+        if (videoMode) {
+            bindVideo(selector);
+        } else {
+            bindStills(selector, stillRes);
+        }
+        afterBind();
+    }
+
+    /** Photo mode: preview and stills. */
+    private void bindStills(CameraSelector selector, ResolutionSelector stillRes) {
+        videoCapture = null;
         boolean zsl = false;
         try {
             zsl = provider.getCameraInfo(selector).isZslSupported();
@@ -581,7 +636,33 @@ public class NativeCameraPlugin extends Plugin {
             camera = provider.bindToLifecycle(
                 (LifecycleOwner) getActivity(), selector, preview, imageCapture);
         }
+    }
 
+    /**
+     * Video mode: preview and a recorder, with the card drawn into every
+     * recorded frame by the GPU (OverlayEffect) — the page sends the card
+     * once a second (setOverlay) and does nothing per frame.
+     */
+    @SuppressLint("UnsafeOptInUsageError")
+    private void bindVideo(CameraSelector selector) {
+        imageCapture = null;
+        zslActive = false;
+        Quality q = recordLongEdge >= 1900 ? Quality.FHD : Quality.HD;
+        Recorder.Builder rb = new Recorder.Builder()
+            .setQualitySelector(QualitySelector.from(q, FallbackStrategy.lowerQualityOrHigherThan(q)));
+        if (recordBitrate > 0) rb.setTargetVideoEncodingBitRate(recordBitrate);
+        videoCapture = VideoCapture.withOutput(rb.build());
+        ensureOverlay();
+        UseCaseGroup group = new UseCaseGroup.Builder()
+            .addUseCase(preview)
+            .addUseCase(videoCapture)
+            .addEffect(overlay)
+            .build();
+        camera = provider.bindToLifecycle((LifecycleOwner) getActivity(), selector, group);
+    }
+
+    /** What every bind does once the use cases are attached. */
+    private void afterBind() {
         if (zoomSource != null && zoomObserver != null) zoomSource.removeObserver(zoomObserver);
         zoomSource = camera.getCameraInfo().getZoomState();
         zoomObserver = z -> {
@@ -639,6 +720,9 @@ public class NativeCameraPlugin extends Plugin {
         out.put("cameras", cameraList);
         out.put("lens", active != null ? active.id : "main");
         putSize(out, "still", imageCapture != null ? imageCapture.getResolutionInfo() : null);
+        putSize(out, "video", videoCapture != null ? videoCapture.getResolutionInfo() : null);
+        out.put("mode", videoMode ? "video" : "photo");
+        out.put("recording", recording != null);
         putSize(out, "preview", preview != null ? preview.getResolutionInfo() : null);
         return out;
     }
@@ -989,6 +1073,12 @@ public class NativeCameraPlugin extends Plugin {
             }
             vZoom = Math.max(virtualMin(), Math.min(mainZoomMax, ratio));
             Lens want = lensFor(vZoom);
+            if (recording != null && want != active) {
+                // a recording cannot follow the camera to another unit:
+                // stay on this one, at the nearest zoom it can do
+                want = active;
+                vZoom = active == null ? Math.max(mainZoomMin, vZoom) : Math.min(0.999f, vZoom);
+            }
             if (want != active) switchTo(want);
             else if (!switching) applyRatio();
             JSObject out = new JSObject();
@@ -1214,6 +1304,326 @@ public class NativeCameraPlugin extends Plugin {
         }
     }
 
+    // ---- video ---------------------------------------------------------
+
+    private void ensureOverlay() {
+        if (overlay != null) return;
+        overlayThread = new android.os.HandlerThread("card-overlay");
+        overlayThread.start();
+        overlay = new OverlayEffect(CameraEffect.VIDEO_CAPTURE, 0,
+            new Handler(overlayThread.getLooper()),
+            t -> Log.w("NativeCamera", "card overlay failed", t));
+        final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG);
+        overlay.setOnDrawListener(frame -> {
+            android.graphics.Canvas c = frame.getOverlayCanvas();
+            c.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR);
+            List<Placed> bands = overlayBands;
+            int ow = overlayW, oh = overlayH;
+            if (bands.isEmpty() || ow <= 0 || oh <= 0) return true;
+            // The card is drawn upright for the video as it will play; the
+            // buffer is the sensor's frame, turned by getRotationDegrees()
+            // on playback. Map upright -> buffer.
+            android.graphics.Rect crop = frame.getCropRect();
+            int r = ((frame.getRotationDegrees() % 360) + 360) % 360;
+            int uw = r % 180 == 0 ? crop.width() : crop.height();
+            int uh = r % 180 == 0 ? crop.height() : crop.width();
+            Matrix m = new Matrix();
+            m.postScale(uw / (float) ow, uh / (float) oh);
+            // a mirrored recording must still read left to right
+            if (frame.isMirroring()) m.postScale(-1f, 1f, uw / 2f, 0f);
+            m.postRotate(-r);
+            android.graphics.RectF box = new android.graphics.RectF(0, 0, uw, uh);
+            Matrix turn = new Matrix();
+            turn.setRotate(-r);
+            turn.mapRect(box);
+            m.postTranslate(crop.left - box.left, crop.top - box.top);
+            c.save();
+            c.concat(m);
+            for (Placed b : bands) c.drawBitmap(b.bmp, b.x, b.y, paint);
+            c.restore();
+            return true;
+        });
+    }
+
+    /**
+     * The card for recordings: strips of it, upright, for a frame of
+     * {@code width} x {@code height}. Replaces the previous card; the next
+     * recorded frame shows it.
+     */
+    @PluginMethod
+    public void setOverlay(PluginCall call) {
+        final JSArray bandsIn = call.getArray("bands", new JSArray());
+        final int w = call.getInt("width", 0);
+        final int h = call.getInt("height", 0);
+        compositeIo.execute(() -> {
+            try {
+                List<Placed> next = new ArrayList<>();
+                for (int i = 0; i < bandsIn.length(); i++) {
+                    org.json.JSONObject b = bandsIn.getJSONObject(i);
+                    byte[] img = StillCompositor.b64(b.optString("png", ""));
+                    if (img == null) continue;
+                    Bitmap bmp = android.graphics.BitmapFactory.decodeByteArray(img, 0, img.length);
+                    if (bmp != null) next.add(new Placed(bmp, b.optInt("x", 0), b.optInt("y", 0)));
+                }
+                overlayW = w;
+                overlayH = h;
+                overlayBands = next;
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("overlay failed: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Photo or video: rebinds the camera for the other mode behind the last
+     * frame, the way a lens change does — no stop, no second camera, no
+     * black flash.
+     */
+    @PluginMethod
+    public void setMode(PluginCall call) {
+        final boolean video = "video".equals(call.getString("mode", "photo"));
+        final int longEdge = call.getInt("recordLongEdge", recordLongEdge);
+        final int bitrate = call.getInt("recordBitrate", recordBitrate);
+        getActivity().runOnUiThread(() -> {
+            if (camera == null) {
+                call.reject("camera not running");
+                return;
+            }
+            if (recording != null) {
+                call.reject("recording");
+                return;
+            }
+            if (video == videoMode && longEdge == recordLongEdge && bitrate == recordBitrate) {
+                call.resolve(describe());
+                return;
+            }
+            videoMode = video;
+            wide169 = video;
+            recordLongEdge = longEdge;
+            recordBitrate = bitrate;
+            freeze();
+            switching = true;
+            main.post(() -> {
+                try {
+                    bindTo(active != null ? active.selector : mainSelector);
+                } catch (Exception e) {
+                    endSwitch();
+                    call.reject("mode change failed: " + e.getMessage());
+                    return;
+                }
+                applyRatio();
+                awaitingStream = true;
+                main.postDelayed(freezeTimeout, FREEZE_MAX_MS);
+                call.resolve(describe());
+            });
+        });
+    }
+
+    /**
+     * Start recording, natively, with the card in every frame.
+     * {@code rotation}: how the phone is held, fixed for the whole clip.
+     * {@code lat}/{@code lng}: written into the MP4's location atom.
+     */
+    @SuppressLint({"MissingPermission", "UnsafeOptInUsageError"})
+    @PluginMethod
+    public void startRecording(PluginCall call) {
+        final int rot = call.getInt("rotation", 0);
+        final Double lat = call.getDouble("lat");
+        final Double lng = call.getDouble("lng");
+        getActivity().runOnUiThread(() -> {
+            if (videoCapture == null || camera == null) {
+                call.reject("not in video mode");
+                return;
+            }
+            if (recording != null) {
+                call.reject("already recording");
+                return;
+            }
+            try {
+                videoCapture.setTargetRotation(surfaceRotation(rot));
+                recordFile = new File(getContext().getCacheDir(), "native-vid-" + System.nanoTime() + ".mp4");
+                FileOutputOptions.Builder ob = new FileOutputOptions.Builder(recordFile);
+                if (lat != null && lng != null) {
+                    android.location.Location loc = new android.location.Location("gps");
+                    loc.setLatitude(lat);
+                    loc.setLongitude(lng);
+                    ob.setLocation(loc);
+                }
+                PendingRecording pr = videoCapture.getOutput()
+                    .prepareRecording(getContext(), ob.build());
+                boolean mic = getPermissionState("microphone") == com.getcapacitor.PermissionState.GRANTED
+                    || ContextCompat.checkSelfPermission(getContext(), android.Manifest.permission.RECORD_AUDIO)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+                if (mic) pr = pr.withAudioEnabled();
+                final boolean[] started = {false};
+                recordStartedAt = System.currentTimeMillis();
+                recording = pr.start(ContextCompat.getMainExecutor(getContext()), ev -> {
+                    if (ev instanceof VideoRecordEvent.Start && !started[0]) {
+                        started[0] = true;
+                        JSObject out = new JSObject();
+                        out.put("ok", true);
+                        out.put("audio", mic);
+                        out.put("startedAt", recordStartedAt);
+                        call.resolve(out);
+                    } else if (ev instanceof VideoRecordEvent.Finalize) {
+                        onFinalized((VideoRecordEvent.Finalize) ev);
+                        if (!started[0]) {
+                            started[0] = true;
+                            call.reject("recording did not start");
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                recording = null;
+                call.reject("could not record: " + e.getMessage());
+            }
+        });
+    }
+
+    /** Stop; resolves once the file is finished and in the gallery. */
+    @PluginMethod
+    public void stopRecording(PluginCall call) {
+        call.setKeepAlive(false);
+        getActivity().runOnUiThread(() -> {
+            if (recording == null) {
+                call.reject("not recording");
+                return;
+            }
+            stopCall = call;
+            try {
+                recording.stop();
+            } catch (Exception e) {
+                stopCall = null;
+                call.reject("stop failed: " + e.getMessage());
+            }
+        });
+    }
+
+    private void onFinalized(VideoRecordEvent.Finalize fin) {
+        recording = null;
+        final File f = recordFile;
+        final long startedAt = recordStartedAt;
+        final PluginCall pending = stopCall;
+        stopCall = null;
+        final int err = fin.getError();
+        final long durNs = fin.getRecordingStats().getRecordedDurationNanos();
+        // the page's name when it asked for the stop; ours, in the same
+        // form, when the recording ended without it (an error, or the app
+        // going to the background) — the clip still reaches the gallery
+        String asked = pending != null ? pending.getString("galleryName", null) : null;
+        final String galleryName = asked != null && !asked.isEmpty() ? asked
+            : "VID_" + new java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US)
+                .format(new java.util.Date(startedAt)) + "_gpscam.mp4";
+        compositeIo.execute(() -> {
+            JSObject out = new JSObject();
+            boolean usable = f != null && f.exists() && f.length() > 0
+                && (err == VideoRecordEvent.Finalize.ERROR_NONE
+                    || err == VideoRecordEvent.Finalize.ERROR_SOURCE_INACTIVE
+                    || err == VideoRecordEvent.Finalize.ERROR_INSUFFICIENT_STORAGE
+                    || err == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED
+                    || err == VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED);
+            out.put("ok", usable);
+            out.put("error", err);
+            out.put("durationMs", durNs / 1_000_000L);
+            out.put("startedAt", startedAt);
+            if (usable) {
+                out.put("path", f.getAbsolutePath());
+                out.put("bytes", f.length());
+                try {
+                    android.media.MediaMetadataRetriever mr = new android.media.MediaMetadataRetriever();
+                    mr.setDataSource(f.getAbsolutePath());
+                    String vw = mr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+                    String vh = mr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+                    String vr = mr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                    int w = vw != null ? Integer.parseInt(vw) : 0;
+                    int h = vh != null ? Integer.parseInt(vh) : 0;
+                    int rr = vr != null ? Integer.parseInt(vr) : 0;
+                    out.put("width", rr % 180 == 0 ? w : h);
+                    out.put("height", rr % 180 == 0 ? h : w);
+                    // a still from the middle of the first second, for the thumbnail
+                    Bitmap frame = mr.getFrameAtTime(300_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+                    if (frame != null) {
+                        int tw = 480;
+                        int th = Math.max(1, Math.round(frame.getHeight() * (tw / (float) frame.getWidth())));
+                        if (frame.getHeight() > frame.getWidth()) {
+                            th = 480;
+                            tw = Math.max(1, Math.round(frame.getWidth() * (th / (float) frame.getHeight())));
+                        }
+                        Bitmap small = Bitmap.createScaledBitmap(frame, tw, th, true);
+                        File thumb = new File(getContext().getCacheDir(), f.getName().replace(".mp4", "-thm.jpg"));
+                        try (java.io.FileOutputStream os = new java.io.FileOutputStream(thumb)) {
+                            small.compress(Bitmap.CompressFormat.JPEG, 80, os);
+                        }
+                        out.put("thumb", thumb.getAbsolutePath());
+                    }
+                    mr.release();
+                } catch (Exception e) {
+                    Log.w("NativeCamera", "video probe failed", e);
+                }
+                if (galleryName != null) {
+                    try {
+                        out.put("saved", saveVideoToGallery(f, galleryName, startedAt));
+                    } catch (Exception e) {
+                        Log.w("NativeCamera", "video gallery save failed", e);
+                        out.put("saved", false);
+                    }
+                }
+            } else if (f != null) {
+                //noinspection ResultOfMethodCallIgnored
+                f.delete();
+            }
+            out.put("asked", pending != null);
+            if (pending != null) pending.resolve(out);
+            // also tell the page when nobody asked: an error or the app
+            // going to the background ended the recording. Kept until the
+            // page is listening again, so the clip is filed in the app too.
+            else notifyListeners("recorded", out, true);
+        });
+    }
+
+    private boolean saveVideoToGallery(File f, String name, long takenAt) throws java.io.IOException {
+        android.content.ContentResolver cr = getContext().getContentResolver();
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            android.content.ContentValues v = new android.content.ContentValues();
+            v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name);
+            v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
+            v.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                android.os.Environment.DIRECTORY_DCIM + "/GPS Camera");
+            v.put(android.provider.MediaStore.Video.Media.DATE_TAKEN, takenAt);
+            v.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1);
+            android.net.Uri uri = cr.insert(android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI, v);
+            if (uri == null) return false;
+            try (java.io.InputStream in = new java.io.FileInputStream(f);
+                 java.io.OutputStream os = cr.openOutputStream(uri)) {
+                if (os == null) throw new java.io.IOException("no gallery stream");
+                byte[] buf = new byte[1 << 16];
+                int n;
+                while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            } catch (java.io.IOException e) {
+                cr.delete(uri, null, null);
+                throw e;
+            }
+            android.content.ContentValues done = new android.content.ContentValues();
+            done.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0);
+            cr.update(uri, done, null, null);
+            return true;
+        }
+        File dir = new File(android.os.Environment.getExternalStoragePublicDirectory(
+            android.os.Environment.DIRECTORY_DCIM), "GPS Camera");
+        if (!dir.exists() && !dir.mkdirs()) return false;
+        File out = new File(dir, name);
+        try (java.io.InputStream in = new java.io.FileInputStream(f);
+             java.io.OutputStream os = new java.io.FileOutputStream(out)) {
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+        }
+        android.media.MediaScannerConnection.scanFile(getContext(),
+            new String[] {out.getAbsolutePath()}, new String[] {"video/mp4"}, null);
+        return true;
+    }
+
     /** finishes stills: never queued behind a capture being written */
     private final ExecutorService compositeIo = Executors.newSingleThreadExecutor();
 
@@ -1279,7 +1689,8 @@ public class NativeCameraPlugin extends Plugin {
             File cache = getContext().getCacheDir();
             // only ever our own capture files
             String n = f.getName();
-            if ((n.startsWith("native-cap-") || n.startsWith("native-fin-") || n.startsWith("native-thm-"))
+            if ((n.startsWith("native-cap-") || n.startsWith("native-fin-") || n.startsWith("native-thm-")
+                    || n.startsWith("native-vid-"))
                     && cache.equals(f.getParentFile())) {
                 //noinspection ResultOfMethodCallIgnored
                 f.delete();

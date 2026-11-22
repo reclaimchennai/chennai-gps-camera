@@ -30,6 +30,10 @@ export interface NativeCameraInfo {
   cameras?: NativeCameraEntry[];
   stillW?: number;
   stillH?: number;
+  /** the recorder's frame, in the sensor's orientation */
+  videoW?: number;
+  videoH?: number;
+  mode?: "photo" | "video";
   previewW?: number;
   previewH?: number;
 }
@@ -45,6 +49,23 @@ export interface NativeCameraEntry {
   mp: number;
   /** physical lenses, for a logical multi-camera */
   lenses?: number;
+}
+
+/** A finished native recording. */
+export interface NativeRecorded {
+  ok: boolean;
+  error: number;
+  durationMs: number;
+  startedAt: number;
+  path?: string;
+  thumb?: string;
+  bytes?: number;
+  width?: number;
+  height?: number;
+  /** written to DCIM/GPS Camera */
+  saved?: boolean;
+  /** false when the recording ended without the page asking */
+  asked?: boolean;
 }
 
 /** A still the camera wrote, and its upright size when the plugin knows it. */
@@ -102,7 +123,22 @@ interface NativeCameraPlugin {
     maxStill: number;
     /** frame shape: "4:3" photos, "16:9" video */
     aspect?: "4:3" | "16:9";
+    /** bind for recording instead of stills (v1.50+) */
+    mode?: "photo" | "video";
+    recordLongEdge?: number;
+    recordBitrate?: number;
   }): Promise<NativeCameraInfo>;
+  /** photo <-> video without stopping the camera (v1.50+) */
+  setMode?(opts: { mode: "photo" | "video"; recordLongEdge?: number; recordBitrate?: number }): Promise<NativeCameraInfo>;
+  /** the card drawn into every recorded frame: upright strips for a
+   *  frame of width x height */
+  setOverlay?(opts: { bands: OverlayBand[]; width: number; height: number }): Promise<void>;
+  startRecording?(opts: { rotation: number; lat?: number; lng?: number }): Promise<{
+    ok: boolean;
+    audio: boolean;
+    startedAt: number;
+  }>;
+  stopRecording?(opts: { galleryName?: string }): Promise<NativeRecorded>;
   stop(): Promise<void>;
   setRect(opts: { rect: DeviceRect }): Promise<void>;
   setVisible(opts: { visible: boolean }): Promise<void>;
@@ -136,7 +172,7 @@ interface NativeCameraPlugin {
   snapshot(opts: { width: number }): Promise<{ dataUrl: string }>;
   release(opts: { path: string }): Promise<void>;
   addListener(
-    event: "zoom" | "stream" | "lens",
+    event: "zoom" | "stream" | "lens" | "recorded",
     cb: (data: Record<string, unknown>) => void
   ): Promise<ListenerHandle> | ListenerHandle;
 }
