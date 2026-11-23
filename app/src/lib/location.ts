@@ -251,7 +251,10 @@ export function startLocation(): void {
         }, 6000);
       }
     },
-    { enableHighAccuracy: true, maximumAge: 2000, timeout: 20000 }
+    // maximumAge 0: only positions measured now. 2 s was a fix taken up
+    // to 2 s ago — 20–30 m behind a vehicle, which is a different house
+    // number or the previous junction on the card.
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
   );
   // Fast first fix: a parallel low-accuracy watch rides the OS
   // network/fused provider (WiFi + cell), which answers in a second or

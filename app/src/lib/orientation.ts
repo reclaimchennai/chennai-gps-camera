@@ -107,33 +107,32 @@ export function physicalRotation(): UiRotation {
 let motionSeen = false;
 
 export function startOrientationWatch(): void {
-  // iOS gates devicemotion behind a permission prompt tied to a gesture;
-  // Android (app + web) fires freely. Degrade silently where unavailable —
-  // the app simply stays portrait-rendered.
   if (typeof DeviceMotionEvent === "undefined") return;
+  // Listen from the start, everywhere. Android sends motion freely; iOS
+  // sends nothing until permission is granted, and then the same
+  // listener starts receiving.
+  //
+  // This used to listen only once requestPermission() had said yes, on
+  // the first tap — the iOS way. Android WebView (Chrome 15x) now has
+  // requestPermission too, so on Android the app ignored the sensor until
+  // the first touch: turn the phone before touching anything and the
+  // card stayed portrait, and the first shot came out with it.
+  window.addEventListener("devicemotion", (e) => {
+    motionSeen = true;
+    onMotion(e);
+  });
   const req = (
     DeviceMotionEvent as unknown as {
       requestPermission?: () => Promise<string>;
     }
   ).requestPermission;
-  if (req) {
-    // ask on the first user tap (a gesture is required)
-    const onFirstTap = () => {
-      window.removeEventListener("pointerdown", onFirstTap);
-      void req.call(DeviceMotionEvent).then((state) => {
-        if (state === "granted") {
-          window.addEventListener("devicemotion", (e) => {
-            motionSeen = true;
-            onMotion(e);
-          });
-        }
-      }).catch(() => {});
-    };
-    window.addEventListener("pointerdown", onFirstTap);
-    return;
-  }
-  window.addEventListener("devicemotion", (e) => {
-    motionSeen = true;
-    onMotion(e);
-  });
+  if (!req) return;
+  // Asked on the first tap's release: a touch counts as a user gesture on
+  // pointerup, not pointerdown. Harmless where already allowed.
+  const onFirstTap = () => {
+    window.removeEventListener("pointerup", onFirstTap);
+    if (motionSeen) return;
+    void req.call(DeviceMotionEvent).catch(() => {});
+  };
+  window.addEventListener("pointerup", onFirstTap);
 }

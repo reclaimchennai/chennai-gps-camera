@@ -17,6 +17,7 @@ import { useLiveStore } from "../store";
 import { useSettingsStore } from "../store";
 import { reverseGeocode } from "./geocode";
 import { fixIsFromBeforeResume } from "./location";
+import { isNativeApp } from "./native";
 
 /** Floor on request rate, whatever the speed. */
 const MIN_GAP_MS = 6_000;
@@ -33,6 +34,18 @@ const STILL_METERS = 25;
  * nothing, and the cache answers a spot already asked about.
  */
 const WALK_TRIGGER_M = 40;
+/**
+ * With the phone's own geocoder (the app, geocoder "auto" or "system"):
+ * look again every STILL_METERS moved, at most this often.
+ *
+ * The distance used to grow with speed — 40 m plus 30 m per m/s, up to
+ * 500 m — to spare rate-limited web services. Someone walking briskly
+ * waited about 100 m, a block, for the next street's name; at 36 km/h a
+ * vehicle went about 340 m before the card caught up. Android's geocoder
+ * is local to the phone's own services and costs nothing, so in the app
+ * the card follows every 25 m. The web geocoders keep the old pace.
+ */
+const PHONE_GAP_MS = 2_000;
 /** Fixes further apart in time than this say nothing about speed — the
  *  screen was off, or the app was away. */
 const SPEED_GAP_S = 30;
@@ -97,10 +110,13 @@ async function maybeGeocode(): Promise<void> {
     // Distance that should trigger a refresh: a street name changes every
     // block or so on foot, but a passenger at 60 km/h does not need one
     // every 60 m. Scale the trigger with speed and cap the rate.
-    const trigger = speed < 1.2 ? WALK_TRIGGER_M : Math.min(WALK_TRIGGER_M + speed * 30, 500);
+    const phone = isNativeApp() && (settings.geocoder === "auto" || settings.geocoder === "system");
+    const trigger = phone
+      ? STILL_METERS
+      : speed < 1.2 ? WALK_TRIGGER_M : Math.min(WALK_TRIGGER_M + speed * 30, 500);
     const moving = gone >= STILL_METERS;
     const haveAddress = !!useLiveStore.getState().address;
-    if (since < MIN_GAP_MS) return;
+    if (since < (phone ? PHONE_GAP_MS : MIN_GAP_MS)) return;
     // A phone on a desk has nothing new to say. The periodic refresh is
     // only there to fill a gap — once an address is in hand, standing
     // still costs no requests at all.

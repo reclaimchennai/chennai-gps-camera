@@ -27,8 +27,7 @@ export interface QualityPlan {
   videoBitsPerSecond: number;
   /**
    * Long edge of a phone-camera (CameraX) still. About 12 MP, what the
-   * stock camera saves by default; 8 MP on entry phones, where every photo
-   * is decoded into WebView memory to be watermarked.
+   * stock camera saves by default; less on entry phones.
    */
   stillLongEdge: number;
   tier: "low" | "mid" | "high";
@@ -47,10 +46,13 @@ function detectTier(): "low" | "mid" | "high" {
 
 let cachedTier: "low" | "mid" | "high" | null = null;
 
-/** 16:9 stills: 3840x2160 (8 MP) — every pixel is decoded, watermarked
- *  and re-encoded in the WebView, and 12 MP put a lag on the shutter;
- *  2560x1440 on entry phones. */
-const STILL_FULL = 3840;
+/** Phone-camera stills, 4:3: 4096 asks for the sensor's 12 MP size
+ *  (4080x3060 on a Galaxy S25, 4000x3000 or 4080x3072 elsewhere) — what
+ *  the stock camera saves. 3840 landed one size lower (3648x2736, 10 MP)
+ *  on phones that list it. The photo is finished on the phone's side
+ *  (StillCompositor), so the extra pixels cost the viewfinder nothing;
+ *  entry phones keep a smaller still. */
+const STILL_FULL = 4096;
 const STILL_ENTRY = 2560;
 
 export function qualityPlan(): QualityPlan {
