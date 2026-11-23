@@ -1,5 +1,5 @@
 {
- "version": "9e1265b4c711",
+ "version": "4494e1878e79",
  "packs": [
   {
    "id": "chennai",
@@ -11,9 +11,9 @@
     80.34882,
     13.39692
    ],
-   "version": "76c4be667f0d",
-   "bytes": 614192,
-   "attribution": "Boundary data from public Tamil Nadu government datasets, processed by the Reclaim Chennai project; cantonments and railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
+   "version": "46656942d65d",
+   "bytes": 1001572,
+   "attribution": "Boundary data from public Tamil Nadu government datasets, processed by the Reclaim Chennai project; cantonments and railway stations © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL); TNGIS / Tamil Nadu Government (local bodies, village panchayats)"
   },
   {
    "id": "bengaluru",
@@ -123,8 +123,8 @@
     80.34882,
     13.56284
    ],
-   "version": "9addec1d1efc",
-   "bytes": 19941856,
+   "version": "ddc391fc3d44",
+   "bytes": 19988071,
    "attribution": "TNGIS / Tamil Nadu Government (local bodies, village panchayats); cantonments and railway stations © OpenStreetMap contributors (ODbL); police boundaries: Reclaim Chennai; place names © OpenStreetMap contributors (ODbL); place names © OpenStreetMap contributors (ODbL)"
   },
   {

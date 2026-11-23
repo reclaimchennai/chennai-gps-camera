@@ -171,16 +171,13 @@ export function lookup(
     // village panchayats + cantonments carry these instead of ward/zone
     jurisdiction.block = up.block;
     jurisdiction.district = up.district;
-  } else if (lp.avadi === true) {
-    // Avadi Corporation has no published ward polygons — the only
-    // geometry covering it is the L&O commissionerate layer. Claim it
-    // only when no local-body polygon matched, so neighbouring
-    // municipalities aren't mislabelled.
-    jurisdiction.scope = "in";
-    jurisdiction.corporation = "Avadi Corporation";
-    jurisdiction.city = "Avadi";
-    jurisdiction.wardPending = true;
   }
+  // Avadi used to be claimed here from its police commissionerate polygon
+  // whenever no local body matched, for want of ward polygons. That
+  // polygon also covers villages around Avadi — Chembarambakkam, Puliyur,
+  // Pakkam — and the card called them "Avadi Corporation". Avadi's wards
+  // now ship in the packs (scripts/fill-chennai-pack.mjs), so a point in
+  // Avadi gets its ward and a village keeps its own name.
 
   // Police jurisdictions render whenever their polygons match — the
   // data is honest about itself (no polygon → no claim).
