@@ -11,7 +11,7 @@ import { testPlateReader, warmPlateReader } from "../lib/detect/plates";
 import { qualitySummary } from "../lib/quality";
 import { camera, loadLensProfile, type Lens } from "../lib/camera";
 import { lastLight } from "../lib/lightmeter";
-import { nativeCameraAvailable } from "../lib/nativeCamera";
+import { nativeCameraAvailable, cameraReportText } from "../lib/nativeCamera";
 import {
   allAddressPins,
   onAddressPinsChange,
@@ -506,11 +506,17 @@ export default function SettingsView() {
                     <button
                       className="ghost-btn"
                       onClick={() => {
-                        const text = Object.entries(camera.controlReport())
+                        const controlsText = Object.entries(camera.controlReport())
                           .map(([k, v]) => `${k}: ${v}`)
                           .join("\n");
-                        void navigator.clipboard
-                          ?.writeText(text)
+                        // the phone's camera list goes with it: it shows
+                        // which lenses the maker lets apps use
+                        void cameraReportText()
+                          .then((cams) =>
+                            navigator.clipboard?.writeText(
+                              cams ? `${controlsText}\n\nCameras:\n${cams}` : controlsText
+                            )
+                          )
                           .then(() => setCopied(true))
                           .catch(() => setCopied(false));
                       }}

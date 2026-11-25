@@ -168,6 +168,8 @@ interface NativeCameraPlugin {
   }): Promise<NativeComposite>;
   /** rear cameras and their lens factors, read without opening any */
   lensTable(): Promise<{ cameras: NativeCameraEntry[] }>;
+  /** every camera the phone lists and what the app made of it, as text */
+  cameraReport(): Promise<{ text: string }>;
   /** the viewfinder right now, small — for the shutter animation */
   snapshot(opts: { width: number }): Promise<{ dataUrl: string }>;
   release(opts: { path: string }): Promise<void>;
@@ -190,6 +192,20 @@ function cap(): CapacitorGlobal | undefined {
 export function nativeCamera(): NativeCameraPlugin | undefined {
   const c = cap();
   return c?.isNativePlatform?.() ? c.Plugins?.NativeCamera : undefined;
+}
+
+/**
+ * Every camera the phone exposes to apps and how the app treated each, as
+ * text for a bug report. Empty where there is no native camera, or in an
+ * APK built before the report existed.
+ */
+export async function cameraReportText(): Promise<string> {
+  try {
+    const r = await nativeCamera()?.cameraReport?.();
+    return r?.text ?? "";
+  } catch {
+    return "";
+  }
 }
 
 /** True only inside an APK that ships the CameraX plugin. */

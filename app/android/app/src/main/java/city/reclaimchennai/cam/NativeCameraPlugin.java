@@ -139,6 +139,8 @@ public class NativeCameraPlugin extends Plugin {
 
     /** Leave the main camera only clearly below 1x; come back at 1x. */
     private static final float WIDE_BELOW = 0.97f;
+    /** Stay on a telephoto until the zoom drops this far under its factor. */
+    private static final float TELE_HOLD = 0.96f;
     /** Longest a held frame may stand in for a lens that is opening. */
     private static final long FREEZE_MAX_MS = 2500;
 
@@ -196,6 +198,10 @@ public class NativeCameraPlugin extends Plugin {
     // lenses — see the class comment
     private CameraSelector mainSelector;
     private final List<Lens> wideLenses = new ArrayList<>();
+    /** a telephoto the phone lists as a camera of its own (0 or 1) */
+    private final List<Lens> teleLenses = new ArrayList<>();
+    /** why discovery passed over a camera — for cameraReport() */
+    private final List<String> lensNotes = new ArrayList<>();
     /** the lens the preview is on; null = the main camera */
     private Lens active = null;
     /** zoom as the user sees it */
@@ -349,6 +355,80 @@ public class NativeCameraPlugin extends Plugin {
         JSObject out = new JSObject();
         out.put("cameras", list);
         call.resolve(out);
+    }
+
+    /**
+     * A plain-text account of every camera the phone lists and what this
+     * app made of them, for bug reports: lens problems depend on what each
+     * maker exposes to apps, and cannot be seen from the outside. Reads the
+     * camera service only; opens nothing.
+     */
+    @PluginMethod
+    public void cameraReport(PluginCall call) {
+        StringBuilder sb = new StringBuilder();
+        try {
+            sb.append("device: ").append(android.os.Build.MANUFACTURER).append(' ')
+                .append(android.os.Build.MODEL).append(", Android ")
+                .append(android.os.Build.VERSION.RELEASE).append(" (SDK ")
+                .append(android.os.Build.VERSION.SDK_INT).append(")\n");
+            CameraManager cm = (CameraManager) getContext().getSystemService(Context.CAMERA_SERVICE);
+            String[] ids = cm.getCameraIdList();
+            sb.append("cameras listed to apps: ").append(ids.length).append('\n');
+            for (String id : ids) {
+                try {
+                    describeCamera(sb, cm.getCameraCharacteristics(id), id);
+                } catch (Exception e) {
+                    sb.append("  id ").append(id).append(": unreadable (").append(e).append(")\n");
+                }
+            }
+        } catch (Exception e) {
+            sb.append("camera service failed: ").append(e).append('\n');
+        }
+        sb.append("app state: ");
+        if (camera == null) {
+            sb.append("camera not running\n");
+        } else {
+            sb.append("running on camera ").append(idOf(camera.getCameraInfo()))
+                .append(", zoom ").append(mainZoomMin).append('-').append(mainZoomMax)
+                .append(", lenses inside main ").append(mainLensFactors).append('\n');
+            sb.append("  separate ultrawide: ").append(lensName(wideLenses)).append('\n');
+            sb.append("  separate telephoto: ").append(lensName(teleLenses)).append('\n');
+            for (String n : lensNotes) sb.append("  note: ").append(n).append('\n');
+        }
+        JSObject out = new JSObject();
+        out.put("text", sb.toString());
+        call.resolve(out);
+    }
+
+    private static String lensName(List<Lens> l) {
+        return l.isEmpty() ? "none" : "camera " + l.get(0).id + " (" + l.get(0).factor + "x)";
+    }
+
+    private void describeCamera(StringBuilder sb, CameraCharacteristics c, String id) {
+        Integer facing = c.get(CameraCharacteristics.LENS_FACING);
+        sb.append("  id ").append(id).append(": ")
+            .append(facing == null ? "?" : facing == CameraCharacteristics.LENS_FACING_BACK ? "back"
+                : facing == CameraCharacteristics.LENS_FACING_FRONT ? "front" : "external");
+        if (!backwardCompatible(c)) sb.append(", not backward-compatible (utility)");
+        Size px = c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
+        if (px != null) {
+            sb.append(", ").append(Math.round(px.getWidth() * (double) px.getHeight() / 1e5) / 10.0).append(" MP");
+        }
+        float[] fl = c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+        if (fl != null && fl.length > 0) sb.append(", focal ").append(fl[0]).append(" mm");
+        SizeF sensor = c.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
+        if (sensor != null) sb.append(", sensor ").append(sensor.getWidth()).append(" mm wide");
+        Double view = viewWidth(id);
+        if (view != null) sb.append(", view ").append(Math.round(view * 100) / 100.0);
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            Range<Float> zr = c.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE);
+            if (zr != null) sb.append(", zoom ").append(zr.getLower()).append('-').append(zr.getUpper());
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            java.util.Set<String> phys = c.getPhysicalCameraIds();
+            if (phys != null && !phys.isEmpty()) sb.append(", logical of ").append(phys);
+        }
+        sb.append('\n');
     }
 
     /**
@@ -673,7 +753,7 @@ public class NativeCameraPlugin extends Plugin {
             JSObject ev = new JSObject();
             ev.put("zoom", shown);
             ev.put("min", virtualMin());
-            ev.put("max", mainZoomMax);
+            ev.put("max", virtualMax());
             notifyListeners("zoom", ev);
         };
         zoomSource.observe((LifecycleOwner) getActivity(), zoomObserver);
@@ -705,7 +785,7 @@ public class NativeCameraPlugin extends Plugin {
         CameraInfo info = camera.getCameraInfo();
         out.put("zoom", vZoom);
         out.put("zoomMin", virtualMin());
-        out.put("zoomMax", mainZoomMax);
+        out.put("zoomMax", virtualMax());
         out.put("hasFlash", info.hasFlashUnit());
         out.put("zsl", zslActive);
         ExposureState ex = info.getExposureState();
@@ -717,7 +797,7 @@ public class NativeCameraPlugin extends Plugin {
         out.put("evIndex", ex.getExposureCompensationIndex());
         out.put("facing", lensFacing == CameraSelector.LENS_FACING_FRONT ? "user" : "environment");
         out.put("lenses", lensFactors());
-        out.put("lensSwitch", !wideLenses.isEmpty());
+        out.put("lensSwitch", !wideLenses.isEmpty() || !teleLenses.isEmpty());
         out.put("cameras", cameraList);
         out.put("lens", active != null ? active.id : "main");
         putSize(out, "still", imageCapture != null ? imageCapture.getResolutionInfo() : null);
@@ -740,6 +820,14 @@ public class NativeCameraPlugin extends Plugin {
         return active != null ? active.factor : 1f;
     }
 
+    /** The top of the zoom range: the main camera's, or further if a
+     *  telephoto of its own reaches past it. */
+    private float virtualMax() {
+        return teleLenses.isEmpty()
+            ? mainZoomMax
+            : Math.max(mainZoomMax, teleLenses.get(0).factor * 2f);
+    }
+
     private float virtualMin() {
         return wideLenses.isEmpty()
             ? mainZoomMin
@@ -759,40 +847,62 @@ public class NativeCameraPlugin extends Plugin {
     @androidx.annotation.OptIn(markerClass = ExperimentalCamera2Interop.class)
     private void findWideLenses() {
         wideLenses.clear();
+        teleLenses.clear();
+        lensNotes.clear();
         listCameras();
         if (lensFacing != CameraSelector.LENS_FACING_BACK || camera == null) return;
-        if (mainZoomMin < 0.95f) return; // it already zooms across its lenses
         try {
             CameraInfo mainInfo = camera.getCameraInfo();
             String mainId = idOf(mainInfo);
             Double mainView = viewWidth(mainId);
+            // a main camera that already zooms below 1x crosses to the
+            // ultrawide by itself; one whose logical camera lists a
+            // telephoto among its lenses crosses to that too
+            boolean wideInside = mainZoomMin < 0.95f;
+            boolean teleInside = false;
+            for (Float f : mainLensFactors) if (f >= TELE_MIN) teleInside = true;
+            if (wideInside) lensNotes.add("main camera zooms below 1x itself: no separate ultrawide");
+            if (teleInside) lensNotes.add("main camera lists a telephoto among its lenses: no separate telephoto");
+            List<Lens> wides = new ArrayList<>();
+            List<Lens> teles = new ArrayList<>();
             for (CameraInfo ci : provider.getAvailableCameraInfos()) {
                 if (ci.getLensFacing() != CameraSelector.LENS_FACING_BACK) continue;
                 String id = idOf(ci);
                 if (id == null || id.equals(mainId)) continue;
                 float f = factorOf(ci, id, mainView);
-                if (usableWide(f, id)) wideLenses.add(new Lens(ci.getCameraSelector(), f, id));
+                Lens l = new Lens(ci.getCameraSelector(), f, id);
+                if (!wideInside && usableWide(f, id)) wides.add(l);
+                else if (!teleInside && usableTele(f, id)) teles.add(l);
             }
-            if (wideLenses.isEmpty() && mainInfo.isLogicalMultiCameraSupported()) {
+            // lenses inside the main logical camera, streamed directly, for
+            // phones that describe them but will not zoom to them
+            if ((wides.isEmpty() || teles.isEmpty()) && mainInfo.isLogicalMultiCameraSupported()
+                    && !wideInside) {
                 for (CameraInfo pi : mainInfo.getPhysicalCameraInfos()) {
                     String pid = idOf(pi);
                     if (pid == null) continue;
                     float f = factorOf(pi, pid, mainView);
-                    if (!usableWide(f, pid)) continue;
                     CameraSelector sel = new CameraSelector.Builder()
                         .requireLensFacing(CameraSelector.LENS_FACING_BACK)
                         .setPhysicalCameraId(pid)
                         .build();
-                    wideLenses.add(new Lens(sel, f, pid));
+                    if (wides.isEmpty() && usableWide(f, pid)) wides.add(new Lens(sel, f, pid));
+                    else if (teles.isEmpty() && !teleInside && usableTele(f, pid)) {
+                        teles.add(new Lens(sel, f, pid));
+                    }
                 }
             }
+            // the widest ultrawide; the telephoto nearest to the main lens —
+            // a second of either adds nothing a pinch cannot
+            wides.sort((a, b) -> Float.compare(a.factor, b.factor));
+            teles.sort((a, b) -> Float.compare(a.factor, b.factor));
+            if (!wides.isEmpty()) wideLenses.add(wides.get(0));
+            if (!teles.isEmpty()) teleLenses.add(teles.get(0));
         } catch (Exception e) {
             // nothing more to find; the main camera's own range stands
             Log.w("NativeCamera", "lens discovery failed", e);
+            lensNotes.add("discovery threw: " + e);
         }
-        // the widest one; a second ultrawide adds nothing a pinch cannot
-        wideLenses.sort((a, b) -> Float.compare(a.factor, b.factor));
-        while (wideLenses.size() > 1) wideLenses.remove(wideLenses.size() - 1);
     }
 
     /**
@@ -833,13 +943,24 @@ public class NativeCameraPlugin extends Plugin {
         }
     }
 
-    /** The lens for a zoom: the ultrawide below 1x, else the main camera. */
+    /**
+     * The lens for a zoom: the ultrawide below 1x, a separate telephoto
+     * from its own factor up, else the main camera. Each lens is held
+     * until the zoom clearly leaves it, so a pinch hovering on a boundary
+     * does not flip cameras back and forth.
+     */
     @Nullable
     private Lens lensFor(float z) {
-        if (wideLenses.isEmpty()) return null;
-        Lens wide = wideLenses.get(0);
-        if (active == null) return z < WIDE_BELOW ? wide : null;
-        return z >= 1f ? null : wide;
+        Lens wide = wideLenses.isEmpty() ? null : wideLenses.get(0);
+        Lens tele = teleLenses.isEmpty() ? null : teleLenses.get(0);
+        if (tele != null && active == tele) {
+            if (z >= tele.factor * TELE_HOLD) return tele;
+        } else if (tele != null && z >= tele.factor) {
+            return tele;
+        }
+        if (wide == null) return null;
+        if (active == wide) return z >= 1f ? null : wide;
+        return z < WIDE_BELOW ? wide : null;
     }
 
     /** Set the bound camera's ratio for the user's zoom. */
@@ -881,6 +1002,7 @@ public class NativeCameraPlugin extends Plugin {
                 // the main camera back so the viewfinder never stays dark
                 failed = true;
                 wideLenses.remove(target);
+                teleLenses.remove(target);
                 try {
                     bindTo(mainSelector);
                 } catch (Exception ignored) {
@@ -971,6 +1093,7 @@ public class NativeCameraPlugin extends Plugin {
     private JSArray lensFactors() {
         TreeSet<Float> set = new TreeSet<>(mainLensFactors);
         for (Lens l : wideLenses) set.add(Math.round(l.factor * 100) / 100f);
+        for (Lens l : teleLenses) set.add(Math.round(l.factor * 100) / 100f);
         JSArray out = new JSArray();
         // put(Object): put(double) declares a JSONException for NaN
         for (Float f : set) out.put(Double.valueOf(f));
@@ -1014,14 +1137,37 @@ public class NativeCameraPlugin extends Plugin {
         return Float.isNaN(f) ? 1f : f;
     }
 
+    /** Smallest zoom factor taken for a telephoto. */
+    private static final float TELE_MIN = 1.4f;
+
     /** A real ultrawide: clearly wider than the main camera, and not a
-     *  low-resolution utility sensor. */
+     *  low-resolution utility sensor. A 2 MP macro lens is not an
+     *  ultrawide, but a genuinely wide one (0.8x or under) is let through
+     *  at low resolution rather than dropped. */
     private boolean usableWide(float f, String id) {
-        if (!(f >= 0.3f && f <= 0.9f)) return false;
+        if (!(f >= 0.3f && f <= 0.9f)) {
+            return false;
+        }
         CameraCharacteristics c = characteristics(id);
         if (c == null) return false;
         Size px = c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
-        return px != null && (long) px.getWidth() * px.getHeight() >= 3_000_000L;
+        long mp = px != null ? (long) px.getWidth() * px.getHeight() : 0L;
+        boolean ok = mp >= 3_000_000L || (mp >= 1_900_000L && f <= 0.8f);
+        if (!ok) lensNotes.add("camera " + id + " rejected as a wide: " + mp / 100_000 / 10.0 + " MP");
+        return ok;
+    }
+
+    /** A telephoto: clearly narrower than the main camera, with enough
+     *  pixels to shoot with — not a depth or macro utility sensor. */
+    private boolean usableTele(float f, String id) {
+        if (!(f >= TELE_MIN && f <= 12f)) return false;
+        CameraCharacteristics c = characteristics(id);
+        if (c == null) return false;
+        Size px = c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
+        long mp = px != null ? (long) px.getWidth() * px.getHeight() : 0L;
+        boolean ok = mp >= 1_900_000L;
+        if (!ok) lensNotes.add("camera " + id + " rejected as a telephoto: " + mp / 100_000 / 10.0 + " MP");
+        return ok;
     }
 
     @SuppressLint("UnsafeOptInUsageError")
@@ -1072,13 +1218,15 @@ public class NativeCameraPlugin extends Plugin {
                 call.reject("camera not running");
                 return;
             }
-            vZoom = Math.max(virtualMin(), Math.min(mainZoomMax, ratio));
+            vZoom = Math.max(virtualMin(), Math.min(virtualMax(), ratio));
             Lens want = lensFor(vZoom);
             if (recording != null && want != active) {
                 // a recording cannot follow the camera to another unit:
                 // stay on this one, at the nearest zoom it can do
                 want = active;
-                vZoom = active == null ? Math.max(mainZoomMin, vZoom) : Math.min(0.999f, vZoom);
+                if (active == null) vZoom = Math.max(mainZoomMin, vZoom);
+                else if (teleLenses.contains(active)) vZoom = Math.max(active.factor, vZoom);
+                else vZoom = Math.min(0.999f, vZoom);
             }
             if (want != active) switchTo(want);
             else if (!switching) applyRatio();
