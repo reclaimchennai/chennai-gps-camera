@@ -9,6 +9,8 @@
  * design. If the env vars are absent (e.g. a fork's build), reporting is
  * simply disabled.
  */
+import { cameraReportText } from "./nativeCamera";
+
 const TOKEN = import.meta.env.VITE_TG_TOKEN as string | undefined;
 const CHAT = import.meta.env.VITE_TG_CHAT as string | undefined;
 
@@ -35,8 +37,12 @@ export async function sendReport(
   screenshot: Blob | null
 ): Promise<boolean> {
   if (!reportingEnabled()) return false;
+  // the phone's cameras ride along: lens problems cannot be diagnosed
+  // without knowing what the maker exposes to apps
+  const cams = (await cameraReportText()).slice(0, 2500);
   const caption =
-    `🐞 Issue report\n\n${text.trim() || "(no description)"}\n\n${contextLine()}`;
+    `🐞 Issue report\n\n${text.trim() || "(no description)"}\n\n${contextLine()}` +
+    (cams ? `\n\nCameras:\n${cams}` : "");
   try {
     if (screenshot) {
       const form = new FormData();
