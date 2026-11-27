@@ -14,6 +14,41 @@ interface Item {
   job: CaptureJob;
   onDone?: (result: CaptureResult) => void;
   onError?: () => void;
+  shot: PendingShot;
+}
+
+/**
+ * A photo taken but not yet in the gallery, for the gallery to show as a
+ * placeholder tile.
+ *
+ * The gallery read its list once, when it opened. In a burst the last
+ * photos are still being finished then — one at a time, a second or more
+ * each — and they did not appear until the gallery was left and opened
+ * again. Now it shows these at once, with the viewfinder's frame from the
+ * press, and swaps each for the real photo as it is saved
+ * ("gpscam:media-added").
+ */
+export interface PendingShot {
+  key: number;
+  at: number;
+  /** a small image of the frame at the press, once there is one */
+  preview: string | null;
+}
+
+let nextKey = 1;
+const shots: PendingShot[] = [];
+const shotListeners = new Set<(s: PendingShot[]) => void>();
+
+function emitShots(): void {
+  const list = shots.slice();
+  for (const cb of shotListeners) cb(list);
+}
+
+/** Photos still being finished, newest first. */
+export function onPendingShots(cb: (s: PendingShot[]) => void): () => void {
+  shotListeners.add(cb);
+  cb(shots.slice());
+  return () => shotListeners.delete(cb);
 }
 
 const queue: Item[] = [];
@@ -37,9 +72,23 @@ function setPending(n: number): void {
 export function enqueueCapture(
   job: CaptureJob,
   onDone?: (result: CaptureResult) => void,
-  onError?: () => void
+  onError?: () => void,
+  preview?: string | Promise<string | null | undefined> | null
 ): void {
-  queue.push({ job, onDone, onError });
+  const shot: PendingShot = { key: nextKey++, at: Date.now(), preview: null };
+  if (typeof preview === "string") shot.preview = preview;
+  else if (preview) {
+    void preview
+      .then((src) => {
+        if (!src || !shots.includes(shot)) return;
+        shot.preview = src;
+        emitShots();
+      })
+      .catch(() => {});
+  }
+  shots.unshift(shot);
+  emitShots();
+  queue.push({ job, onDone, onError, shot });
   setPending(pending + 1);
   void drain();
 }
@@ -53,9 +102,15 @@ async function drain(): Promise<void> {
       try {
         const result = await processCapture(item.job);
         item.onDone?.(result);
+        window.dispatchEvent(
+          new CustomEvent("gpscam:media-added", { detail: { id: result.record.id } })
+        );
       } catch {
         item.onError?.();
       } finally {
+        const i = shots.indexOf(item.shot);
+        if (i >= 0) shots.splice(i, 1);
+        emitShots();
         // release the held frame bitmap-backed canvas ASAP
         item.job.canvas.width = 0;
         item.job.canvas.height = 0;

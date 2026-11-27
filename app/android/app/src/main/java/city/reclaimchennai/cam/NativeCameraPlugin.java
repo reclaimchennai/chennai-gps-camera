@@ -196,6 +196,8 @@ public class NativeCameraPlugin extends Plugin {
     // lenses — see the class comment
     private CameraSelector mainSelector;
     private final List<Lens> wideLenses = new ArrayList<>();
+    /** Telephotos the main camera does not zoom to by itself, ascending. */
+    private final List<Lens> teleLenses = new ArrayList<>();
     /** the lens the preview is on; null = the main camera */
     private Lens active = null;
     /** zoom as the user sees it */
@@ -504,6 +506,7 @@ public class NativeCameraPlugin extends Plugin {
         mainZoomMax = z != null ? z.getMaxZoomRatio() : 1f;
         readMainLenses();
         findWideLenses();
+        findTeleLenses();
         call.resolve(describe());
     }
 
@@ -673,7 +676,7 @@ public class NativeCameraPlugin extends Plugin {
             JSObject ev = new JSObject();
             ev.put("zoom", shown);
             ev.put("min", virtualMin());
-            ev.put("max", mainZoomMax);
+            ev.put("max", virtualMax());
             notifyListeners("zoom", ev);
         };
         zoomSource.observe((LifecycleOwner) getActivity(), zoomObserver);
@@ -705,7 +708,7 @@ public class NativeCameraPlugin extends Plugin {
         CameraInfo info = camera.getCameraInfo();
         out.put("zoom", vZoom);
         out.put("zoomMin", virtualMin());
-        out.put("zoomMax", mainZoomMax);
+        out.put("zoomMax", virtualMax());
         out.put("hasFlash", info.hasFlashUnit());
         out.put("zsl", zslActive);
         ExposureState ex = info.getExposureState();
@@ -718,6 +721,7 @@ public class NativeCameraPlugin extends Plugin {
         out.put("facing", lensFacing == CameraSelector.LENS_FACING_FRONT ? "user" : "environment");
         out.put("lenses", lensFactors());
         out.put("lensSwitch", !wideLenses.isEmpty());
+        out.put("teleSwitch", !teleLenses.isEmpty());
         out.put("cameras", cameraList);
         out.put("lens", active != null ? active.id : "main");
         putSize(out, "still", imageCapture != null ? imageCapture.getResolutionInfo() : null);
@@ -738,6 +742,14 @@ public class NativeCameraPlugin extends Plugin {
 
     private float activeFactor() {
         return active != null ? active.factor : 1f;
+    }
+
+    /** Highest zoom offered: the main camera's, or further when a
+     *  telephoto is reached by switching to it. */
+    private float virtualMax() {
+        if (teleLenses.isEmpty()) return mainZoomMax;
+        Lens longest = teleLenses.get(teleLenses.size() - 1);
+        return Math.max(mainZoomMax, longest.factor * 2f);
     }
 
     private float virtualMin() {
@@ -796,6 +808,60 @@ public class NativeCameraPlugin extends Plugin {
     }
 
     /**
+     * Telephotos listed as cameras of their own, for phones whose main
+     * camera does not zoom to them itself — the main camera then crops
+     * its own sensor at 3x while a real 3x lens sits unused. Where the
+     * main camera is a logical camera that already contains the lens
+     * (its zoom hands over to it: Samsung, Pixel), nothing is added.
+     * Back camera only.
+     */
+    @SuppressLint("UnsafeOptInUsageError")
+    @androidx.annotation.OptIn(markerClass = ExperimentalCamera2Interop.class)
+    private void findTeleLenses() {
+        teleLenses.clear();
+        if (lensFacing != CameraSelector.LENS_FACING_BACK || camera == null) return;
+        try {
+            CameraInfo mainInfo = camera.getCameraInfo();
+            String mainId = idOf(mainInfo);
+            Double mainView = viewWidth(mainId);
+            for (CameraInfo ci : provider.getAvailableCameraInfos()) {
+                if (ci.getLensFacing() != CameraSelector.LENS_FACING_BACK) continue;
+                String id = idOf(ci);
+                if (id == null || id.equals(mainId)) continue;
+                float f = factorOf(ci, id, mainView);
+                if (!usableTele(f, id)) continue;
+                boolean inMain = false;
+                for (Float m : mainLensFactors) {
+                    if (Math.abs(m - f) / f < 0.1f) inMain = true;
+                }
+                // a logical camera of the same lenses, or a second id for
+                // the same telephoto: one per factor
+                boolean dup = false;
+                for (Lens t : teleLenses) {
+                    if (Math.abs(t.factor - f) / f < 0.1f) dup = true;
+                }
+                if (!inMain && !dup) {
+                    teleLenses.add(new Lens(ci.getCameraSelector(), f, id));
+                    Log.i("NativeCamera", "telephoto " + id + " at " + f + "x");
+                }
+            }
+        } catch (Exception e) {
+            Log.w("NativeCamera", "telephoto discovery failed", e);
+        }
+        teleLenses.sort((a, b) -> Float.compare(a.factor, b.factor));
+    }
+
+    /** A real telephoto: clearly longer than the main camera, not an
+     *  absurd factor from bad metadata, and a camera in its own right. */
+    private boolean usableTele(float f, String id) {
+        if (!(f >= 1.8f && f <= 12f)) return false;
+        CameraCharacteristics c = characteristics(id);
+        if (c == null || !backwardCompatible(c)) return false;
+        Size px = c.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE);
+        return px != null && (long) px.getWidth() * px.getHeight() >= 3_000_000L;
+    }
+
+    /**
      * Every camera CameraX can open — by the camera2 id the WebView also
      * labels it with ("camera2 2, facing back"), so video mode's web camera
      * can switch to the right lens without probing and guessing. Factors
@@ -833,13 +899,22 @@ public class NativeCameraPlugin extends Plugin {
         }
     }
 
-    /** The lens for a zoom: the ultrawide below 1x, else the main camera. */
+    /** The lens for a zoom: the ultrawide below 1x, a telephoto from its
+     *  own factor up, else the main camera. */
     @Nullable
     private Lens lensFor(float z) {
+        // the longest telephoto the zoom has reached; once on one, stay a
+        // little below its factor so a wobble at 3x does not flip lenses
+        Lens tele = null;
+        for (Lens t : teleLenses) {
+            float enter = active == t ? t.factor * 0.95f : t.factor;
+            if (z >= enter) tele = t;
+        }
+        if (tele != null) return tele;
         if (wideLenses.isEmpty()) return null;
         Lens wide = wideLenses.get(0);
-        if (active == null) return z < WIDE_BELOW ? wide : null;
-        return z >= 1f ? null : wide;
+        if (active == wide) return z >= 1f ? null : wide;
+        return z < WIDE_BELOW ? wide : null;
     }
 
     /** Set the bound camera's ratio for the user's zoom. */
@@ -881,6 +956,7 @@ public class NativeCameraPlugin extends Plugin {
                 // the main camera back so the viewfinder never stays dark
                 failed = true;
                 wideLenses.remove(target);
+                teleLenses.remove(target);
                 try {
                     bindTo(mainSelector);
                 } catch (Exception ignored) {
@@ -888,6 +964,7 @@ public class NativeCameraPlugin extends Plugin {
                 }
                 active = null;
                 if (vZoom < mainZoomMin) vZoom = mainZoomMin;
+                if (vZoom > mainZoomMax) vZoom = mainZoomMax;
             }
             applyRatio();
             awaitingStream = true;
@@ -971,6 +1048,7 @@ public class NativeCameraPlugin extends Plugin {
     private JSArray lensFactors() {
         TreeSet<Float> set = new TreeSet<>(mainLensFactors);
         for (Lens l : wideLenses) set.add(Math.round(l.factor * 100) / 100f);
+        for (Lens l : teleLenses) set.add(Math.round(l.factor * 100) / 100f);
         JSArray out = new JSArray();
         // put(Object): put(double) declares a JSONException for NaN
         for (Float f : set) out.put(Double.valueOf(f));
@@ -1072,13 +1150,15 @@ public class NativeCameraPlugin extends Plugin {
                 call.reject("camera not running");
                 return;
             }
-            vZoom = Math.max(virtualMin(), Math.min(mainZoomMax, ratio));
+            vZoom = Math.max(virtualMin(), Math.min(virtualMax(), ratio));
             Lens want = lensFor(vZoom);
             if (recording != null && want != active) {
                 // a recording cannot follow the camera to another unit:
                 // stay on this one, at the nearest zoom it can do
                 want = active;
-                vZoom = active == null ? Math.max(mainZoomMin, vZoom) : Math.min(0.999f, vZoom);
+                if (active == null) vZoom = Math.max(mainZoomMin, Math.min(mainZoomMax, vZoom));
+                else if (teleLenses.contains(active)) vZoom = Math.max(active.factor, vZoom);
+                else vZoom = Math.min(0.999f, vZoom);
             }
             if (want != active) switchTo(want);
             else if (!switching) applyRatio();
@@ -1332,13 +1412,14 @@ public class NativeCameraPlugin extends Plugin {
     @PluginMethod
     public void capture(PluginCall call) {
         final int rot = call.getInt("rotation", 0);
+        final long asked = System.nanoTime();
         getActivity().runOnUiThread(() -> {
-            if (switching) afterSwitch.add(() -> takeStill(call, rot));
-            else takeStill(call, rot);
+            if (switching) afterSwitch.add(() -> takeStill(call, rot, asked));
+            else takeStill(call, rot, asked);
         });
     }
 
-    private void takeStill(PluginCall call, int rot) {
+    private void takeStill(PluginCall call, int rot, long asked) {
         if (imageCapture == null) {
             call.reject("camera not running");
             return;
@@ -1357,6 +1438,9 @@ public class NativeCameraPlugin extends Plugin {
                     JSObject res = new JSObject();
                     res.put("path", out.getAbsolutePath());
                     res.put("ms", (System.nanoTime() - started) / 1_000_000L);
+                    // how long the request waited before the camera was
+                    // asked: the UI thread, or a lens change in progress
+                    res.put("waitMs", (started - asked) / 1_000_000L);
                     // the upright size, so the card can be drawn for it
                     // before anything decodes the photo
                     try {
@@ -1542,6 +1626,7 @@ public class NativeCameraPlugin extends Plugin {
                 recording = pr.start(ContextCompat.getMainExecutor(getContext()), ev -> {
                     if (ev instanceof VideoRecordEvent.Start && !started[0]) {
                         started[0] = true;
+                        recordSound(android.media.MediaActionSound.START_VIDEO_RECORDING);
                         JSObject out = new JSObject();
                         out.put("ok", true);
                         out.put("audio", mic);
@@ -1574,6 +1659,7 @@ public class NativeCameraPlugin extends Plugin {
             stopCall = call;
             try {
                 recording.stop();
+                recordSound(android.media.MediaActionSound.STOP_VIDEO_RECORDING);
             } catch (Exception e) {
                 stopCall = null;
                 call.reject("stop failed: " + e.getMessage());
@@ -1796,6 +1882,13 @@ public class NativeCameraPlugin extends Plugin {
             // start() reports it if the camera really is unavailable
         }
         try {
+            recordSounds = new android.media.MediaActionSound();
+            recordSounds.load(android.media.MediaActionSound.START_VIDEO_RECORDING);
+            recordSounds.load(android.media.MediaActionSound.STOP_VIDEO_RECORDING);
+        } catch (Exception ignored) {
+            recordSounds = null; // no sounds; the vibration still marks it
+        }
+        try {
             File[] stale = getContext().getCacheDir().listFiles(
                 (dir, name) -> name.startsWith("native-cap-")
                     || name.startsWith("native-fin-") || name.startsWith("native-thm-"));
@@ -1808,6 +1901,29 @@ public class NativeCameraPlugin extends Plugin {
             }
         } catch (Exception ignored) {
             // nothing to sweep
+        }
+    }
+
+    /**
+     * Recording start and stop sounds: the phone's own, as its camera app
+     * plays them (MediaActionSound, preloaded in load(), played off the
+     * main thread by the system). Users pressed record, felt the
+     * vibration, and found later that nothing had been recorded; the start
+     * sound plays only once the recording has really begun. Silent and
+     * vibrate modes are respected. Photos stay silent: a shutter sound
+     * there was taken out in v1.5.7 for the delay it added to each press.
+     */
+    private android.media.MediaActionSound recordSounds;
+
+    private void recordSound(int which) {
+        try {
+            if (recordSounds == null) return;
+            android.media.AudioManager am = (android.media.AudioManager)
+                getContext().getSystemService(android.content.Context.AUDIO_SERVICE);
+            if (am != null && am.getRingerMode() != android.media.AudioManager.RINGER_MODE_NORMAL) return;
+            recordSounds.play(which);
+        } catch (Exception ignored) {
+            // a missing sound never stops a recording
         }
     }
 

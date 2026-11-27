@@ -68,6 +68,8 @@ export async function writeExif(
 ): Promise<Blob> {
   try {
     const exifBytes = exifDump(data);
+    const fast = await spliceExif(jpeg, exifBytes);
+    if (fast) return fast;
     const asString = await blobToBinaryString(jpeg);
     const withExif = piexif.insert(exifBytes, asString);
     return binaryStringToBlob(withExif, "image/jpeg");
@@ -75,6 +77,35 @@ export async function writeExif(
     // Never lose a photo over metadata — return the plain JPEG.
     return jpeg;
   }
+}
+
+/**
+ * The EXIF block written in without reading the photo.
+ *
+ * piexif works on the whole JPEG as a string: a 12 MP photo is a 4–5 MB
+ * string built a character at a time, spliced, and turned back into
+ * bytes — over a second of the page's own thread after an annotation was
+ * saved. A browser's JPEG starts SOI, then a JFIF APP0; the EXIF APP1
+ * takes the APP0's place and the rest of the file is referenced as it
+ * is, unread. Anything that does not start that way (an existing EXIF
+ * block, another encoder) goes the old way. Null then.
+ */
+async function spliceExif(jpeg: Blob, exif: string): Promise<Blob | null> {
+  if (exif.length + 2 > 0xffff) return null;
+  const head = new Uint8Array(await jpeg.slice(0, 64).arrayBuffer());
+  if (head[0] !== 0xff || head[1] !== 0xd8) return null;
+  let rest = 2;
+  if (head[2] === 0xff && head[3] === 0xe0) rest = 4 + ((head[4] << 8) | head[5]);
+  // an APP1 (EXIF or XMP) already there: let piexif merge with it
+  if (head.length > rest + 1 && head[rest] === 0xff && head[rest + 1] === 0xe1) return null;
+  const seg = new Uint8Array(4 + exif.length);
+  const len = exif.length + 2;
+  seg[0] = 0xff;
+  seg[1] = 0xe1;
+  seg[2] = len >> 8;
+  seg[3] = len & 0xff;
+  for (let i = 0; i < exif.length; i++) seg[4 + i] = exif.charCodeAt(i) & 0xff;
+  return new Blob([new Uint8Array([0xff, 0xd8]), seg, jpeg.slice(rest)], { type: "image/jpeg" });
 }
 
 function exifDump(data: WatermarkData): string {
@@ -207,7 +238,15 @@ export async function readExif(jpeg: Blob): Promise<ReadExif> {
     }
 
     const desc = zeroth[piexif.ImageIFD.ImageDescription];
-    if (typeof desc === "string" && desc) out.description = desc;
+    if (typeof desc === "string" && desc) {
+      // written as UTF-8 bytes (see exifDump); read back as such, so an
+      // imported photo's Tamil or Hindi address is not shown as mojibake
+      try {
+        out.description = decodeURIComponent(escape(desc));
+      } catch {
+        out.description = desc; // not UTF-8: another app's Latin-1 text
+      }
+    }
     const soft = zeroth[piexif.ImageIFD.Software];
     out.ours = typeof soft === "string" && soft.includes(APP_NAME);
     return out;

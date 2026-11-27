@@ -23,7 +23,9 @@ const server = await createServer({
   logLevel: "error",
 });
 await server.listen();
-const browser = await chromium.launch();
+const browser = await chromium.launch({
+  args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"],
+});
 const page = await browser.newPage({ viewport: { width: 412, height: 915 } });
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
@@ -113,6 +115,72 @@ try {
     r.blind.dark === false && r.blind.source === "unknown",
     r.blind.detail
   );
+
+  // --- the button, on a live camera ------------------------------------
+  // The button cycles off -> auto -> on, so at night "on" is reached from
+  // an "auto" that has the lamp lit. The lamp must stay lit, whatever
+  // order the camera answers in. The camera's answers are made slow, as a
+  // phone's are (a round trip to the native camera).
+  const ctx = await browser.newContext({
+    viewport: { width: 412, height: 915 },
+    geolocation: { latitude: 13.0827, longitude: 80.2707, accuracy: 10 },
+    permissions: ["geolocation", "camera"],
+  });
+  const live = await ctx.newPage();
+  live.on("pageerror", (e) => errors.push(String(e)));
+  await live.goto("http://127.0.0.1:4561", { waitUntil: "load" });
+  await live.waitForFunction(() => {
+    const v = document.querySelector("video");
+    return v && v.videoWidth > 0 && !v.paused;
+  }, { timeout: 20000 });
+  await live.evaluate(async () => {
+    const { camera } = await import("/src/lib/camera.ts");
+    window.__lamp = false;
+    camera.setTorch = (on) =>
+      new Promise((res) =>
+        setTimeout(() => {
+          window.__lamp = on;
+          camera.torchOn = on;
+          res(true);
+        }, 60)
+      );
+    camera.lightReading = async () => ({ dark: true, source: "iso", detail: "ISO 3200" });
+  });
+  const mode = (m) =>
+    live.evaluate(async (m) => {
+      const { useSettingsStore } = await import("/src/store.ts");
+      useSettingsStore.getState().setSettings({ flashMode: m });
+    }, m);
+  const lamp = () => live.evaluate(() => window.__lamp);
+  await mode("auto");
+  await live.waitForTimeout(1200);
+  const autoLit = await lamp();
+  await mode("on");
+  await live.waitForTimeout(1200);
+  const onLit = await lamp();
+  await mode("off");
+  await live.waitForTimeout(600);
+  const offDark = !(await lamp());
+  await mode("on");
+  await live.waitForTimeout(600);
+  const onFromOff = await lamp();
+  // a new lens's stream comes up dark: "on" must light it again
+  await live.evaluate(async () => {
+    const { camera } = await import("/src/lib/camera.ts");
+    camera.torchOn = false;
+    window.__lamp = false;
+  });
+  await live.waitForTimeout(1300);
+  const relit = await lamp();
+  check("automatic lights the lamp in the dark", autoLit === true);
+  check("on relights a lamp the camera put out by itself", relit === true);
+  check(
+    "auto -> on at night keeps the lamp lit",
+    onLit === true,
+    onLit ? "lit" : "went dark: auto's 'off' landed after 'on' had looked"
+  );
+  check("off puts it out; on from off lights it", offDark && onFromOff === true);
+  await ctx.close();
 } finally {
   await browser.close();
   await server.close();

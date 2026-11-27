@@ -151,6 +151,8 @@ interface NativeCameraPlugin {
   capture(opts: { rotation: number }): Promise<{
     path: string;
     ms: number;
+    /** waited before the camera was asked (UI thread, lens change) */
+    waitMs?: number;
     zsl: boolean;
     /** upright size of the JPEG (v1.50+) */
     width?: number;

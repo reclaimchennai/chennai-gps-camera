@@ -225,6 +225,9 @@ export default function CameraView({ active }: { active: boolean }) {
   }, []);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [flashFx, setFlashFx] = useState(0);
+  /** The lamp state last asked of the camera (see the flash effect). */
+  const torchAsked = useRef(false);
+  const torchBusy = useRef(0);
   const [focusPos, setFocusPos] = useState<{ x: number; y: number; key: number } | null>(null);
   // Samsung-style focus UI: exposure slider under the ring + AF lock
   const [evInfo, setEvInfo] = useState<{ min: number; max: number; step: number } | null>(null);
@@ -1098,7 +1101,8 @@ export default function CameraView({ active }: { active: boolean }) {
       enqueueCapture(
         job,
         ({ record, thumb }) => updateThumb(record.id, thumb),
-        () => showToast("Couldn't save that photo. Try again")
+        () => showToast("Couldn't save that photo. Try again"),
+        preview || previewLater
       );
     } catch {
       showToast("Capture failed. Try again");
@@ -1994,17 +1998,42 @@ export default function CameraView({ active }: { active: boolean }) {
     let cancelled = false;
     let timer = 0;
 
+    // Compared against the last state ASKED for, not camera.torch: the
+    // flash button cycles off -> auto -> on, so at night "on" is reached
+    // from an "auto" that has the lamp lit. Auto's cleanup asks for it off;
+    // camera.torch still said lit until that answer came back, so "on"
+    // saw nothing to do and the lamp went dark under it. Requests reach
+    // the camera in order, so the later "on" wins.
+    // Once nothing is in flight camera.torch is the truth again, so a lamp
+    // the camera put out by itself (a new lens's stream) is relit by
+    // auto's next tick.
     const apply = async (want: boolean) => {
-      if (cancelled || want === camera.torch) return;
-      const ok = await camera.setTorch(want);
+      if (cancelled) return;
+      if (want === torchAsked.current && (torchBusy.current > 0 || camera.torch === want)) return;
+      torchAsked.current = want;
+      torchBusy.current++;
+      const ok = await camera.setTorch(want).finally(() => torchBusy.current--);
       if (!cancelled && ok) setTorch(want);
+    };
+    const dark = () => {
+      torchAsked.current = false;
+      torchBusy.current++;
+      void camera.setTorch(false).finally(() => torchBusy.current--);
     };
 
     if (flashMode === "on") {
-      void apply(true);
+      // re-checked on the same slow tick as auto: whatever puts the lamp
+      // out (a new lens's stream), "on" lights it again within a second
+      const hold = () => {
+        if (cancelled) return;
+        void apply(true);
+        timer = window.setTimeout(hold, 900);
+      };
+      hold();
       return () => {
         cancelled = true;
-        void camera.setTorch(false);
+        window.clearTimeout(timer);
+        dark();
       };
     }
     if (flashMode === "off") {
@@ -2025,7 +2054,7 @@ export default function CameraView({ active }: { active: boolean }) {
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
-      void camera.setTorch(false);
+      dark();
     };
   }, [active, ready, flashMode]);
 

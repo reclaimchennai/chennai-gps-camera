@@ -1482,6 +1482,29 @@ M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4'/>\
   .cell-skel { animation: none; }
 }
 
+/* A photo still being finished: the frame from the press, dimmed under
+   the shimmer, with a small spinner, until the saved photo replaces it. */
+.gallery-cell.pending img {
+  opacity: 0.55;
+}
+.gallery-cell.pending .cell-skel {
+  opacity: 0.6;
+}
+.cell-saving {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  animation: editor-spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cell-saving { animation-duration: 2.4s; }
+}
+
 .gallery-cell.skeleton {
   background: linear-gradient(
     100deg,
@@ -2403,6 +2426,37 @@ input[type="range"] {
   touch-action: none;
 }
 
+/* The tick was pressed: a copy of the photo is being made. Covers the
+   stage so nothing more can be drawn on a photo already being saved. */
+.editor-saving {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  animation: sheet-fade 0.15s ease-out;
+}
+.editor-saving-spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  animation: editor-spin 0.8s linear infinite;
+}
+@keyframes editor-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .editor-saving-spinner { animation-duration: 2.4s; }
+}
 /* blur-up placeholder while the annotation editor decodes the full photo */
 .editor-skel {
   position: absolute;

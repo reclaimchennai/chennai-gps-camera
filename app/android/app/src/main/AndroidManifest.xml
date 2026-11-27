@@ -49,4 +49,8 @@
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <!-- The app holds the screen upright and turns its own controls, which
+         makes Android assume a portrait screen is required. Devices that
+         only run landscape (some tablets, desktops, XR) can still use it. -->
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
 </manifest>

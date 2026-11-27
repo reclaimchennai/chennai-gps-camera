@@ -19,6 +19,7 @@ import {
 } from "./icons/ActionIcons";
 import { Screen, blurOnEnter } from "./ui";
 import { listMedia, getBlob, deleteMedia, putMedia } from "../lib/db";
+import { onPendingShots, type PendingShot } from "../lib/captureQueue";
 import {
   getThumbUrl,
   setThumbUrl,
@@ -305,9 +306,14 @@ export default function GalleryView() {
       }, 1600);
     };
     window.addEventListener("gpscam:media-updated", onUpdated);
+    // a photo from the capture queue (a burst still being finished when
+    // the gallery opened) takes its place in the grid as it is saved
+    const onAdded = () => void load();
+    window.addEventListener("gpscam:media-added", onAdded);
     return () => {
       cancelled = true;
       window.removeEventListener("gpscam:media-updated", onUpdated);
+      window.removeEventListener("gpscam:media-added", onAdded);
       // deliberately NOT revoking here: these URLs are shared with the
       // photo view and reused on the way back (see lib/thumbcache)
     };
@@ -340,6 +346,10 @@ export default function GalleryView() {
     }
     return counts;
   }, [cells]);
+
+  // photos taken but still being finished: shown first, as placeholders
+  const [pendingShots, setPendingShots] = useState<PendingShot[]>([]);
+  useEffect(() => onPendingShots(setPendingShots), []);
 
   const visible = useMemo(() => {
     if (!cells) return null;
@@ -582,7 +592,7 @@ export default function GalleryView() {
         </div>
       )}
 
-      {visible && visible.length === 0 && (
+      {visible && visible.length === 0 && pendingShots.length === 0 && (
         <div className="empty-note">
           {cells && cells.length === 0 ? (
             <>
@@ -597,6 +607,25 @@ export default function GalleryView() {
       )}
 
       <div className="gallery-grid">
+        {cells !== null &&
+          !selecting &&
+          !query.trim() &&
+          (chip === "all" || chip === "photos") &&
+          pendingShots.map((shot) => (
+            <div
+              key={`pending-${shot.key}`}
+              className="gallery-cell pending"
+              role="status"
+              aria-label="Saving photo"
+            >
+              {shot.preview && <img src={shot.preview} alt="" />}
+              <span className="cell-skel" />
+              <span className="cell-saving" aria-hidden="true" />
+              <span className="cell-meta">
+                <span className="cell-when">Saving…</span>
+              </span>
+            </div>
+          ))}
         {visible?.map(({ rec }) => {
           const loc = cellLocation(rec);
           const picked = sel?.has(rec.id) ?? false;

@@ -2248,6 +2248,11 @@ export class CameraController {
       Photo: i?.stillW ? `${i.stillW}x${i.stillH}` : "?",
       Preview: i?.previewW ? `${i.previewW}x${i.previewH}` : "?",
       "Last capture": this.native.lastCaptureMs != null ? `${this.native.lastCaptureMs} ms` : "none yet",
+      "Slowest capture": this.native.slowestCapture
+        ? `${this.native.slowestCapture.waitMs + this.native.slowestCapture.ms} ms ` +
+          `(waited ${this.native.slowestCapture.waitMs} ms, camera ${this.native.slowestCapture.ms} ms, ` +
+          `${new Date(this.native.slowestCapture.at).toLocaleTimeString()})`
+        : "none yet",
       Runtime: "Android app",
       Build: `${__BUILD_TS__.slice(0, 16).replace("T", " ")} UTC`,
     };

@@ -106,17 +106,23 @@ async function run(theme) {
   await page.evaluate((t) => {
     document.documentElement.setAttribute("data-theme", t);
   }, theme);
-  await page.waitForSelector(".gallery-cell", { timeout: 15000 });
+  // photos still being saved show as placeholder tiles first; wait for
+  // the saved ones, which are what can be selected
+  await page.waitForFunction(
+    () => document.querySelectorAll(".gallery-cell:not(.pending)").length >= 2,
+    null,
+    { timeout: 20000 }
+  );
 
   // long-press the first cell to arm selection, then add the second
-  const cell = page.locator(".gallery-cell").first();
+  const cell = page.locator(".gallery-cell:not(.pending)").first();
   const box = await cell.boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.waitForTimeout(600);
   await page.mouse.up();
   await page.waitForSelector(".sel-bar", { timeout: 5000 });
-  const second = page.locator(".gallery-cell").nth(1);
+  const second = page.locator(".gallery-cell:not(.pending)").nth(1);
   if (await second.isVisible().catch(() => false)) await second.click();
 
   await page.evaluate(PROBE);

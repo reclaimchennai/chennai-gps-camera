@@ -322,10 +322,15 @@ export async function grabFrame(): Promise<{
   // takes the frame of this press from its ring buffer — and nothing here
   // waits for the file, so the shutter is free again at once.
   if (camera.engine === "native") {
-    // the viewfinder first, so the animation shows the moment of the press
-    const previewLater = camera.native.snapshot(220);
+    // The still first. Both requests run on the phone's UI thread in the
+    // order they are sent, and reading the viewfinder back for the
+    // animation copies the whole preview picture — tens of milliseconds,
+    // more on a slower phone — which used to come between the press and
+    // the camera being asked. The animation's picture is a few
+    // milliseconds later instead, which nobody can see.
     const held = physicalRotation();
     const still = camera.captureNative(held);
+    const previewLater = camera.native.snapshot(220);
     // stillW x stillH is the sensor's landscape frame; a portrait grip
     // stands it upright
     const sw = camera.native.info?.stillW ?? 0;

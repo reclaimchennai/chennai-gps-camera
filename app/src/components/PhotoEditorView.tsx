@@ -100,6 +100,9 @@ export default function PhotoEditorView({ id }: { id: string }) {
   const [histIdx, setHistIdx] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** The tick was pressed: the copy is being made. Separate from `busy`,
+   *  which auto-blur shares, because only a save shows the overlay. */
+  const [saving, setSaving] = useState(false);
   const [sliderVals, setSliderVals] = useState({ ...DEFAULT_SLIDER });
   const [blurMenuOpen, setBlurMenuOpen] = useState(false);
   const [fontMenuOpen, setFontMenuOpen] = useState(false);
@@ -854,9 +857,20 @@ export default function PhotoEditorView({ id }: { id: string }) {
     if (!stage || !rec || !img) return;
     closeOpenStroke();
     setBusy(true);
+    setSaving(true);
     setSelectedId(null);
     setEditingTextId(null);
-    await new Promise((r) => setTimeout(r, 60)); // let transformer detach
+    // Two frames: the overlay is on screen, and the selection handles are
+    // gone from the stage, before the flatten holds the thread. The press
+    // used to show nothing at all until the photo opened seconds later.
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))));
+    const t: Record<string, number> = {};
+    let mark = performance.now();
+    const lap = (k: string) => {
+      const now = performance.now();
+      t[k] = Math.round(now - mark);
+      mark = now;
+    };
     try {
       // flatten at the un-zoomed transform — the export must always be
       // the full photo, whatever the viewport was pinched to
@@ -864,9 +878,14 @@ export default function PhotoEditorView({ id }: { id: string }) {
       stage.position({ x: 0, y: 0 });
       setView({ zoom: 1, x: 0, y: 0 });
       const canvas = stage.toCanvas({ pixelRatio: 1 / fit });
-      const jpeg = await canvasToBlob(canvas, "image/jpeg", 0.92);
+      lap("flatten");
+      const [jpeg, thumb] = await Promise.all([
+        canvasToBlob(canvas, "image/jpeg", 0.92),
+        makeThumbnail(canvas, canvas.width, canvas.height),
+      ]);
+      lap("encode");
       const withExif = await writeExif(jpeg, rec.data);
-      const thumb = await makeThumbnail(canvas, canvas.width, canvas.height);
+      lap("exif");
       const copy: PhotoRecord = {
         ...rec,
         id: newId(),
@@ -878,6 +897,12 @@ export default function PhotoEditorView({ id }: { id: string }) {
       await putBlob(copy.id, "final", withExif);
       await putBlob(copy.id, "thumb", thumb);
       await putMedia(copy);
+      lap("store");
+      (window as { __gpscamEditSave?: Record<string, number> }).__gpscamEditSave = {
+        ...t,
+        w: canvas.width,
+        h: canvas.height,
+      };
       if (useSettingsStore.getState().settings.autoSaveToDevice || isNativeApp()) {
         try {
           downloadBlob(
@@ -891,6 +916,7 @@ export default function PhotoEditorView({ id }: { id: string }) {
       navigate(`/media/${copy.id}`);
     } finally {
       setBusy(false);
+      setSaving(false);
     }
   }, [rec, img, fit, closeOpenStroke]);
 
@@ -931,6 +957,12 @@ export default function PhotoEditorView({ id }: { id: string }) {
     <div className="editor-screen">
       <div ref={wrapRef} className="editor-stage-wrap">
         {note && <div className="editor-note">{note}</div>}
+        {saving && (
+          <div className="editor-saving" role="status" aria-live="polite">
+            <div className="editor-saving-spinner" aria-hidden="true" />
+            <span>Saving a copy…</span>
+          </div>
+        )}
         {!img && (
           <div className="editor-skel">
             {skelUrl && <img src={skelUrl} alt="" />}

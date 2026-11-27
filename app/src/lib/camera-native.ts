@@ -57,6 +57,8 @@ export class NativeEngine {
   torchOn = false;
   /** last measured capture time, for Diagnostics */
   lastCaptureMs: number | null = null;
+  /** The slowest photo this session, for the camera report. */
+  slowestCapture: { ms: number; waitMs: number; at: number } | null = null;
   private handles: Handle[] = [];
   private lastPoint: { x: number; y: number } | null = null;
   private lastRect = "";
@@ -339,6 +341,10 @@ export class NativeEngine {
     try {
       const r = await req;
       this.lastCaptureMs = r.ms;
+      const total = (r.ms ?? 0) + (r.waitMs ?? 0);
+      if (!this.slowestCapture || total > this.slowestCapture.ms + this.slowestCapture.waitMs) {
+        this.slowestCapture = { ms: r.ms ?? 0, waitMs: r.waitMs ?? 0, at: Date.now() };
+      }
       return { path: r.path, width: r.width, height: r.height };
     } finally {
       this.inflight.delete(req);
